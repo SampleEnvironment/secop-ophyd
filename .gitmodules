@@ -1,0 +1,6 @@
+[submodule "ophyd"]
+	path = ophyd
+	url = https://github.com/bluesky/ophyd.git
+[submodule "frappy"]
+	path = frappy
+	url = https://github.com/SampleEnvironment/frappy.git
