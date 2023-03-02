@@ -29,12 +29,16 @@ cryoNode = SECoP_Node_Device('localhost:10769')
 
 #print(cryoNode.properties.__class__.__name__)
 
-vals = cryoNode.read_configuration()
+#vals = cryoNode.read_configuration()
 
 #print(vals)
 
-desc = cryoNode.describe_configuration()
+
+#desc = cryoNode.describe_configuration()
 
 #print(desc)
 
+
 #print(cryoNode.modules.values())
+
+print(cryoNode.Devices['cryo'].describe())
