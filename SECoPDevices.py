@@ -6,8 +6,12 @@ from ophyd import BlueskyInterface
 
 from ophyd.device import *
 
-
+ 
+ 
 from frappy.client import SecopClient
+from frappy.logging import logger
+
+from SECoPParameter import SECoPParameter
 
 from propertykeys import * 
 
@@ -45,9 +49,10 @@ def get_config_attrs(parameters):
     parameters_cfg.pop("value", None)
     return parameters_cfg
 
-def get_read_str(value,timestamp):
-    return {"value":value,"timestamp":timestamp}
-    
+
+
+
+
 class SECoPDevice():
     def __init__(self,
                  prefix = "",
@@ -64,8 +69,29 @@ class SECoPDevice():
         self.parent = parent
         self.prefix = prefix
         self.kind = kind
-        self.read_attrs = read_attrs
-        self.configuration_attrs = configuration_attrs
+        print(read_attrs)
+        self.read_attrs = {}
+        for attr_name, attr_desc in read_attrs.items():
+            self.read_attrs[attr_name] = SECoPParameter(
+                name=attr_name,
+                module_name=name,
+                param_desc=attr_desc,
+                secclient=secclient,
+                prefix=prefix + name + '_',
+                kind=Kind.hinted)    
+
+            
+        
+        self.configuration_attrs = {}
+        for attr_name, attr_desc in configuration_attrs.items():
+            self.configuration_attrs[attr_name] = SECoPParameter(
+                name=attr_name,
+                module_name=name,
+                param_desc=attr_desc,
+                secclient=secclient,
+                prefix=prefix + name + '_',
+                kind=Kind.config)   
+        
         self._secclient = secclient
         
         
@@ -79,24 +105,34 @@ class SECoPReadableDevice(SECoPDevice):
     def read(self) -> OrderedDictType[str, Dict[str, Any]]:
         res = OrderedDict()
        
-        for var in self.read_attrs:
-            val = self._secclient.getParameter(self.name,var,trycache =True)        
-            res[var] =get_read_str(value=val[0],timestamp=val[1])
+        for par_name, par in self.read_attrs.items():
+            res[par_name] = par.read()
         
         return res
     
     def describe(self) -> OrderedDictType[str, Dict[str, Any]]:
-        res = OrderedDict
+        res = OrderedDict()
         
-        for var, meta in self.read_attrs.items():
-            print(meta.get('datainfo'))     
+        for par_name, par in self.read_attrs.items():
+            res[par_name] = par.describe()
+        
+        return res
         
     
     def read_configuration(self) -> OrderedDictType[str, Dict[str, Any]]:
-        pass    
+        res = OrderedDict()
+       
+        for par_name, par in self.configuration_attrs.items():
+            res[par_name] = par.read()
+        
+        return res
     
     def describe_configuration(self) -> OrderedDictType[str, Dict[str, Any]]:
-        pass
+        res = OrderedDict()
+        for par_name, par in self.configuration_attrs.items():
+            res[par_name] = par.describe()
+        
+        return res
     
     def configure(self, d: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         """Configure the device for something during a run
@@ -168,17 +204,17 @@ class SECoP_Node_Device(SECoPDevice):
     def read_configuration(self) -> OrderedDictType[str, Dict[str, Any]]:
         res = OrderedDict()
         
-        # TODO timestamp on node properties
-        for property, value in self.properties.items():
-            res[property] = get_read_str(value=value,timestamp=time.time)    
+        for par_name, par in self.properties.items():
+            res[par_name] = par.read()    
         return res
     
     def describe_configuration(self) -> OrderedDictType[str, Dict[str, Any]]:
        res = OrderedDict()
        
-       # TODO shape...
-       for property, value in self.properties.items():
-            res[property] = {"source":self.equipment_Id,"dtype":value.__class__.__name__,"shape":[]}    
+
+       for par_name , par in self.properties.items():
+            print(par.describe())
+            res[par_name] = par.describe()
        return res
    
     def _get_prefix(self):
@@ -209,11 +245,6 @@ class SECoP_Node_Device(SECoPDevice):
             
             module_cfg["configuration_attrs"] = get_config_attrs(module_parameters)
             
-           
-            
-            
-            module_cfg["configuration_attrs"] =[]
-            #TODO target
             #TODO kind
             #TODO Prefix
 
@@ -240,20 +271,7 @@ IF_CLASSES = {
     'Module': SECoPDevice,
 }
 
-JSON_DATATYPE = {
-#JSON-Transport Datatype : SECoP Datatype  
-    'double' : 'number',
-    'int'    : 'number',
-    'scaled' : 'number',  # TODO convert to double before handing off to bluesky??
-    'bool'   : 'boolean',
-    'enum'   : 'number',
-    'string' : 'string',
-    'blob'   : 'string',
-    'array'  : 'array',
-    'tuple'  : 'tuple',
-    'struct' : 'object'
-     
-}
+
 
 ALL_IF_CLASSES = set(IF_CLASSES.values())
 
