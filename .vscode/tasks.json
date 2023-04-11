@@ -6,8 +6,8 @@
 		  "type": "shell",
 		  "isBackground": true,
 		 //"command":"pwd", 
-		 "command": "sh",
-		 "args": ["cryo.sh"],
+		 "command": "python",
+		 "args": ["${workspaceFolder}/frappy/bin/frappy-server","-c","${workspaceFolder}/frappy/cfg/cryo_cfg.py","cryo"],
 		 "presentation": { "reveal": "silent" },
 		  "problemMatcher": [{
 			"pattern": [{
