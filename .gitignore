@@ -1,3 +1,4 @@
-.vscode/launch.json
-__pycache__/SECoPDevices.cpython-310.pyc
+.vscode/*.json
+*.pyc
 frappy
+ophyd

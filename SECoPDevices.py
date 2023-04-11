@@ -4,14 +4,45 @@ from ophyd.status import Status
 from ophyd import Kind
 from ophyd import BlueskyInterface
 
-from ophyd.device import *
+from ophyd.v2.core import StandardReadable, AsyncStatus, AsyncReadable
 
+from bluesky.protocols import Movable, Stoppable
  
+from typing import (
+    Any,
+    AsyncGenerator,
+    Awaitable,
+    Callable,
+    Coroutine,
+    Dict,
+    Generic,
+    Iterable,
+    List,
+    Optional,
+    Protocol,
+    Sequence,
+    Set,
+    TypeVar,
+    cast,
+    runtime_checkable,
+)
+
+from bluesky.protocols import (
+    Configurable,
+    Descriptor,
+    HasName,
+    Movable,
+    Readable,
+    Reading,
+    Stageable,
+    Status,
+    Subscribable,
+)
  
 from frappy.client import SecopClient
 from frappy.logging import logger
 
-from SECoPParameter import SECoPParameter
+from SECoPSignal import *
 
 from propertykeys import * 
 
@@ -69,22 +100,25 @@ class SECoPDevice():
         self.parent = parent
         self.prefix = prefix
         self.kind = kind
-        print(read_attrs)
         self.read_attrs = {}
+
+        # read Attributes
         for attr_name, attr_desc in read_attrs.items():
-            self.read_attrs[attr_name] = SECoPParameter(
+            dtype = attr_desc.get('datainfo').get('type')
+            self.read_attrs[attr_name] = PARAM_CLASS[dtype](
                 name=attr_name,
                 module_name=name,
                 param_desc=attr_desc,
                 secclient=secclient,
                 prefix=prefix + name + '_',
                 kind=Kind.hinted)    
-
             
-        
+            
+        # configuration Attributes
         self.configuration_attrs = {}
         for attr_name, attr_desc in configuration_attrs.items():
-            self.configuration_attrs[attr_name] = SECoPParameter(
+            dtype = attr_desc.get('datainfo').get('type')
+            self.configuration_attrs[attr_name] =  PARAM_CLASS[dtype](
                 name=attr_name,
                 module_name=name,
                 param_desc=attr_desc,
@@ -92,17 +126,15 @@ class SECoPDevice():
                 prefix=prefix + name + '_',
                 kind=Kind.config)   
         
-        self._secclient = secclient
-        
-        
-    pass
+        self._secclient = secclient     
+    
 
 class SECoPReadableDevice(SECoPDevice):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         
     
-    def read(self) -> OrderedDictType[str, Dict[str, Any]]:
+    def read(self) -> Dict[str, Reading]:
         res = OrderedDict()
        
         for par_name, par in self.read_attrs.items():
@@ -110,7 +142,7 @@ class SECoPReadableDevice(SECoPDevice):
         
         return res
     
-    def describe(self) -> OrderedDictType[str, Dict[str, Any]]:
+    def describe(self) -> Dict[str, Reading]:
         res = OrderedDict()
         
         for par_name, par in self.read_attrs.items():
@@ -119,7 +151,7 @@ class SECoPReadableDevice(SECoPDevice):
         return res
         
     
-    def read_configuration(self) -> OrderedDictType[str, Dict[str, Any]]:
+    def read_configuration(self) -> Dict[str, Reading]:
         res = OrderedDict()
        
         for par_name, par in self.configuration_attrs.items():
@@ -127,14 +159,14 @@ class SECoPReadableDevice(SECoPDevice):
         
         return res
     
-    def describe_configuration(self) -> OrderedDictType[str, Dict[str, Any]]:
+    def describe_configuration(self) -> Dict[str, Reading]:
         res = OrderedDict()
         for par_name, par in self.configuration_attrs.items():
             res[par_name] = par.describe()
         
         return res
     
-    def configure(self, d: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    def configure(self, d: Dict[str, Any]) -> tuple[Dict[str, Any], Dict[str, Any]]:
         """Configure the device for something during a run
 
         This default implementation allows the user to change any of the
@@ -174,12 +206,18 @@ class SECoPWritableDevice(SECoPReadableDevice):
 class SECoPMoveableDevice(SECoPReadableDevice):
     pass
     
-class SECoP_Node_Device(SECoPDevice):
+class SECoP_Node_Device(StandardReadable):
+    def __init__(
+        self,
+        uri: str, 
+        #prefix: str, 
+        #name: str = "", 
+        #primary: Optional[SignalR] = None, 
+        #read: Sequence[AsyncReadable] = ..., 
+        #read_uncached: Sequence[SignalR] = ..., 
+        #config: Sequence[AsyncReadable] = ...
+        ):   
     
-    def __init__(self,uri) -> None:
-      
-        print(sys.path)
-        
         
         self._secclient = conn = SecopClient(uri)
         conn.connect(5)
@@ -187,8 +225,9 @@ class SECoP_Node_Device(SECoPDevice):
         self.equipment_Id = conn.properties[EQUIPMENT_ID]
         
         self.parent = None 
-        self.name = '%s (%s)' % (self.equipment_Id, conn.uri)        
-        self.prefix = None
+        name = '%s (%s)' % (self.equipment_Id, conn.uri)  
+              
+        prefix = self.equipment_Id + '_'
         
         self.modules = conn.modules
         
@@ -200,23 +239,14 @@ class SECoP_Node_Device(SECoPDevice):
         
         self.init_Devices_from_Description()
         
-    
-    def read_configuration(self) -> OrderedDictType[str, Dict[str, Any]]:
-        res = OrderedDict()
+        config = () #TODO add config signals ---> all node Properties
         
-        for par_name, par in self.properties.items():
-            res[par_name] = par.read()    
-        return res
+        super().__init__(prefix, name, config)
+        
     
-    def describe_configuration(self) -> OrderedDictType[str, Dict[str, Any]]:
-       res = OrderedDict()
-       
 
-       for par_name , par in self.properties.items():
-            print(par.describe())
-            res[par_name] = par.describe()
-       return res
-   
+    
+
     def _get_prefix(self):
         if not self._secclient:
             return None
@@ -231,24 +261,29 @@ class SECoP_Node_Device(SECoPDevice):
         
         # retrieve Object initialization Data for Devices from the Module Descriptions
         for module , module_description in self._secclient.modules.items():
+            # Descriptive Data of Module:
             module_properties = module_description.get('properties', {})
             module_parameters = module_description.get('parameters',{})
          
+            # Interfaceclass:
             cls = class_from_interface(module_properties)
-            module_cfg = {}
             
+            
+            module_cfg = {}
             module_cfg["name"] = module
             module_cfg["secclient"] = self._secclient
             module_cfg["parent"] = self
-        
+
+            # Split into read attributes
             module_cfg["read_attrs"] = {"value" : module_parameters.get('value', {})}
-            
+            # and configuration attributes
             module_cfg["configuration_attrs"] = get_config_attrs(module_parameters)
             
             #TODO kind
             #TODO Prefix
+            #TODO module properties
 
-            setupInfo[prefix+module] = ('SECoPDevices',cls.__name__, module_cfg)
+            setupInfo[module] = ('SECoPDevices',cls.__name__, module_cfg)
         
         # Initialize Device objects
         for devname, devcfg in setupInfo.items():  
@@ -256,9 +291,10 @@ class SECoP_Node_Device(SECoPDevice):
             devcls = getattr(importlib.import_module(devcfg[0]), devcfg[1])
             dev = devcls(**devcfg[2])
             
-            print(dev.__class__.__name__)
+            print(devname)
             
-            self.Devices[devcfg[2].get('name')] = dev
+            self.Devices[devname] = dev
+            self.__setattr__(devname,dev)
             
      
 
@@ -270,6 +306,7 @@ IF_CLASSES = {
     'Readable': SECoPReadableDevice,
     'Module': SECoPDevice,
 }
+
 
 
 
