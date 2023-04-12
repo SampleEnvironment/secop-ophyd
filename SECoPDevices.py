@@ -39,7 +39,7 @@ from bluesky.protocols import (
     Subscribable,
 )
  
-from frappy.client import SecopClient
+from AsyncSecopClient import AsyncSecopClient
 from frappy.logging import logger
 
 from SECoPSignal import *
@@ -219,7 +219,7 @@ class SECoP_Node_Device(StandardReadable):
         ):   
     
         
-        self._secclient = conn = SecopClient(uri)
+        self._secclient = conn = AsyncSecopClient(uri)
         conn.connect(5)
         
         self.equipment_Id = conn.properties[EQUIPMENT_ID]

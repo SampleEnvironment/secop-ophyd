@@ -2,10 +2,10 @@ import sys
 
 
 
-from frappy.client import SecopClient
+from AsyncSecopClient import AsyncSecopClient
 
 from SECoPDevices import SECoP_Node_Device
-
+from frappy.client import SecopClient
 from SECoPSignal import SECoPSignalR
 
 import asyncio
@@ -14,9 +14,9 @@ import asyncio
 async def main():
     
 
-    secclient = SecopClient('localhost:10769')
+    secclient = AsyncSecopClient('localhost:10769')
 
-    secclient.connect(1)
+    await secclient.connect(1)
 
     print(secclient.online)
     print(secclient.activate)

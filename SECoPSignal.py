@@ -1,5 +1,5 @@
 from collections import OrderedDict, namedtuple
-from frappy.client import SecopClient, CacheItem
+from AsyncSecopClient import AsyncSecopClient
 from ophyd import Kind
 from typing import Any, Dict, Generic, List, Optional, Type
 
@@ -28,7 +28,7 @@ class _WithDatatype(Generic[T]):
     datatype: Type[T]
 
 class SECoPSignalR(SignalR[T], _WithDatatype[T]):
-    def __init__(self,path: tuple[str,str], prefix: str,secclient: SecopClient) -> None:
+    def __init__(self,path: tuple[str,str], prefix: str,secclient: AsyncSecopClient) -> None:
 
         
         # secclient 
@@ -75,7 +75,7 @@ class SECoPSignalR(SignalR[T], _WithDatatype[T]):
         return SECOP2DTYPE.get(self._datainfo.get('SECoPtype'),None)          
     
     async def _read_signal(self,module:str,accessible:str,trycache:bool = False) ->tuple:
-        read_val = self._secclient.getParameter(self._module,self._accessible,trycache =True)
+        read_val =  await self._secclient.getParameter(self._module,self._accessible,trycache =True)
         ts  = read_val.timestamp
         val = read_val.value
         
@@ -191,129 +191,19 @@ class SECoPNodeProperty(SECoPSignalR):
 
     
 
-class SECoPParameter:
-    def __init__(self,prefix,name,module_name,param_desc,secclient : SecopClient,kind) -> None:
-        self._secclient = secclient
-        self.kind = kind
-        self.name = name
-        self.module_name = module_name
-        
-        self.datainfo = param_desc.get('datainfo')
-        self.datainfo['SECoP_dtype'] = self.datainfo.pop('type')
-        
-        self.dtype  = None
-        self.source = prefix+name
-        self.shape  = []
-        
-    def describe(self):
-        res  = {}
-        
-        res['source'] = self.source
-        res['dtype']  = self.dtype
-        res['shape']  = self.shape
-        
 
-        for property_name, prop_val in self.datainfo.items():
-            res[property_name] = prop_val
-            
-        return res
-    
-    def read(self):
-        val =  self._secclient.getParameter(self.module_name,self.name,trycache =True)        
-        return get_read_str(value=val[0],timestamp=val[1])
-    
-class SECoPParameterDouble(SECoPParameter):
-    def __init__(self, prefix, name, module_name, param_desc, secclient, kind) -> None:
-        super().__init__(prefix, name, module_name, param_desc, secclient, kind)
-        
-        self.dtype = 'number'
-            
-    
-    
-
-class SECoPParameterInt(SECoPParameter):
-    def __init__(self, prefix, name, module_name, param_desc, secclient, kind) -> None:
-        super().__init__(prefix, name, module_name, param_desc, secclient, kind)
-
-        self.dtype = 'number'
-
-class SECoPParameterScaled(SECoPParameter):
-    def __init__(self, prefix, name, module_name, param_desc, secclient, kind) -> None:
-        super().__init__(prefix, name, module_name, param_desc, secclient, kind)
-        
-        self.dtype = 'number'
-
-class SECoPParameterBool(SECoPParameter):
-    def __init__(self, prefix, name, module_name, param_desc, secclient, kind) -> None:
-        super().__init__(prefix, name, module_name, param_desc, secclient, kind)
-        
-        self.dtype = 'boolean'
-
-class SECoPParameterEnum(SECoPParameter):
-    def __init__(self, prefix, name, module_name, param_desc, secclient, kind) -> None:
-        super().__init__(prefix, name, module_name, param_desc, secclient, kind)
-        self.dtype = 'number'
-        
-    def read(self):
-        val =  self._secclient.getParameter(self.module_name,self.name,trycache =True)        
-        return get_read_str(value=val[0].value,timestamp=val[1])
-
-class SECoPParameterString(SECoPParameter):
     def __init__(self, prefix, name, module_name, param_desc, secclient, kind) -> None:
         super().__init__(prefix, name, module_name, param_desc, secclient, kind)
         self.dtype = 'string'
 
-class SECoPParameterBlob(SECoPParameter):
-    def __init__(self, prefix, name, module_name, param_desc, secclient, kind) -> None:
-        super().__init__(prefix, name, module_name, param_desc, secclient, kind)
-        self.dtype = 'string'
-
-#TODO: shape for now only for the first Dim, later maybe recursive??
-class SECoPParameterArray(SECoPParameter):
-    def __init__(self, prefix, name, module_name, param_desc, secclient, kind) -> None:
-        super().__init__(prefix, name, module_name, param_desc, secclient, kind)
-        self.dtype = 'array'
-        self.shape = [ 1,  self.datainfo.get('maxlen',None)]
-        
-        
-
-    
-        
-
+#TODO: Assay: shape for now only for the first Dim, later maybe recursive??
 
 #TODO: status tuple 
-class SECoPParameterTuple(SECoPParameter):
-    def __init__(self, prefix, name, module_name, param_desc, secclient, kind) -> None:
-        super().__init__(prefix, name, module_name, param_desc, secclient, kind)
-        self.dtype = 'array'
-        self.shape = [1, len(self.datainfo.get('members'))]
-        
-    def read(self):
-        val =  self._secclient.getParameter(self.module_name,self.name,trycache =True)
-        conv2list = list(val[0])  
-        return get_read_str(value=conv2list,timestamp=val[1])
-    
-    
+
 # TODO: is dtype = 'object' allowed???
-class SECoPParameterStruct(SECoPParameter):
-    def __init__(self, prefix, name, module_name, param_desc, secclient, kind) -> None:
-        super().__init__(prefix, name, module_name, param_desc, secclient, kind)
-        self.dtype = 'object'
+
     
-PARAM_CLASS = {
-#JSON-Transport Datatype : SECoP Datatype  
-    'double' : SECoPParameterDouble,
-    'int'    : SECoPParameterInt,
-    'scaled' : SECoPParameterScaled,
-    'bool'   : SECoPParameterBool,
-    'enum'   : SECoPParameterEnum,
-    'string' : SECoPParameterString,
-    'blob'   : SECoPParameterBlob,
-    'array'  : SECoPParameterArray,
-    'tuple'  : SECoPParameterTuple,
-    'struct' : SECoPParameterStruct
-     
-}
+
 
 SECOP2DTYPE = {
     'double' : 'number',
