@@ -209,7 +209,7 @@ class SECoPMoveableDevice(SECoPReadableDevice):
 class SECoP_Node_Device(StandardReadable):
     def __init__(
         self,
-        uri: str, 
+        secclient: AsyncSecopClient, 
         #prefix: str, 
         #name: str = "", 
         #primary: Optional[SignalR] = None, 
@@ -219,33 +219,34 @@ class SECoP_Node_Device(StandardReadable):
         ):   
     
         
-        self._secclient = conn = AsyncSecopClient(uri)
-        conn.connect(5)
+        self._secclient = secclient
         
-        self.equipment_Id = conn.properties[EQUIPMENT_ID]
+        self.equipment_Id :str = self._secclient.properties[EQUIPMENT_ID]
+        self.modules :   Dict[str,T] = self._secclient.modules
+        self.properties: Dict[str,T] = self._secclient.properties
+        self.protocolVersion: Dict[str,T] = self._secclient.secop_version
+        self.Devices : Dict[str,T] = {}
         
+    
         self.parent = None 
-        name = '%s (%s)' % (self.equipment_Id, conn.uri)  
+        name = '%s_%s' % (self.equipment_Id, self._secclient.uri)  
               
         prefix = self.equipment_Id + '_'
+
         
-        self.modules = conn.modules
+        config = [] #TODO add config signals ---> all node Properties
         
-        self.properties = conn.properties
-        self.protocolVersion = conn.secop_version
-        
-        self.Devices = {}
-        
-        
-        self.init_Devices_from_Description()
-        
-        config = () #TODO add config signals ---> all node Properties
-        
+        for property in self.properties:
+            config.append(SECoPNodePropSignal(property,prefix,secclient))
+    
         super().__init__(prefix, name, config)
         
-    
+       
+        #self.init_Devices_from_Description()
+        
 
-    
+        
+        
 
     def _get_prefix(self):
         if not self._secclient:

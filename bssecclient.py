@@ -6,10 +6,10 @@ from AsyncSecopClient import AsyncSecopClient
 
 from SECoPDevices import SECoP_Node_Device
 from frappy.client import SecopClient
-from SECoPSignal import SECoPSignalR
+from SECoPSignal import SECoPSignalR ,SECoPSignalRW
 
 import asyncio
-
+import time
 
 async def main():
     
@@ -24,13 +24,30 @@ async def main():
 
     testSig = SECoPSignalR(path=('cryo','value'),prefix='cryo:',secclient=secclient)
 
-
-    print( await testSig.read())
-    print( await testSig.describe())
+    testSigRW = SECoPSignalRW(path=('cryo','target'),prefix='cryo:',secclient=secclient)
     
-    _signal_desc = secclient.modules.get('cryo').get('accessibles').get('value')
+    
+    print( await testSigRW.read())
+    #secclient.disconnect()
+    
+    await secclient.connect(2)
+    print( await testSigRW.describe())
 
 
+    await testSigRW.set(20)
+    
+    print( await testSigRW.read())
+    await testSigRW.set(21)
+    print( await testSigRW.read())
+    #_signal_desc = secclient.modules.get('cryo').get('accessibles').get('value')
+
+
+
+    cryoNode = SECoP_Node_Device(secclient=secclient)
+    #print(cryoNode.equipment_Id)
+    #print(cryoNode.properties)
+    
+    print(await cryoNode.read_configuration())
 #print(secclient.getParameter('cryo','value'))
 
 #print(secclient.modules)

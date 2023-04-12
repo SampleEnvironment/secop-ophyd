@@ -3,10 +3,13 @@ from AsyncSecopClient import AsyncSecopClient
 from ophyd import Kind
 from typing import Any, Dict, Generic, List, Optional, Type
 
-from ophyd.v2.core import AsyncStatus,Signal,SignalR,SignalRW,T,Callback
+from ophyd.v2.core import AsyncStatus,Signal,SignalW,SignalR,SignalRW,T,Callback
 from bluesky.protocols import Reading, Descriptor
 import asyncio
 import copy
+import time
+
+
 
 def get_read_str(value,timestamp):
     return {"value":value,"timestamp":timestamp}
@@ -24,13 +27,11 @@ def get_shape(datainfo):
         return []
 
 
-class _WithDatatype(Generic[T]):
-    datatype: Type[T]
 
-class SECoPSignalR(SignalR[T], _WithDatatype[T]):
+
+class SECoPSignalR(SignalR[T]):
     def __init__(self,path: tuple[str,str], prefix: str,secclient: AsyncSecopClient) -> None:
-
-        
+        self.set_name(path[1])
         # secclient 
         self._secclient = secclient
         
@@ -94,10 +95,11 @@ class SECoPSignalR(SignalR[T], _WithDatatype[T]):
             
 
     async def read(self,cached: Optional[bool] = None) -> Dict[str,Reading]:
-        if self._check_cached(cached):
+        if self._check_cached(cached): 
+            #cahed read
             val = await self._read_signal(self._module,self._accessible,trycache =True)
-        else:
-            #TODO async io SECoP Frappy Client  
+        else: 
+            #non cached read from sec-node          
             val =  await self._read_signal(self._module,self._accessible,trycache =False)        
         return get_read_str(value=val[0],timestamp=val[1])
         
@@ -170,25 +172,118 @@ class SECoPSignalR(SignalR[T], _WithDatatype[T]):
         pass
 
     def source(self) -> str:
-        return self._prefix + self._accessible
+        return self._prefix + self.name
     
     async def connect(self, prefix: str = "", sim=False):
         #TODO reconnect and exception handling
         if self._secclient.state == 'connected':
             return
         if self._secclient.state == 'disconnected':
-            self._secclient.connect(1)
+            await self._secclient.connect(1)
             return
     
 
+
+
 class SECoPSignalRW(SECoPSignalR[T], SignalRW[T]):
+    def __init__(self, path: tuple[str, str], prefix: str, secclient: AsyncSecopClient) -> None:
+        super().__init__(path, prefix, secclient)
+        
+        if self._datainfo.get('readonly'):
+            raise ReadonlyError
+        
+        
+    
+    def set(self, value: T, wait=True) -> AsyncStatus:
+        """Set the value and return a status saying when it's done"""
+        return AsyncStatus(
+            self._secclient.setParameter(
+                module = self._module,
+                parameter= self._accessible,
+                value=value)
+            )
+
+class SECoPNodePropSignal(SignalR[T]):
+    def __init__(self, name:str , prefix: str, secclient: AsyncSecopClient) -> None:
+          # secclient 
+          
+        self._secclient = secclient
+        self.set_name(name)
+        
+                
+        self._staged = False
+        
+        self._prefix = prefix
+        
+    async def read(self,cached: Optional[bool] = None) -> Dict[str,Reading]:
+      
+        return get_read_str(self._secclient.properties[self.name],timestamp=time.time)
+        
+       
+    async def describe(self) -> Dict[str, Descriptor]:
+     
+        
+        val = self._secclient.properties[self.name]
+        
+        description  = {}
+        
+        description['source'] = self.source()
+        description['dtype']  = val.__class__.__name__
+        description['shape']  = []
+        
+
+
+        
+        return description
+
+    
+
+    def stage(self) -> List[Any]:
+        """Start caching this signal"""
+        return []
+
+
+    def unstage(self) -> List[Any]:
+        """Stop caching this signal"""
+        return []
+
+    async def get_value(self, cached: Optional[bool] = None) -> T:
+        """The current value"""
+        return self._secclient.properties[self.name]   
+
+
+    def subscribe_value(self, function: Callback[T]):
+        """Subscribe to updates in value of a device"""
+        pass
+
+    def subscribe(self, function: Callback[Dict[str, Reading]]) -> None:
+        """Subscribe to updates in the reading"""
+        pass
+
+
+    def clear_sub(self, function: Callback) -> None:
+        """Remove a subscription."""
+        pass
+
+    def source(self) -> str:
+        return self._prefix + self.name
+    
+    async def connect(self, prefix: str = "", sim=False):
+        #TODO reconnect and exception handling
+        if self._secclient.state == 'connected':
+            return
+        if self._secclient.state == 'disconnected':
+            await self._secclient.connect(1)
+            return
+    
+
+
+
+
+
+class ReadonlyError(Exception):
+    "Raised, when Secop parameter is readonly, but was used to construct rw ophyd Signal"
     pass
-
-class SECoPNodeProperty(SECoPSignalR):
-    pass
-
-
-
     
 
 
@@ -200,7 +295,7 @@ class SECoPNodeProperty(SECoPSignalR):
 
 #TODO: status tuple 
 
-# TODO: is dtype = 'object' allowed???
+#TODO: is dtype = 'object' allowed???
 
     
 

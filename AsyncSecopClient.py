@@ -177,10 +177,10 @@ class AsyncSecopClient(SecopClient):
         self.txq.put(entry, timeout=3)
         return entry
     
-    async def _reconnect(self, connected_callback=None):
+    def _reconnect(self, connected_callback=None):
         while not self._shutdown:
             try:
-                await self.connect()
+                asyncio.run(self.connect)
                 if connected_callback:
                     connected_callback()
                 break
@@ -281,6 +281,7 @@ class AsyncSecopClient(SecopClient):
         else:
             self.log.warning('%s disconnected', self.uri)
             self._set_state(False, 'disconnected')
+            
     def __txthread(self):
         while self._running:
             entry = self.txq.get()
