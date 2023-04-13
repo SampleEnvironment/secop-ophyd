@@ -1,4 +1,5 @@
 from collections import OrderedDict, namedtuple
+
 from AsyncSecopClient import AsyncSecopClient
 from ophyd import Kind
 from typing import Any, Dict, Generic, List, Optional, Type
@@ -9,6 +10,7 @@ import asyncio
 import copy
 import time
 
+import collections.abc
 
 
 def get_read_str(value,timestamp):
@@ -203,38 +205,47 @@ class SECoPSignalRW(SECoPSignalR[T], SignalRW[T]):
                 value=value)
             )
 
-class SECoPNodePropSignal(SignalR[T]):
-    def __init__(self, name:str , prefix: str, secclient: AsyncSecopClient) -> None:
+class SECoPPropertySignal(SignalR[T]):
+    def __init__(self, prop_key:str, propertyDict:Dict[str,T]) -> None:
           # secclient 
           
-        self._secclient = secclient
-        self.set_name(name)
-        
+        self._property_dict = propertyDict
+        self._prop_key = prop_key
+        self._datatype = self._get_datatype()
                 
         self._staged = False
+
+    def _get_datatype(self) -> str:
+        prop_val = self._property_dict[self._prop_key]
         
-        self._prefix = prefix
+        if isinstance(prop_val,str):
+            return 'string'
+        if isinstance(prop_val,(int,float)):
+            return'number'
+        if isinstance(prop_val,collections.abc.Sequence):
+            return 'array'
+        if isinstance(prop_val,bool):
+            return 'bool'
+        
+        raise Exception('unsupported datatype in Node Property: ' + str(prop_val.__class__.__name__) )
         
     async def read(self,cached: Optional[bool] = None) -> Dict[str,Reading]:
       
-        return get_read_str(self._secclient.properties[self.name],timestamp=time.time)
+        return {self._prop_key:get_read_str(self._property_dict[self._prop_key],timestamp=time.time())}
         
        
     async def describe(self) -> Dict[str, Descriptor]:
-     
-        
-        val = self._secclient.properties[self.name]
-        
+              
         description  = {}
         
         description['source'] = self.source()
-        description['dtype']  = val.__class__.__name__
+        description['dtype']  = self._get_datatype()
         description['shape']  = []
         
 
 
         
-        return description
+        return {self._prop_key:description}
 
     
 
@@ -266,16 +277,10 @@ class SECoPNodePropSignal(SignalR[T]):
         pass
 
     def source(self) -> str:
-        return self._prefix + self.name
+        return self.name
     
     async def connect(self, prefix: str = "", sim=False):
-        #TODO reconnect and exception handling
-        if self._secclient.state == 'connected':
-            return
-        if self._secclient.state == 'disconnected':
-            await self._secclient.connect(1)
-            return
-    
+        pass
 
 
 

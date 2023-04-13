@@ -22,32 +22,38 @@ async def main():
     print(secclient.activate)
 
 
-    testSig = SECoPSignalR(path=('cryo','value'),prefix='cryo:',secclient=secclient)
+    #testSig = SECoPSignalR(path=('cryo','value'),prefix='cryo:',secclient=secclient)
 
-    testSigRW = SECoPSignalRW(path=('cryo','target'),prefix='cryo:',secclient=secclient)
+    #testSigRW = SECoPSignalRW(path=('cryo','target'),prefix='cryo:',secclient=secclient)
     
     
-    print( await testSigRW.read())
+    #print( await testSigRW.read())
     #secclient.disconnect()
     
-    await secclient.connect(2)
-    print( await testSigRW.describe())
+    #await secclient.connect(2)
+    #print( await testSigRW.describe())
 
 
-    await testSigRW.set(20)
+    #await testSigRW.set(20)
     
-    print( await testSigRW.read())
-    await testSigRW.set(21)
-    print( await testSigRW.read())
+    #print( await testSigRW.read())
+    #await testSigRW.set(21)
+    #print( await testSigRW.read())
     #_signal_desc = secclient.modules.get('cryo').get('accessibles').get('value')
 
 
 
     cryoNode = SECoP_Node_Device(secclient=secclient)
+    #print(secclient.properties)
     #print(cryoNode.equipment_Id)
     #print(cryoNode.properties)
     
     print(await cryoNode.read_configuration())
+
+    await secclient.connect(2)
+    print(await cryoNode.read_configuration())
+
+   # print(await cryoNode.describe_configuration())
 #print(secclient.getParameter('cryo','value'))
 
 #print(secclient.modules)

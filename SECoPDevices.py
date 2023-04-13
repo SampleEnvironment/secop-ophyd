@@ -129,42 +129,39 @@ class SECoPDevice():
         self._secclient = secclient     
     
 
-class SECoPReadableDevice(SECoPDevice):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        
+class SECoPReadableDevice(StandardReadable):
+
+    def __init__(
+        self,
+        secclient: AsyncSecopClient,
+        module_name: str
+        ):   
     
-    def read(self) -> Dict[str, Reading]:
-        res = OrderedDict()
-       
-        for par_name, par in self.read_attrs.items():
-            res[par_name] = par.read()
         
-        return res
-    
-    def describe(self) -> Dict[str, Reading]:
-        res = OrderedDict()
+        self._secclient = secclient
         
-        for par_name, par in self.read_attrs.items():
-            res[par_name] = par.describe()
+        module_desc = secclient.modules[module_name]
         
-        return res
         
-    
-    def read_configuration(self) -> Dict[str, Reading]:
-        res = OrderedDict()
-       
-        for par_name, par in self.configuration_attrs.items():
-            res[par_name] = par.read()
         
-        return res
-    
-    def describe_configuration(self) -> Dict[str, Reading]:
-        res = OrderedDict()
-        for par_name, par in self.configuration_attrs.items():
-            res[par_name] = par.describe()
+                
+        config = [] 
         
-        return res
+        # generate Signals from Module Properties
+        for property in module_desc['properties']:
+            setattr(self,property,SECoPPropertySignal(property,secclient.properties))
+            config.append(getattr(self,property))
+
+        # generate Signals from Module accessibles
+        for acessible in module_desc['parameters']:
+            
+            pass
+        
+        super().__init__(prefix = None, name=name, config = config)
+        
+        #TODO generate devices from module descriptions
+        #self.init_Devices_from_Description()
+
     
     def configure(self, d: Dict[str, Any]) -> tuple[Dict[str, Any], Dict[str, Any]]:
         """Configure the device for something during a run
@@ -209,37 +206,29 @@ class SECoPMoveableDevice(SECoPReadableDevice):
 class SECoP_Node_Device(StandardReadable):
     def __init__(
         self,
-        secclient: AsyncSecopClient, 
-        #prefix: str, 
-        #name: str = "", 
-        #primary: Optional[SignalR] = None, 
-        #read: Sequence[AsyncReadable] = ..., 
-        #read_uncached: Sequence[SignalR] = ..., 
-        #config: Sequence[AsyncReadable] = ...
+        secclient: AsyncSecopClient
         ):   
     
         
         self._secclient = secclient
         
-        self.equipment_Id :str = self._secclient.properties[EQUIPMENT_ID]
+        
         self.modules :   Dict[str,T] = self._secclient.modules
-        self.properties: Dict[str,T] = self._secclient.properties
-        self.protocolVersion: Dict[str,T] = self._secclient.secop_version
         self.Devices : Dict[str,T] = {}
         
-    
-        self.parent = None 
-        name = '%s_%s' % (self.equipment_Id, self._secclient.uri)  
-              
-        prefix = self.equipment_Id + '_'
+       
 
         
-        config = [] #TODO add config signals ---> all node Properties
+        #Name is set to sec-node equipment_id
+        name = self._secclient.properties[EQUIPMENT_ID] 
         
-        for property in self.properties:
-            config.append(SECoPNodePropSignal(property,prefix,secclient))
+        config = [] 
+        
+        for property in self._secclient.properties:
+            setattr(self,property,SECoPPropertySignal(property,secclient.properties))
+            config.append(getattr(self,property))
     
-        super().__init__(prefix, name, config)
+        super().__init__(prefix = None, name=name, config = config)
         
        
         #self.init_Devices_from_Description()
@@ -248,12 +237,7 @@ class SECoP_Node_Device(StandardReadable):
         
         
 
-    def _get_prefix(self):
-        if not self._secclient:
-            return None
-        equipment_name = clean_identifier(self.equipment_Id).lower()
-        self.prefix = equipment_name
-        return self.prefix
+
    
     def init_Devices_from_Description(self):
         
