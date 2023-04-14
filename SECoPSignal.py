@@ -169,8 +169,13 @@ class SECoPSignalR(SignalR[T]):
 
     def subscribe_value(self, function: Callback[T]):
         """Subscribe to updates in value of a device"""
-        pass
-
+        #function(self._secclient.cache.get((self._module,self._parameter)).value)
+        def updateItem(module,parameter,item):
+            print(item)
+            function(item)
+        
+        self._secclient.register_callback((self._module,self._parameter),updateItem)
+    
     def subscribe(self, function: Callback[Dict[str, Reading]]) -> None:
         """Subscribe to updates in the reading"""
         pass
@@ -185,6 +190,7 @@ class SECoPSignalR(SignalR[T]):
     
     def connect(self, prefix: str = "", sim=False):
         pass 
+
 
 
 

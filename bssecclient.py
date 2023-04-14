@@ -51,7 +51,7 @@ async def main():
 
     cryo = cryoNode.cryo
     
-    stat = cryo.set(10.5)
+    stat = cryo.set(11)
     
     await stat 
     
