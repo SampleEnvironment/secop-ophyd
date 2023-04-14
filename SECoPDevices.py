@@ -4,9 +4,9 @@ from ophyd.status import Status
 from ophyd import Kind
 from ophyd import BlueskyInterface
 
-from ophyd.v2.core import StandardReadable, AsyncStatus, AsyncReadable
+from ophyd.v2.core import StandardReadable, AsyncStatus, AsyncReadable, observe_value
 
-from bluesky.protocols import Movable, Stoppable
+from bluesky.protocols import Movable, Stoppable, SyncOrAsync
  
 from typing import (
     Any,
@@ -62,17 +62,20 @@ import sys
     ||---dev4(readable)
 """
 
+
+
+
 def clean_identifier(anystring):
     return str(re.sub(r'\W+|^(?=\d)', '_', anystring))
 
-def class_from_interface(mod_properties):
+def class_from_interface(mod_properties : dict):
         
     for interface_class in mod_properties.get(INTERFACE_CLASSES):
         try:
             return IF_CLASSES[interface_class]
         except KeyError:
             continue
-    return SECoPDevice
+    raise Exception("no compatible Interfaceclass found in: " + str(mod_properties.get(INTERFACE_CLASSES)))
 
 def get_config_attrs(parameters):
     parameters_cfg = parameters.copy()
@@ -84,50 +87,7 @@ def get_config_attrs(parameters):
 
 
 
-class SECoPDevice():
-    def __init__(self,
-                 prefix = "",
-                 secclient = None,
-                 *,
-                 name,
-                 kind = None,
-                 read_attrs = None,
-                 configuration_attrs = None,
-                 parent = None,
-                 **kwargs):
-        
-        self.name = name 
-        self.parent = parent
-        self.prefix = prefix
-        self.kind = kind
-        self.read_attrs = {}
 
-        # read Attributes
-        for attr_name, attr_desc in read_attrs.items():
-            dtype = attr_desc.get('datainfo').get('type')
-            self.read_attrs[attr_name] = PARAM_CLASS[dtype](
-                name=attr_name,
-                module_name=name,
-                param_desc=attr_desc,
-                secclient=secclient,
-                prefix=prefix + name + '_',
-                kind=Kind.hinted)    
-            
-            
-        # configuration Attributes
-        self.configuration_attrs = {}
-        for attr_name, attr_desc in configuration_attrs.items():
-            dtype = attr_desc.get('datainfo').get('type')
-            self.configuration_attrs[attr_name] =  PARAM_CLASS[dtype](
-                name=attr_name,
-                module_name=name,
-                param_desc=attr_desc,
-                secclient=secclient,
-                prefix=prefix + name + '_',
-                kind=Kind.config)   
-        
-        self._secclient = secclient     
-    
 
 class SECoPReadableDevice(StandardReadable):
 
@@ -142,28 +102,48 @@ class SECoPReadableDevice(StandardReadable):
         
         module_desc = secclient.modules[module_name]
         
+        self.value: SECoPSignalR
+        self.status: SECoPSignalR
         
         
-                
+        #list for config signals
         config = [] 
+        #list for read signals
+        read   = []
         
         # generate Signals from Module Properties
         for property in module_desc['properties']:
-            setattr(self,property,SECoPPropertySignal(property,secclient.properties))
+            setattr(self,property,SECoPPropertySignal(property,module_desc['properties']))
             config.append(getattr(self,property))
 
-        # generate Signals from Module accessibles
-        for acessible in module_desc['parameters']:
+        # generate Signals from Module parameters eiter r or rw
+        for parameter, properties in module_desc['parameters'].items():
             
-            pass
+            #construct signal
+            readonly = properties.get('readonly',None)
+            if readonly == True:
+                setattr(self,parameter,SECoPSignalR((module_name,parameter),secclient=secclient))
+            elif readonly == False:
+                setattr(self,parameter,SECoPSignalRW((module_name,parameter),secclient=secclient))
+            else:
+                raise Exception('Invalid SECoP Parameter, readonly property is mandatory, but was not found, or is not bool')
+
+            # in SECoP only the 'value' parameter is the primary read prameter
+            if parameter == 'value':
+                read.append(getattr(self,parameter))
+            else:
+                config.append(getattr(self,parameter))
         
-        super().__init__(prefix = None, name=name, config = config)
         
-        #TODO generate devices from module descriptions
-        #self.init_Devices_from_Description()
+        
+        #TODO Commands!!!
+        
+        super().__init__(prefix = None, name=module_name, config = config)
+        
+
 
     
-    def configure(self, d: Dict[str, Any]) -> tuple[Dict[str, Any], Dict[str, Any]]:
+    async def configure(self, d: Dict[str, Any]) -> tuple[Dict[str, Any], Dict[str, Any]]:
         """Configure the device for something during a run
 
         This default implementation allows the user to change any of the
@@ -181,27 +161,58 @@ class SECoPReadableDevice(StandardReadable):
         (old, new) tuple of dictionaries
         Where old and new are pre- and post-configure configuration states.
         """
-        old = self.read_configuration()
+        old = await self.read_configuration()
+        stat = []
         for key, val in d.items():
-            if key not in self.configuration_attrs:
+            if key not in self._conf_signals:
                 # a little extra checking for a more specific error msg
-                if key not in self.component_names:
-                    raise ValueError("There is no signal named %s" % key)
-                else:
-                    raise ValueError(
-                        "%s is not one of the "
-                        "configuration_fields, so it cannot be "
-                        "changed using configure" % key
-                    )
-            getattr(self, key).set(val).wait()
+                raise ValueError(
+                    "%s is not one of the "
+                    "configuration_fields, so it cannot be "
+                    "changed using configure" % key
+                )
+            stat.append(getattr(self,key).set(val))
+            
+        await asyncio.gather(*stat)
         new = self.read_configuration()
         return old, new
     
-class SECoPWritableDevice(SECoPReadableDevice):
-    pass
+class SECoPWritableDevice(SECoPReadableDevice,Movable):
+    """Fast settable device target"""
+    def __init__(self, secclient: AsyncSecopClient, module_name: str):
+        super().__init__(secclient, module_name)
+        self.target:SECoPSignalRW
+        
+    def set(self, value) -> AsyncStatus:
+        return AsyncStatus(self.target.set(value,False))
+    
 
-class SECoPMoveableDevice(SECoPReadableDevice):
-    pass
+class SECoPMoveableDevice(SECoPWritableDevice,Movable,Stoppable):
+    def __init__(self, secclient: AsyncSecopClient, module_name: str):
+        super().__init__(secclient, module_name)
+        
+        
+        self._success = True
+        
+    def set(self,new_target,timeout: Optional[float] = None) -> AsyncStatus:
+        coro = asyncio.wait_for(self._move(new_target), timeout=timeout)
+        return AsyncStatus(coro)
+    
+    async def _move(self,new_target):
+        self._success = True
+        await self.target.set(new_target,wait=False)
+        async for current_stat in observe_value(self.status):
+            print(current_stat)
+            if 100 <= current_stat[0].value < 300:
+                break
+        
+        if not self._success:
+            raise RuntimeError("Module was stopped")
+        
+    async def stop(self, success=True) -> SyncOrAsync[None]:
+        pass
+        
+    
     
 class SECoP_Node_Device(StandardReadable):
     def __init__(
@@ -230,8 +241,12 @@ class SECoP_Node_Device(StandardReadable):
     
         super().__init__(prefix = None, name=name, config = config)
         
-       
-        #self.init_Devices_from_Description()
+        for module, module_desc in self._secclient.modules.items():
+            SECoPDeviceClass = class_from_interface(module_desc['properties'])
+            
+            setattr(self,module,SECoPDeviceClass(secclient,module))
+            
+
         
 
         
@@ -289,9 +304,8 @@ IF_CLASSES = {
     'Drivable': SECoPMoveableDevice,
     'Writable': SECoPWritableDevice,
     'Readable': SECoPReadableDevice,
-    'Module': SECoPDevice,
+    #'Module': SECoPDevice,
 }
-
 
 
 

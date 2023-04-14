@@ -48,11 +48,15 @@ async def main():
     #print(cryoNode.equipment_Id)
     #print(cryoNode.properties)
     
-    print(await cryoNode.read_configuration())
 
-    await secclient.connect(2)
-    print(await cryoNode.read_configuration())
-
+    cryo = cryoNode.cryo
+    
+    stat = cryo.set(10.5)
+    
+    await stat 
+    
+    print(await cryo.read())
+    
    # print(await cryoNode.describe_configuration())
 #print(secclient.getParameter('cryo','value'))
 

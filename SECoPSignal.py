@@ -32,8 +32,8 @@ def get_shape(datainfo):
 
 
 class SECoPSignalR(SignalR[T]):
-    def __init__(self,path: tuple[str,str], prefix: str,secclient: AsyncSecopClient) -> None:
-        self.set_name(path[1])
+    def __init__(self,path: tuple[str,str],secclient: AsyncSecopClient) -> None:
+
         # secclient 
         self._secclient = secclient
         
@@ -41,14 +41,14 @@ class SECoPSignalR(SignalR[T]):
         # module:acessible Path for reading/writing (module,accessible)
  
         self._module = path[0]
-        self._accessible = path[1]
+        self._parameter = path[1]
         
         self._signal_desc : Dict[str,T] 
         self._datainfo : Dict[str,T]  
 
         self._signal_desc = self._get_signal_desc()        
-        self._datainfo = self._signal_desc.pop('datainfo')
-        self._datainfo['SECoPtype'] = self._datainfo.pop('type')
+        self._datainfo = self._signal_desc.get('datainfo')
+        #self._datainfo['SECoPtype'] = self._datainfo.pop('type')
         
         #self._datainfo = param_desc.get('datainfo')
         #self.datainfo['SECoP_dtype'] = self.datainfo.pop('type')
@@ -62,11 +62,11 @@ class SECoPSignalR(SignalR[T]):
         
         self._staged = False
         
-        self._prefix = prefix
+
 
     def _get_signal_desc(self):
-        signal_desc = self._secclient.modules.get(self._module).get('accessibles').get(self._accessible)
-        return copy.deepcopy(signal_desc)
+        return self._secclient.modules.get(self._module).get('parameters').get(self._parameter)
+         
         
     def _check_cached(self, cached: Optional[bool]) -> bool:
         if cached is None:
@@ -74,11 +74,12 @@ class SECoPSignalR(SignalR[T]):
         elif cached:
             assert self._secclient.activate, f"{self.source} not being monitored"
         return cached
+    
     def _get_dtype(self) -> str:
-        return SECOP2DTYPE.get(self._datainfo.get('SECoPtype'),None)          
+        return SECOP2DTYPE.get(self._datainfo.get('type'),None)          
     
     async def _read_signal(self,module:str,accessible:str,trycache:bool = False) ->tuple:
-        read_val =  await self._secclient.getParameter(self._module,self._accessible,trycache =True)
+        read_val =  await self._secclient.getParameter(self._module,self._parameter,trycache =True)
         ts  = read_val.timestamp
         val = read_val.value
         
@@ -99,10 +100,10 @@ class SECoPSignalR(SignalR[T]):
     async def read(self,cached: Optional[bool] = None) -> Dict[str,Reading]:
         if self._check_cached(cached): 
             #cahed read
-            val = await self._read_signal(self._module,self._accessible,trycache =True)
+            val = await self._read_signal(self._module,self._parameter,trycache =True)
         else: 
             #non cached read from sec-node          
-            val =  await self._read_signal(self._module,self._accessible,trycache =False)        
+            val =  await self._read_signal(self._module,self._parameter,trycache =False)        
         return get_read_str(value=val[0],timestamp=val[1])
         
        
@@ -112,27 +113,33 @@ class SECoPSignalR(SignalR[T]):
         self._datainfo = self._signal_desc.pop('datainfo')        
         self._datainfo['SECoPtype'] = self._datainfo.pop('type')
         
-        # convert SECoP datattype to a datatype Accepted by bluesky
-        dtype = self._get_dtype()
+        
+    
         
         
         res  = {}
         
         res['source'] = self.source()
-        res['dtype']  = dtype
+        
+        # convert SECoP datattype to a datatype Accepted by bluesky
+        res['dtype']  = self._get_dtype()
         
         # get shape from datainfo and SECoPtype
-        if self._datainfo['SECoPtype'] == 'tuple':
+        if self._datainfo['type'] == 'tuple':
             res['shape'] = [1, len(self._datainfo.get('members'))]
-        elif self._datainfo['SECoPtype'] == 'array':
+        elif self._datainfo['type'] == 'array':
             res['shape'] = [ 1,  self._datainfo.get('maxlen',None)]
         else:
             res['shape']  = []
          
         for property_name, prop_val in self._signal_desc.items():
+            if property_name == 'datainfo':
+                continue
             res[property_name] = prop_val
             
         for property_name, prop_val in self._datainfo.items():
+            if property_name == 'type':
+                property_name = 'SECoPtype' 
             res[property_name] = prop_val
             
 
@@ -153,10 +160,10 @@ class SECoPSignalR(SignalR[T]):
     async def get_value(self, cached: Optional[bool] = None) -> T:
         """The current value"""
         if self._check_cached(cached):
-            val = self._read_signal(self._module,self._accessible,trycache =True)
+            val = self._read_signal(self._module,self._parameter,trycache =True)
         else:
             #TODO async io SECoP Frappy Client  
-            val = await self._read_signal(self._module,self._accessible,trycache =False)        
+            val = await self._read_signal(self._module,self._parameter,trycache =False)        
         return val[0]    
 
 
@@ -167,41 +174,36 @@ class SECoPSignalR(SignalR[T]):
     def subscribe(self, function: Callback[Dict[str, Reading]]) -> None:
         """Subscribe to updates in the reading"""
         pass
-
+        
 
     def clear_sub(self, function: Callback) -> None:
         """Remove a subscription."""
         pass
 
     def source(self) -> str:
-        return self._prefix + self.name
+        return self.name
     
-    async def connect(self, prefix: str = "", sim=False):
-        #TODO reconnect and exception handling
-        if self._secclient.state == 'connected':
-            return
-        if self._secclient.state == 'disconnected':
-            await self._secclient.connect(1)
-            return
-    
+    def connect(self, prefix: str = "", sim=False):
+        pass 
+
 
 
 
 class SECoPSignalRW(SECoPSignalR[T], SignalRW[T]):
-    def __init__(self, path: tuple[str, str], prefix: str, secclient: AsyncSecopClient) -> None:
-        super().__init__(path, prefix, secclient)
+    def __init__(self, path: tuple[str, str], secclient: AsyncSecopClient) -> None:
+        super().__init__(path, secclient)
         
         if self._datainfo.get('readonly'):
             raise ReadonlyError
         
         
-    
+    #TODO wait???
     def set(self, value: T, wait=True) -> AsyncStatus:
         """Set the value and return a status saying when it's done"""
         return AsyncStatus(
             self._secclient.setParameter(
                 module = self._module,
-                parameter= self._accessible,
+                parameter= self._parameter,
                 value=value)
             )
 
@@ -260,7 +262,7 @@ class SECoPPropertySignal(SignalR[T]):
 
     async def get_value(self, cached: Optional[bool] = None) -> T:
         """The current value"""
-        return self._secclient.properties[self.name]   
+        return self._property_dict[self._prop_key]   
 
 
     def subscribe_value(self, function: Callback[T]):
@@ -279,8 +281,10 @@ class SECoPPropertySignal(SignalR[T]):
     def source(self) -> str:
         return self.name
     
-    async def connect(self, prefix: str = "", sim=False):
+    def connect(self, prefix: str = "", sim=False):
         pass
+    
+
 
 
 
