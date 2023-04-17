@@ -45,6 +45,7 @@ class Event_ts(asyncio.Event):
 class AsyncSecopClient(SecopClient):
     def __init__(self, uri, log=Logger):
         super().__init__(uri, log)
+        self._ev_loop = asyncio.get_event_loop()
     
     
     async def connect(self, try_period=0):

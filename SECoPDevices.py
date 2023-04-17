@@ -203,7 +203,9 @@ class SECoPMoveableDevice(SECoPWritableDevice,Movable,Stoppable):
         await self.target.set(new_target,wait=False)
         async for current_stat in observe_value(self.status):
             print(current_stat)
-            if 100 <= current_stat[0] < 300:
+            v = current_stat[0].value
+            if 100 <= v  < 300:
+                print("done")
                 break
         
         if not self._success:

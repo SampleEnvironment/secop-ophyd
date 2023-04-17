@@ -9,9 +9,9 @@ from bluesky.protocols import Reading, Descriptor
 import asyncio
 import copy
 import time
-
+from frappy.client import CacheItem
 import collections.abc
-
+import traceback
 
 def get_read_str(value,timestamp):
     return {"value":value,"timestamp":timestamp}
@@ -56,9 +56,8 @@ class SECoPSignalR(SignalR[T]):
         #self._valid = asyncio.Event()
         #self._value: Optional[T] = None
         #self._reading: Optional[Reading] = None
-        #self._value_listeners: List[Callback[T]] = []
-        
-        #self._reading_listeners: List[Callback[Dict[str, Reading]]] = []
+        self._value_listeners: List[Callback[T]] = []
+        self._reading_listeners: List[Callback[Dict[str, Reading]]] = []
         
         self._staged = False
         
@@ -166,15 +165,34 @@ class SECoPSignalR(SignalR[T]):
             val = await self._read_signal(self._module,self._parameter,trycache =False)        
         return val[0]    
 
+    def _callback(self,reading:Reading,value:T):
+        for value_listener in self._value_listeners:
+            try:
+                async def coro_wrap(value):
+                    return value_listener(value)
+                
+                asyncio.run_coroutine_threadsafe(coro_wrap(value),self._secclient._ev_loop)
+                #value_listener(value)
+            except Exception as e:
+                traceback.print_exc()
+                
+                print("insert into queue failed")
+        #for reading_listener in self._reading_listeners:
+        #    reading_listener({self.name:reading})
 
     def subscribe_value(self, function: Callback[T]):
         """Subscribe to updates in value of a device"""
-        #function(self._secclient.cache.get((self._module,self._parameter)).value)
-        def updateItem(module,parameter,item):
-            print(item)
-            function(item)
+        self._value_listeners.append(function)
         
-        self._secclient.register_callback((self._module,self._parameter),updateItem)
+        
+        self._secclient.register_callback((self._module,self._parameter),self.updateItem)
+    
+    def updateItem(self,module,parameter,entry:CacheItem):
+            value = entry.value
+            
+            reading ={parameter:{'value':value,'timestamp':entry.timestamp}}
+            self._callback(reading=reading,value=value)
+             
     
     def subscribe(self, function: Callback[Dict[str, Reading]]) -> None:
         """Subscribe to updates in the reading"""
@@ -183,7 +201,11 @@ class SECoPSignalR(SignalR[T]):
 
     def clear_sub(self, function: Callback) -> None:
         """Remove a subscription."""
-        pass
+        try:
+            self._value_listeners.remove(function)
+        except ValueError:
+            self._reading_listeners.remove(function)
+
 
     def source(self) -> str:
         return self.name

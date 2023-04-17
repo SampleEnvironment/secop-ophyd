@@ -51,12 +51,19 @@ async def main():
 
     cryo = cryoNode.cryo
     
-    stat = cryo.set(11)
+    stat = cryo.set(10.5)
     
     await stat 
     
     print(await cryo.read())
     
+    
+    print(await cryo.read())
+    
+    while True:
+        time.sleep(1)
+        print(await cryo.read())
+        pass
    # print(await cryoNode.describe_configuration())
 #print(secclient.getParameter('cryo','value'))
 
@@ -119,4 +126,4 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(main(),debug=True)
