@@ -1,5 +1,5 @@
 run_tests:
-    image: python:3.11.3-buster
+    image: python:latest
     before_script:
         - apt-get update && apt-get install make
     script:
