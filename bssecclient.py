@@ -18,8 +18,6 @@ async def main():
 
     await secclient.connect(1)
 
-    print(secclient.online)
-    print(secclient.activate)
 
 
     #testSig = SECoPSignalR(path=('cryo','value'),prefix='cryo:',secclient=secclient)
@@ -50,13 +48,13 @@ async def main():
     
 
     cryo = cryoNode.cryo
-    
+    #cryoNode.set_name('sample_changer')
     stat = cryo.set(10.5)
     
     await stat 
     
-    print(await cryo.read())
-    
+    #print(await cryo.read_configuration())
+    print(await cryo.describe_configuration())
     
     print(await cryo.read())
     
@@ -126,4 +124,4 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main(),debug=True)
+    asyncio.run(main(),debug=False)

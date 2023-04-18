@@ -47,8 +47,8 @@ class SECoPSignalR(SignalR[T]):
         self._datainfo : Dict[str,T]  
 
         self._signal_desc = self._get_signal_desc()        
-        self._datainfo = self._signal_desc.get('datainfo')
-        #self._datainfo['SECoPtype'] = self._datainfo.pop('type')
+        self._datainfo  = self._signal_desc.get('datainfo')
+        self._SECoPtype = self._datainfo.get('type')
         
         #self._datainfo = param_desc.get('datainfo')
         #self.datainfo['SECoP_dtype'] = self.datainfo.pop('type')
@@ -77,18 +77,18 @@ class SECoPSignalR(SignalR[T]):
     def _get_dtype(self) -> str:
         return SECOP2DTYPE.get(self._datainfo.get('type'),None)          
     
-    async def _read_signal(self,module:str,accessible:str,trycache:bool = False) ->tuple:
-        read_val =  await self._secclient.getParameter(self._module,self._parameter,trycache =True)
+    async def _read_signal(self,trycache:bool = False) ->tuple:
+        read_val =  await self._secclient.getParameter(self._module,self._parameter,trycache =trycache)
         ts  = read_val.timestamp
         val = read_val.value
         
-        if self._datainfo['SECoPtype'] == 'tuple':
+        if self._SECoPtype == 'tuple':
             conv2list = list(val)  
             return (conv2list,ts)
-        if self._datainfo['SECoPtype'] == 'enum':
+        if self._SECoPtype == 'enum':
             return (val.value,ts)
         #TODO array size
-        if self._datainfo['SECoPtype'] == 'array':
+        if self._SECoPtype == 'array':
             return (val,ts)
         
         return (val,ts)
@@ -99,21 +99,18 @@ class SECoPSignalR(SignalR[T]):
     async def read(self,cached: Optional[bool] = None) -> Dict[str,Reading]:
         if self._check_cached(cached): 
             #cahed read
-            val = await self._read_signal(self._module,self._parameter,trycache =True)
+            val = await self._read_signal(trycache =True)
         else: 
             #non cached read from sec-node          
-            val =  await self._read_signal(self._module,self._parameter,trycache =False)        
-        return get_read_str(value=val[0],timestamp=val[1])
+            val =  await self._read_signal(trycache =False)        
+        return {self._parameter:get_read_str(value=val[0],timestamp=val[1])}
         
        
     async def describe(self) -> Dict[str, Descriptor]:
         # get current Parameter description
         self._signal_desc = self._get_signal_desc()
-        self._datainfo = self._signal_desc.pop('datainfo')        
-        self._datainfo['SECoPtype'] = self._datainfo.pop('type')
+        self._datainfo = self._signal_desc.get('datainfo')        
         
-        
-    
         
         
         res  = {}
@@ -132,7 +129,7 @@ class SECoPSignalR(SignalR[T]):
             res['shape']  = []
          
         for property_name, prop_val in self._signal_desc.items():
-            if property_name == 'datainfo':
+            if property_name == 'datainfo' or property_name == 'datatype' :
                 continue
             res[property_name] = prop_val
             
@@ -143,7 +140,7 @@ class SECoPSignalR(SignalR[T]):
             
 
         
-        return res
+        return {self._parameter:res}
 
     
 
@@ -159,26 +156,25 @@ class SECoPSignalR(SignalR[T]):
     async def get_value(self, cached: Optional[bool] = None) -> T:
         """The current value"""
         if self._check_cached(cached):
-            val = self._read_signal(self._module,self._parameter,trycache =True)
+            val = self._read_signal(trycache =True)
         else:
             #TODO async io SECoP Frappy Client  
-            val = await self._read_signal(self._module,self._parameter,trycache =False)        
+            val = await self._read_signal(trycache =False)        
         return val[0]    
 
     def _callback(self,reading:Reading,value:T):
         for value_listener in self._value_listeners:
-            try:
-                async def coro_wrap(value):
-                    return value_listener(value)
+            async def coro_wrap_value_listener(value:T):
+                return value_listener(value)
                 
-                asyncio.run_coroutine_threadsafe(coro_wrap(value),self._secclient._ev_loop)
-                #value_listener(value)
-            except Exception as e:
-                traceback.print_exc()
+            asyncio.run_coroutine_threadsafe(coro_wrap_value_listener(value),self._secclient._ev_loop)
                 
-                print("insert into queue failed")
-        #for reading_listener in self._reading_listeners:
-        #    reading_listener({self.name:reading})
+       
+        for reading_listener in self._reading_listeners:
+            async def coro_wrap_reading_listener(reading:Reading):
+                return reading_listener(reading)
+                
+            asyncio.run_coroutine_threadsafe(coro_wrap_value_listener(reading),self._secclient._ev_loop)
 
     def subscribe_value(self, function: Callback[T]):
         """Subscribe to updates in value of a device"""
@@ -196,7 +192,9 @@ class SECoPSignalR(SignalR[T]):
     
     def subscribe(self, function: Callback[Dict[str, Reading]]) -> None:
         """Subscribe to updates in the reading"""
-        pass
+        self._reading_listeners.append(function)
+        
+        
         
 
     def clear_sub(self, function: Callback) -> None:

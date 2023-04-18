@@ -4,7 +4,7 @@ from ophyd.status import Status
 from ophyd import Kind
 from ophyd import BlueskyInterface
 
-from ophyd.v2.core import StandardReadable, AsyncStatus, AsyncReadable, observe_value
+from ophyd.v2.core import StandardReadable, AsyncStatus, AsyncReadable, observe_value, Device
 
 from bluesky.protocols import Movable, Stoppable, SyncOrAsync
  
@@ -138,9 +138,16 @@ class SECoPReadableDevice(StandardReadable):
         
         #TODO Commands!!!
         
-        super().__init__(prefix = None, name=module_name, config = config)
+        super().__init__(prefix = None, name=module_name, config = config,read=read)
         
-
+    def set_name(self, name: str = ""):
+        #if name and not self._name:
+        self._name = name
+        for attr_name, attr in self.__dict__.items():
+            # TODO: support lists and dicts of devices
+            if isinstance(attr, Device):
+                attr.set_name(f"{name}-{attr_name.rstrip('_')}")
+                attr.parent = self
 
     
     async def configure(self, d: Dict[str, Any]) -> tuple[Dict[str, Any], Dict[str, Any]]:
@@ -241,18 +248,25 @@ class SECoP_Node_Device(StandardReadable):
             setattr(self,property,SECoPPropertySignal(property,secclient.properties))
             config.append(getattr(self,property))
     
-        super().__init__(prefix = None, name=name, config = config)
+        
         
         for module, module_desc in self._secclient.modules.items():
             SECoPDeviceClass = class_from_interface(module_desc['properties'])
             
             setattr(self,module,SECoPDeviceClass(secclient,module))
             
-
+        super().__init__(prefix = None, name=name, config = config)
         
 
         
-        
+    def set_name(self, name: str = ""):
+        #if name and not self._name:
+        self._name = name
+        for attr_name, attr in self.__dict__.items():
+            # TODO: support lists and dicts of devices
+            if isinstance(attr, Device):
+                attr.set_name(f"{name}-{attr_name.rstrip('_')}")
+                attr.parent = self
 
 
    
@@ -306,7 +320,7 @@ IF_CLASSES = {
     'Drivable': SECoPMoveableDevice,
     'Writable': SECoPWritableDevice,
     'Readable': SECoPReadableDevice,
-    #'Module': SECoPDevice,
+    'Module'  : SECoPReadableDevice
 }
 
 
