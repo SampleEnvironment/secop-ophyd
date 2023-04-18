@@ -1,0 +1,8 @@
+run_tests:
+    image: python:latest
+    before_script:
+        - apt-get update && apt-get install make
+    script:
+        - make test
+    tags:
+    - docker
