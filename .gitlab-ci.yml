@@ -6,6 +6,6 @@ run_tests:
         - git submodule update 
 
     script:
-        - make test
+        - sudo make test
     tags:
     - docker
