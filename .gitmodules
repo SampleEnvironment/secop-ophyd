@@ -1,0 +1,3 @@
+[submodule "frappy"]
+	path = frappy
+	url = https://github.com/SampleEnvironment/frappy.git
