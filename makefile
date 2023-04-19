@@ -1,16 +1,24 @@
-
+ifeq ($(OS),Windows_NT)
+    activate = ./venv/Scripts/activate
+    
+else
+    UNAME_S := $(shell uname -s)
+    ifeq ($(UNAME_S),Linux)
+        activate = .venv/bin/activate
+    endif
+endif
 
 cryo: frappy/cfg/cryo_cfg.py
-	python3 frappy/bin/frappy-server frappy/cfg/cryo_cfg.py  > cryo_log.txt  2>&1 & jobs -p > pids.txt
+	python frappy/bin/frappy-server frappy/cfg/cryo_cfg.py  > cryo_log.txt  2>&1 & jobs -p > pids.txt
 
 	
 
 
 
-test: venv cryo  ## 🎯 Unit tests for Flask app
+test: venv cryo  ## 🎯 Unit tests for Bluesky SECoP Integration
 	sleep 1
 
-	. .venv/bin/activate && pytest -v test/test.py
+	. $(activate) && pytest -v test/test.py
 	kill $$(cat pids.txt)
 
 
@@ -21,9 +29,9 @@ test: venv cryo  ## 🎯 Unit tests for Flask app
 
 venv: .venv/touchfile
 
-.venv/touchfile: requirements.txt frappy/requirements.txt
-	python3 -m venv .venv
-	. .venv/bin/activate; pip install -Ur requirements.txt; pip install -Ur frappy/requirements.txt
+.venv/touchfile: requirements.txt 
+	python -m venv .venv
+	. $(activate); pip install -Ur requirements.txt
 	touch .venv/touchfile
 
 

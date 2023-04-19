@@ -1,3 +1,4 @@
 bluesky
-ophyd
 pytest
+ophyd @ git+https://github.com/bluesky/ophyd@master
+frappy @ git+https://github.com/SampleEnvironment/frappy@master

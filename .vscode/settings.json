@@ -1,3 +1,3 @@
-{
-    "python.analysis.extraPaths": ["${workspaceFolder}/frappy/","${workspaceFolder}/ophyd/"]
-}
+//{
+//    "python.analysis.extraPaths": ["${workspaceFolder}/frappy/","${workspaceFolder}/ophyd/"]
+//}
