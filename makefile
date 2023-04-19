@@ -3,7 +3,7 @@
 
 
 test: venv  ## 🎯 Unit tests for Flask app
-	. .venv/bin/activate && pytest -v test/
+	. .venv/bin/activate && pytest -v test/*
 
 
 
