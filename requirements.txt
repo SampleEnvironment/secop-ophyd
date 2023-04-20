@@ -1,6 +1,7 @@
 bluesky
 pytest
 wheel
+cycler
 ophyd @ git+https://github.com/bluesky/ophyd@master
-frappy @ git+https://github.com/SampleEnvironment/frappy
+frappy-core @ git+https://github.com/SampleEnvironment/frappy
 mlzlog

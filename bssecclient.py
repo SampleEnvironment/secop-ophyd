@@ -5,7 +5,7 @@ import sys
 from AsyncSecopClient import AsyncSecopClient
 
 from SECoPDevices import SECoP_Node_Device
-from frappy-core.client import SecopClient
+
 from SECoPSignal import SECoPSignalR ,SECoPSignalRW
 
 import asyncio
