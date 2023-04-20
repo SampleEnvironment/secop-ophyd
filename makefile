@@ -22,7 +22,7 @@ venv: .venv/touchfile
 
 .venv/touchfile: requirements.txt 
 	python3 -m venv .venv
-	. .venv/bin/activate; pip install -Ur requirements.txt
+	. .venv/bin/activate; pip install -Ur requirements.txt; pip install -Ue .
 	touch .venv/touchfile
 
 
@@ -36,3 +36,4 @@ clean:  ## 🧹 Clean up project
 	rm -rf .pytest_cache
 	rm -rf pids.txt
 	rm -rf *_log.txt
+	rm -rf *egg-info
