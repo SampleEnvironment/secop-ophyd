@@ -2,11 +2,11 @@ import sys
 
 
 
-from AsyncSecopClient import AsyncSecopClient
+from bssecop.AsyncSecopClient import AsyncSecopClient
 
-from SECoPDevices import SECoP_Node_Device
+from bssecop.SECoPDevices import SECoP_Node_Device
 
-from SECoPSignal import SECoPSignalR ,SECoPSignalRW
+from bssecop.SECoPSignal import SECoPSignalR ,SECoPSignalRW
 
 import asyncio
 import time

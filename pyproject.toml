@@ -1,0 +1,10 @@
+[build-system]
+requires = ["setuptools", "setuptools-scm"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bssecop"
+version = "0.0.1"
+description = "An Interface betrween bluesky and SECoP, using ophyd and frappy-client"
+[tool.setuptools.packages.find]
+exclude = ["frappy*"]

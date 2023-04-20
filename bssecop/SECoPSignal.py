@@ -1,6 +1,6 @@
 from collections import OrderedDict, namedtuple
 
-from AsyncSecopClient import AsyncSecopClient
+from bssecop.AsyncSecopClient import AsyncSecopClient
 from ophyd import Kind
 from typing import Any, Dict, Generic, List, Optional, Type
 

@@ -5,3 +5,5 @@ cycler
 ophyd @ git+https://github.com/bluesky/ophyd@master
 frappy-core @ git+https://github.com/SampleEnvironment/frappy
 mlzlog
+matplotlib
+pytest-asyncio

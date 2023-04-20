@@ -39,12 +39,12 @@ from bluesky.protocols import (
     Subscribable,
 )
  
-from AsyncSecopClient import AsyncSecopClient
+from bssecop.AsyncSecopClient import AsyncSecopClient
 from frappy.logging import logger
 
-from SECoPSignal import *
+from bssecop.SECoPSignal import *
 
-from propertykeys import * 
+from bssecop.propertykeys import * 
 
 import time
 import re
