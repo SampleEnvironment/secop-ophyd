@@ -20,7 +20,7 @@ async def main():
 
 
 
-    #testSig = SECoPSignalR(path=('cryo','value'),prefix='cryo:',secclient=secclient   )
+    #testSig = SECoPSignalR(path=('cryo','value'),prefix='cryo:',secclient=secclient    )
 
     #testSigRW = SECoPSignalRW(path=('cryo','target'),prefix='cryo:',secclient=secclient)
     
