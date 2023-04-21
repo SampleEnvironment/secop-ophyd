@@ -30,4 +30,3 @@ async def test_always_true():
     print(secclient.modules)
 
 
-test_always_true()
