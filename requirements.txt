@@ -7,3 +7,4 @@ frappy-core @ git+https://github.com/SampleEnvironment/frappy
 mlzlog
 matplotlib
 pytest-asyncio
+pytest-xprocess

@@ -11,22 +11,35 @@ from ophyd import Component, Device, EpicsSignal, EpicsSignalRO
 
 from ophyd.v2.core import DeviceCollector
 
-
+import xprocess
 from bssecop.AsyncSecopClient import AsyncSecopClient
 
 from bssecop.SECoPDevices import SECoP_Node_Device
-from frappy.client import SecopClient
+from frappy.client import SecopClient, CacheItem
 from bssecop.SECoPSignal import SECoPSignalR ,SECoPSignalRW
 
 
 @pytest.mark.asyncio
-async def test_always_true():
+async def test_asycnc_secopclient_conn(cryo_sim):
+    
     secclient = AsyncSecopClient('localhost:10769')
     
     await secclient.connect(1)
     
     
     assert secclient.online == True
-    print(secclient.modules)
 
+
+@pytest.mark.asyncio
+async def test_asycnc_secopclient_get_Param(cryo_sim):
+    
+    secclient = AsyncSecopClient('localhost:10769')
+    
+    await secclient.connect(1)
+    
+    assert secclient.online == True
+
+    reading = await secclient.getParameter('cryo','value',False)
+
+    assert isinstance( reading,CacheItem) 
 

@@ -1,16 +1,9 @@
 
-cryo: frappy/cfg/cryo_cfg.py
-	python3 frappy/bin/frappy-server frappy/cfg/cryo_cfg.py  > cryo_log.txt  2>&1 & jobs -p > pids.txt
-
-	
 
 
-
-test: venv cryo  ## 🎯 Unit tests for Bluesky SECoP Integration
-	sleep 1
-
+test: venv  ## 🎯 Unit tests for Bluesky SECoP Integration
 	. .venv/bin/activate && pytest -v test/test.py
-	kill $$(cat pids.txt)
+
 
 
 
