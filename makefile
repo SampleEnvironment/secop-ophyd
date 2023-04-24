@@ -2,7 +2,7 @@
 
 
 test: venv  ## 🎯 Unit tests for Bluesky SECoP Integration
-	. .venv/bin/activate && pytest -v test/test.py
+	. .venv/bin/activate && pytest -v . --ignore=frappy
 
 
 

@@ -52,7 +52,7 @@ class SECoPSignalR(SignalR[T]):
         
         #self._datainfo = param_desc.get('datainfo')
         #self.datainfo['SECoP_dtype'] = self.datainfo.pop('type')
-        #self._monitor: Optional[Monitor] = None
+        self._monitor: bool = False
         #self._valid = asyncio.Event()
         #self._value: Optional[T] = None
         #self._reading: Optional[Reading] = None
@@ -146,12 +146,16 @@ class SECoPSignalR(SignalR[T]):
 
     def stage(self) -> List[Any]:
         """Start caching this signal"""
-        return []
+        self._staged = True
+        self._monitor_if_needed()
+        return [self]
 
 
     def unstage(self) -> List[Any]:
         """Stop caching this signal"""
-        return []
+        self._staged = False
+        self._monitor_if_needed()
+        return [self]
 
     async def get_value(self, cached: Optional[bool] = None) -> T:
         """The current value"""
@@ -174,15 +178,15 @@ class SECoPSignalR(SignalR[T]):
             async def coro_wrap_reading_listener(reading:Reading):
                 return reading_listener(reading)
                 
-            asyncio.run_coroutine_threadsafe(coro_wrap_value_listener(reading),self._secclient._ev_loop)
+            asyncio.run_coroutine_threadsafe(coro_wrap_reading_listener(reading),self._secclient._ev_loop)
 
     def subscribe_value(self, function: Callback[T]):
         """Subscribe to updates in value of a device"""
         self._value_listeners.append(function)
-        
-        
         self._secclient.register_callback((self._module,self._parameter),self.updateItem)
-    
+
+        self._monitor_if_needed()
+        
     def updateItem(self,module,parameter,entry:CacheItem):
             value = entry.value
             
@@ -193,20 +197,38 @@ class SECoPSignalR(SignalR[T]):
     def subscribe(self, function: Callback[Dict[str, Reading]]) -> None:
         """Subscribe to updates in the reading"""
         self._reading_listeners.append(function)
-        
-        
-        
+        self._secclient.register_callback((self._module,self._parameter),self.updateItem)
 
+        self._monitor_if_needed()
     def clear_sub(self, function: Callback) -> None:
         """Remove a subscription."""
         try:
             self._value_listeners.remove(function)
         except ValueError:
             self._reading_listeners.remove(function)
+            
+    def _monitor_if_needed(self) -> None:
+        should_monitor = (
+            self._value_listeners or self._reading_listeners or self._staged
+        )
+        if should_monitor and not self._monitor:
+            # Start a monitor
+            self._secclient.register_callback((self._module,self._parameter),self.updateItem)
+            self._monitor = True
+            
+        elif self._monitor and not should_monitor:
+            # Stop the monitor
+            self._monitor = False
+            
+            self._secclient.unregister_callback((self._module,self._parameter),self.updateItem)
+
+
+
 
 
     def source(self) -> str:
         return self.name
+    
     
     def connect(self, prefix: str = "", sim=False):
         pass 

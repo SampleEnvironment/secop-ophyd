@@ -209,11 +209,11 @@ class SECoPMoveableDevice(SECoPWritableDevice,Movable,Stoppable):
         self._success = True
         await self.target.set(new_target,wait=False)
         async for current_stat in observe_value(self.status):
-            print(current_stat)
             v = current_stat[0].value
             if 100 <= v  < 300:
                 print("done")
                 break
+            #TODO other status transitions
         
         if not self._success:
             raise RuntimeError("Module was stopped")
