@@ -8,11 +8,9 @@
             "name": "Python: Aktuelle Datei",
             "type": "python",
             "request": "launch",
-            "program": "${workspaceFolder}/bssecclient.py",
+            "program": "${workspaceFolder}/bssecop/bssecclient.py",
             "console": "integratedTerminal",
-            "env":{"PYTHONPATH": "C:/Users/qfj/git-repos/bssecop/frappy/;C:/Users/qfj/git-repos/bssecop/ophyd/"},
             "justMyCode": true,
-            "preLaunchTask": "start server",
             "postDebugTask": "stop server"
         }
     ]

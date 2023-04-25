@@ -4,7 +4,7 @@ import sys
 
 from bssecop.AsyncSecopClient import AsyncSecopClient
 
-from bssecop.SECoPDevices import SECoP_Node_Device
+from bssecop.SECoPDevices import SECoP_Node_Device, SECoPMoveableDevice
 
 from bssecop.SECoPSignal import SECoPSignalR ,SECoPSignalRW
 
@@ -47,16 +47,20 @@ async def main():
     #print(cryoNode.properties)
     
 
-    cryo = cryoNode.cryo
+    cryo:SECoPMoveableDevice = cryoNode.cryo
     #cryoNode.set_name('sample_changer')
-    stat = cryo.set(10.5)
+    new_conf = await cryo.read_configuration()
+    print(new_conf.get('target'))
     
+    stat = await cryo.set(13.5)
+    new_conf = await cryo.read_configuration()
+    print(new_conf.get('target'))
     await stat 
     
     #print(await cryo.read_configuration())
-    print(await cryo.describe_configuration())
     
-    print(await cryo.read())
+    
+    #print(await cryo.read())
     
     while True:
         time.sleep(1)

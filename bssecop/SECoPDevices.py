@@ -138,7 +138,7 @@ class SECoPReadableDevice(StandardReadable):
         
         #TODO Commands!!!
         
-        super().__init__(prefix = None, name=module_name, config = config,read=read)
+        super().__init__(name=module_name, config = config,read=read)
         
     def set_name(self, name: str = ""):
         #if name and not self._name:
@@ -201,13 +201,13 @@ class SECoPMoveableDevice(SECoPWritableDevice,Movable,Stoppable):
         
         self._success = True
         
-    def set(self,new_target,timeout: Optional[float] = None) -> AsyncStatus:
+    async def set(self,new_target,timeout: Optional[float] = None) -> AsyncStatus:
+        await self.target.set(new_target,wait=False)
         coro = asyncio.wait_for(self._move(new_target), timeout=timeout)
         return AsyncStatus(coro)
     
     async def _move(self,new_target):
         self._success = True
-        await self.target.set(new_target,wait=False)
         async for current_stat in observe_value(self.status):
             v = current_stat[0].value
             if 100 <= v  < 300:
@@ -255,7 +255,7 @@ class SECoP_Node_Device(StandardReadable):
             
             setattr(self,module,SECoPDeviceClass(secclient,module))
             
-        super().__init__(prefix = None, name=name, config = config)
+        super().__init__(name=name, config = config)
         
 
         
