@@ -1,4 +1,4 @@
-from frappy.client import SecopClient
+from frappy.client import SecopClient, CacheItem
 from frappy.logging import logger
 import asyncio
 import time
@@ -9,6 +9,10 @@ import queue
 import time
 from collections import defaultdict
 from threading import Event, RLock, current_thread
+
+from frappy.datatypes import TupleOf,ArrayOf,EnumType
+from bluesky.protocols import Reading
+from ophyd.v2.core import T
 
 import frappy.errors
 import frappy.params
@@ -28,6 +32,33 @@ UPDATE_MESSAGES = {EVENTREPLY, READREPLY, WRITEREPLY, ERRORPREFIX + READREQUEST,
 
 from frappy.client import Logger
 
+#TODO better name
+class CacheReading():
+    def __init__(self,entry:CacheItem) -> None:
+        
+        if isinstance(entry.value,TupleOf):
+            self.value = list(entry.value)
+        
+        if isinstance(entry.value,EnumType):
+            self.value = entry.value.value
+        
+        if isinstance(entry.value,ArrayOf):
+            self.value = entry.value
+        
+        else:
+            self.value = entry.value 
+            
+        self.timestamp = entry.timestamp
+
+        self.readerror = entry.readerror
+        
+        
+    def get_reading(self) -> Reading:
+        return {'value':self.value,'timestamp':self.timestamp}
+    def get_value(self) -> T:
+        return self.value 
+        
+    
 
 class Event_ts(asyncio.Event):
     def __init__(self, *args, **kwargs):
@@ -128,14 +159,14 @@ class AsyncSecopClient(SecopClient):
                 return cached
         if self.online:
             await self.readParameter(module, parameter)
-        return self.cache[module, parameter]
+        return CacheReading(self.cache[module, parameter])
     
     async def setParameter(self, module, parameter, value):
         await self.connect()  # make sure we are connected
         datatype = self.modules[module]['parameters'][parameter]['datatype']
         value = datatype.export_value(value)
         await self.request(WRITEREQUEST, self.identifier[module, parameter], value)
-        return self.cache[module, parameter]
+        return CacheReading(self.cache[module, parameter])
     
     async def execCommand(self, module, command, argument=None):
         await self.connect()  # make sure we are connected
@@ -159,7 +190,7 @@ class AsyncSecopClient(SecopClient):
         except frappy.errors.SECoPError:
             # error reply message is already stored as readerror in cache
             pass
-        return self.cache.get((module, parameter), None)
+        return CacheReading(self.cache.get((module, parameter), None))
     
     async def request(self, action, ident=None, data=None):
         """make a request
