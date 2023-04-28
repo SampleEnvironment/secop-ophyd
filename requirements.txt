@@ -2,7 +2,7 @@ bluesky
 pytest
 wheel
 cycler
-ophyd @ git+https://github.com/bluesky/ophyd@master
+ophyd @ git+https://github.com/bluesky/ophyd@2001aacbe436453528a09e118803a8e5b963e660
 frappy-core @ git+https://github.com/SampleEnvironment/frappy
 mlzlog
 matplotlib

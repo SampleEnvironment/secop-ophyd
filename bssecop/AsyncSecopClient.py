@@ -152,7 +152,7 @@ class AsyncSecopClient(SecopClient):
         
         #return entry[2]
         
-    async def getParameter(self, module, parameter, trycache=False):
+    async def getParameter(self, module, parameter, trycache=False) -> CacheReading:
         if trycache:
             cached = self.cache.get((module, parameter), None)
             if cached:
@@ -161,7 +161,7 @@ class AsyncSecopClient(SecopClient):
             await self.readParameter(module, parameter)
         return CacheReading(self.cache[module, parameter])
     
-    async def setParameter(self, module, parameter, value):
+    async def setParameter(self, module, parameter, value) -> CacheReading:
         await self.connect()  # make sure we are connected
         datatype = self.modules[module]['parameters'][parameter]['datatype']
         value = datatype.export_value(value)
@@ -183,7 +183,7 @@ class AsyncSecopClient(SecopClient):
             data = datatype.import_value(data)
         return data, qualifiers
     
-    async def readParameter(self, module, parameter):
+    async def readParameter(self, module, parameter)-> CacheReading:
         """forced read over connection"""
         try:
             await self.request(READREQUEST, self.identifier[module, parameter])
