@@ -26,13 +26,13 @@ async def test_node_drive(cryo_sim,cryo_node:SECoP_Node_Device):
     cryo_dev:SECoPMoveableDevice = cryo_node.cryo
     
     conf_old = await cryo_dev.read_configuration()
-    
+    print(conf_old)
     new_target = 11
     
-    old_target = conf_old.get('target').get('value')
+    old_target = conf_old.get(cryo_dev.target.name).get('value')
 
     
-    stat = await cryo_dev.set(new_target=new_target) 
+    stat =  cryo_dev.set(new_target=new_target) 
     
     conf_new = await cryo_dev.read_configuration()
 
@@ -42,7 +42,7 @@ async def test_node_drive(cryo_sim,cryo_node:SECoP_Node_Device):
 
     reading = await cryo_dev.read()
     
-    assert np.isclose(reading.get('value').get('value'),new_target,atol=0.2)
+    assert np.isclose(reading.get(cryo_dev.value.name).get('value'),new_target,atol=0.2)
     
     
 async def test_node_drive_second(cryo_sim,cryo_node:SECoP_Node_Device):

@@ -7,14 +7,16 @@ from bssecop.AsyncSecopClient import AsyncSecopClient
 from bssecop.SECoPDevices import SECoP_Node_Device, SECoPMoveableDevice
 
 from bssecop.SECoPSignal import SECoPSignalR ,SECoPSignalRW
-
+from frappy.client import SecopClient
 import asyncio
 import time
 
 async def main():
-    
 
-    secclient = AsyncSecopClient('localhost:10769')
+    secclient_threaded = SecopClient("localhost:10769")
+    secclient_threaded.connect(1)
+
+    secclient = AsyncSecopClient(host='localhost',port='10769')
 
     await secclient.connect(1)
 
@@ -41,31 +43,33 @@ async def main():
 
 
 
-    cryoNode = SECoP_Node_Device(secclient=secclient)
+    #cryoNode = SECoP_Node_Device(secclient=secclient)
+    
     #print(secclient.properties)
     #print(cryoNode.equipment_Id)
     #print(cryoNode.properties)
     
 
-    cryo:SECoPMoveableDevice = cryoNode.cryo
+    #cryo:SECoPMoveableDevice = cryoNode.cryo
     #cryoNode.set_name('sample_changer')
-    new_conf = await cryo.read_configuration()
-    print(new_conf.get('target'))
+    #await cryo.target._backend.put(10)
+    #new_conf = await cryo.read_configuration()
+    #print(new_conf.get(cryo.target.name))
     
-    stat = await cryo.set(13.5)
-    new_conf = await cryo.read_configuration()
-    print(new_conf.get('target'))
-    await stat 
+    #stat =  cryo.set(13.5)
+    #new_conf = await cryo.read_configuration()
+    #print(new_conf.get(cryo.target.name))
+    #await stat 
     
     #print(await cryo.read_configuration())
     
     
     #print(await cryo.read())
     
-    while True:
-        time.sleep(1)
-        print(await cryo.read())
-        pass
+    #while True:
+    #    time.sleep(1)
+    #    print(await cryo.read())
+    #    pass
    # print(await cryoNode.describe_configuration())
 #print(secclient.getParameter('cryo','value'))
 

@@ -12,7 +12,7 @@ from ophyd import Component, Device, EpicsSignal, EpicsSignalRO
 from ophyd.v2.core import DeviceCollector
 
 #import xprocess
-from bssecop.AsyncSecopClient import AsyncSecopClient, CacheReading
+from bssecop.AsyncSecopClient import AsyncSecopClient, SECoPReading
 
 from bssecop.SECoPDevices import SECoP_Node_Device
 from frappy.client import SecopClient, CacheItem
@@ -30,7 +30,7 @@ async def test_asycnc_secopclient_conn(cryo_sim,cryo_client):
 async def test_asycnc_secopclient_get_Param(cryo_sim,cryo_client):
   reading = await cryo_client.getParameter('cryo','value',False)
 
-  assert isinstance( reading,CacheReading) 
+  assert isinstance( reading,SECoPReading) 
 
 
 

@@ -4,7 +4,7 @@ from ophyd.status import Status
 from ophyd import Kind
 from ophyd import BlueskyInterface
 
-from ophyd.v2.core import StandardReadable, AsyncStatus, AsyncReadable, observe_value, Device
+from ophyd.v2.core import StandardReadable, AsyncStatus, AsyncReadable, observe_value, Device,SignalRW, SignalR
 
 from bluesky.protocols import Movable, Stoppable, SyncOrAsync
  
@@ -113,18 +113,19 @@ class SECoPReadableDevice(StandardReadable):
         
         # generate Signals from Module Properties
         for property in module_desc['properties']:
-            setattr(self,property,SECoPPropertySignal(property,module_desc['properties']))
+            propb = PropertyBackend(property,module_desc['properties'])
+            setattr(self,property,SignalR(backend=propb))
             config.append(getattr(self,property))
 
         # generate Signals from Module parameters eiter r or rw
         for parameter, properties in module_desc['parameters'].items():
-            
+            paramb = ParameterBackend((module_name,parameter),secclient=secclient)
             #construct signal
             readonly = properties.get('readonly',None)
             if readonly == True:
-                setattr(self,parameter,SECoPSignalR((module_name,parameter),secclient=secclient))
+                setattr(self,parameter,SignalR(paramb))
             elif readonly == False:
-                setattr(self,parameter,SECoPSignalRW((module_name,parameter),secclient=secclient))
+                setattr(self,parameter,SignalRW(paramb))
             else:
                 raise Exception('Invalid SECoP Parameter, readonly property is mandatory, but was not found, or is not bool')
 
@@ -133,7 +134,6 @@ class SECoPReadableDevice(StandardReadable):
                 read.append(getattr(self,parameter))
             else:
                 config.append(getattr(self,parameter))
-        
         
         
         #TODO Commands!!!
@@ -201,15 +201,17 @@ class SECoPMoveableDevice(SECoPWritableDevice,Movable,Stoppable):
         
         self._success = True
         
-    async def set(self,new_target,timeout: Optional[float] = None) -> AsyncStatus:
-        await self.target.set(new_target,wait=False)
+    def set(self,new_target,timeout: Optional[float] = None) -> AsyncStatus:
+        
         coro = asyncio.wait_for(self._move(new_target), timeout=timeout)
         return AsyncStatus(coro)
     
     async def _move(self,new_target):
         self._success = True
+        await self.target.set(new_target,wait=False)
         async for current_stat in observe_value(self.status):
             v = current_stat[0].value
+            print
             if 100 <= v  < 300:
                 print("done")
                 break
@@ -245,7 +247,8 @@ class SECoP_Node_Device(StandardReadable):
         config = [] 
         
         for property in self._secclient.properties:
-            setattr(self,property,SECoPPropertySignal(property,secclient.properties))
+            propb = PropertyBackend(property,secclient.properties)
+            setattr(self,property,SignalR(backend=propb))
             config.append(getattr(self,property))
     
         

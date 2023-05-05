@@ -32,8 +32,17 @@ UPDATE_MESSAGES = {EVENTREPLY, READREPLY, WRITEREPLY, ERRORPREFIX + READREQUEST,
 
 from frappy.client import Logger
 
+class UNREGISTER:
+    """a magic value, used a returned value in a callback
+
+    to indicate it has to be unregistered
+    used to implement one shot callbacks
+    """
+
+
+
 #TODO better name
-class CacheReading():
+class SECoPReading():
     def __init__(self,entry:CacheItem) -> None:
         
         if isinstance(entry.value,TupleOf):
@@ -73,68 +82,109 @@ class Event_ts(asyncio.Event):
         self._loop.call_soon_threadsafe(super().clear)
 
 
-class AsyncSecopClient(SecopClient):
-    def __init__(self, uri, log=Logger):
-        super().__init__(uri, log)
+class AsyncSecopClient:
+    CALLBACK_NAMES = ('updateEvent', 'updateItem', 'descriptiveDataChange',
+                      'nodeStateChange', 'unhandledMessage')
+    online = False  # connected or reconnecting since a short time
+    state = 'disconnected'  # further possible values: 'connecting', 'reconnecting', 'connected'
+    log = None
+    
+    reconnect_timeout = 10
+    _running = False
+    _shutdown = False
+    disconnect_time = 0  # time of last disconnect
+    secop_version = ''
+    descriptive_data = {}
+    modules = {}
+    _last_error = None
+    
+    def __init__(self,host,port, log=Logger):
+        # maps expected replies to [request, Event, is_error, result] until a response came
+        # there can only be one entry per thread calling 'request'
+        self.callbacks = {cbname: defaultdict(list) for cbname in self.CALLBACK_NAMES}
+        # caches (module, parameter) = value, timestamp, readerror (internal names!)
+        self.cache = {}
+       
+        self.active_requests = {}
+        self.io = None
+        self.txq = asyncio.Queue(30)   # queue for tx requests
+        self.pending = asyncio.Queue(30)  # requests with colliding action + ident
+        self.log = log
+        self.uri = host +port
+        self.nodename = host +port
+        
+        self._host = host
+        self._port = port
+        
+        self.reader = None
+        self.writer = None
+        
+        self.tx_task:asyncio.Task = None
+        self.rx_task:asyncio.Task = None
+
         self._ev_loop = asyncio.get_event_loop()
     
     
+    async def send(self,message):
+        self.writer.write(message+ b'\n')
+        await self.writer.drain()
     async def connect(self, try_period=0):
 
         """establish connection
 
         if a <try_period> is given, repeat trying for the given time (sec)
         """
-        with self._lock:
-            if self.io:
-                return
-            if self.online:
-                self._set_state(True, 'reconnecting')
-            else:
-                self._set_state(False, 'connecting')
-            deadline = time.time() + try_period
-            while not self._shutdown:
-                try:
-                    self.io = AsynConn(self.uri)  # timeout 1 sec
-                    self.io.writeline(IDENTREQUEST.encode('utf-8'))
-                    reply = self.io.readline(10)
-                    if reply:
-                        self.secop_version = reply.decode('utf-8')
-                    else:
-                        raise self.error_map('HardwareError')('no answer to %s' % IDENTREQUEST)
+        if self.writer:
+            return
+        if self.online:
+            self._set_state(True, 'reconnecting')
+        else:
+            self._set_state(False, 'connecting')
+        deadline = time.time() + try_period
+        while not self._shutdown:
+            try:
+                self.reader, self.writer = await asyncio.open_connection(self._host, self._port)
+                
+                await self.send(IDENTREQUEST.encode('utf-8'))
+                               
+                reply = await asyncio.wait_for(self.reader.readline(),10)
+                if reply:
+                    self.secop_version = reply.decode('utf-8')
+                else:
+                    raise self.error_map('HardwareError')('no answer to %s' % IDENTREQUEST)
+                if not VERSIONFMT.match(self.secop_version):
+                    raise self.error_map('HardwareError')('bad answer to %s: %r' %
+                                                          (IDENTREQUEST, self.secop_version))
+                # inform that the other party still uses a legacy identifier
+                # see e.g. Frappy Bug #4659 (https://forge.frm2.tum.de/redmine/issues/4659)
+                if not self.secop_version.startswith(IDENTPREFIX):
+                    self.log.warning('SEC-Node replied with legacy identify reply: %s'
+                                    % self.secop_version)
 
-                    if not VERSIONFMT.match(self.secop_version):
-                        raise self.error_map('HardwareError')('bad answer to %s: %r' %
-                                                              (IDENTREQUEST, self.secop_version))
-                    # inform that the other party still uses a legacy identifier
-                    # see e.g. Frappy Bug #4659 (https://forge.frm2.tum.de/redmine/issues/4659)
-                    if not self.secop_version.startswith(IDENTPREFIX):
-                        self.log.warning('SEC-Node replied with legacy identify reply: %s'
-                                         % self.secop_version)
+                # now its safe to do secop stuff
+                self._running = True
+                self.rx_task = asyncio.create_task(self.receive_messages())
+                self.tx_task = asyncio.create_task(self.transmit_messages())
+                
+                self.log.debug('connected to %s', self.uri)
+                # pylint: disable=unsubscriptable-object
+                rep =  await self.request(DESCRIPTIONREQUEST)
 
-                    # now its safe to do secop stuff
-                    self._running = True
-                    self._rxthread = mkthread(self.__rxthread)
-                    self._txthread = mkthread(self.__txthread)
-                    self.log.debug('connected to %s', self.uri)
-                    # pylint: disable=unsubscriptable-object
-                    rep =  await self.request(DESCRIPTIONREQUEST)
-
-                    self._init_descriptive_data(rep[2])
-                    self.nodename = self.properties.get('equipment_id', self.uri)
-                    if self.activate:
-                        await self.request(ENABLEEVENTSREQUEST)
-                    self._set_state(True, 'connected')
-                    break
-                except Exception:
-                    # print(formatExtendedTraceback())
-                    if time.time() > deadline:
-                        # stay online for now, if activated
-                        self._set_state(self.online and self.activate)
-                        raise
-                    time.sleep(1)
-            if not self._shutdown:
-                self.log.info('%s ready', self.nodename)
+                self._init_descriptive_data(rep[2])
+                self.nodename = self.properties.get('equipment_id', self.uri)
+                if self.activate:
+                    await self.request(ENABLEEVENTSREQUEST)
+                self._set_state(True, 'connected')
+                break
+            except Exception:
+                # print(formatExtendedTraceback())
+                if time.time() > deadline:
+                    # stay online for now, if activated
+                    self._set_state(self.online and self.activate)
+                    raise
+                time.sleep(1)
+        if not self._shutdown:
+            self.log.info('%s ready', self.nodename)
                 
     async def get_reply(self, entry):
         """wait for reply and return it"""
@@ -151,22 +201,67 @@ class AsyncSecopClient(SecopClient):
         #asyncio.gather(get_reply_coro)
         
         #return entry[2]
-        
-    async def getParameter(self, module, parameter, trycache=False) -> CacheReading:
+    
+    def _init_descriptive_data(self, data):
+        """rebuild descriptive data"""
+        changed_modules = None
+        if json.dumps(data, sort_keys=True) != json.dumps(self.descriptive_data, sort_keys=True):
+            if self.descriptive_data:
+                changed_modules = set()
+                modules = data.get('modules', {})
+                for modname, moddesc in self.descriptive_data['modules'].items():
+                    if json.dumps(moddesc, sort_keys=True) != json.dumps(modules.get(modname), sort_keys=True):
+                        changed_modules.add(modname)
+        self.descriptive_data = data
+        modules = data['modules']
+        self.modules = {}
+        self.properties = {k: v for k, v in data.items() if k != 'modules'}
+        self.identifier = {}  # map (module, parameter) -> identifier
+        self.internal = {}  # map identifier -> (module, parameter)
+        for modname, moddescr in modules.items():
+            #  separate accessibles into command and parameters
+            parameters = {}
+            commands = {}
+            accessibles = moddescr['accessibles']
+            for aname, aentry in accessibles.items():
+                iname = self.internalize_name(aname)
+                datatype = get_datatype(aentry['datainfo'], iname)
+                aentry = dict(aentry, datatype=datatype)
+                ident = f'{modname}:{aname}'
+                self.identifier[modname, iname] = ident
+                self.internal[ident] = modname, iname
+                if datatype.IS_COMMAND:
+                    commands[iname] = aentry
+                else:
+                    parameters[iname] = aentry
+            properties = {k: v for k, v in moddescr.items() if k != 'accessibles'}
+            self.modules[modname] = {'accessibles': accessibles, 'parameters': parameters,
+                                     'commands': commands, 'properties': properties}
+        if changed_modules is not None:
+            done = done_main = self.callback(None, 'descriptiveDataChange', None, self)
+            for mname in changed_modules:
+                if not self.callback(mname, 'descriptiveDataChange', mname, self):
+                    if not done_main:
+                        self.log.warning('descriptive data changed on module %r', mname)
+                    done = True
+            if not done:
+                self.log.warning('descriptive data of %r changed', self.nodename)
+
+    async def getParameter(self, module, parameter, trycache=False) -> SECoPReading:
         if trycache:
             cached = self.cache.get((module, parameter), None)
             if cached:
                 return cached
         if self.online:
             await self.readParameter(module, parameter)
-        return CacheReading(self.cache[module, parameter])
+        return SECoPReading(self.cache[module, parameter])
     
-    async def setParameter(self, module, parameter, value) -> CacheReading:
+    async def setParameter(self, module, parameter, value) -> SECoPReading:
         await self.connect()  # make sure we are connected
         datatype = self.modules[module]['parameters'][parameter]['datatype']
         value = datatype.export_value(value)
         await self.request(WRITEREQUEST, self.identifier[module, parameter], value)
-        return CacheReading(self.cache[module, parameter])
+        return SECoPReading(self.cache[module, parameter])
     
     async def execCommand(self, module, command, argument=None):
         await self.connect()  # make sure we are connected
@@ -183,14 +278,14 @@ class AsyncSecopClient(SecopClient):
             data = datatype.import_value(data)
         return data, qualifiers
     
-    async def readParameter(self, module, parameter)-> CacheReading:
+    async def readParameter(self, module, parameter)-> SECoPReading:
         """forced read over connection"""
         try:
             await self.request(READREQUEST, self.identifier[module, parameter])
         except frappy.errors.SECoPError:
             # error reply message is already stored as readerror in cache
             pass
-        return CacheReading(self.cache.get((module, parameter), None))
+        return SECoPReading(self.cache.get((module, parameter), None))
     
     async def request(self, action, ident=None, data=None):
         """make a request
@@ -205,8 +300,8 @@ class AsyncSecopClient(SecopClient):
         request = action, ident, data
         await self.connect()  # make sure we are connected
         # the last item is for the reply
-        entry = [request, Event_ts(), None]
-        self.txq.put(entry, timeout=3)
+        entry = [request, asyncio.Event(), None]
+        await self.txq.put(entry)
         return entry
     
     def _reconnect(self, connected_callback=None):
@@ -235,12 +330,15 @@ class AsyncSecopClient(SecopClient):
                     time.sleep(1)
         self._connthread = None
     
-    def __rxthread(self):
+    async def receive_messages(self):
         noactivity = 0
         try:
             while self._running:
+            
                 # may raise ConnectionClosed
-                reply = self.io.readline()
+                reply = await self.reader.readline()
+                
+
                 if reply is None:
                     noactivity += 1
                     if noactivity % 5 == 0:
@@ -250,6 +348,7 @@ class AsyncSecopClient(SecopClient):
                 self.log.debug('RX: %r', reply)
                 noactivity = 0
                 action, ident, data = decode_msg(reply)
+                
                 if ident == '.':
                     ident = None
                 if action in UPDATE_MESSAGES:
@@ -291,6 +390,7 @@ class AsyncSecopClient(SecopClient):
                         key = None
                         entry = self.active_requests.pop(key, None)
                 if entry is None:
+                   
                     self._unhandled_message(action, ident, data)
                     continue
                 entry[2] = action, ident, data
@@ -298,25 +398,28 @@ class AsyncSecopClient(SecopClient):
                 while not self.pending.empty():
                     # let the TX thread sort out which entry to treat
                     # this may have bad performance, but happens rarely
-                    self.txq.put(self.pending.get())
+                    await self.txq.put(await self.pending.get())
         except ConnectionClosed:
-            pass
+            print("conn closed")
         except Exception as e:
+            print('rxthread ended with %r', e)
             self.log.error('rxthread ended with %r', e)
+            
+        print("rx none")
         self._rxthread = None
-        self.disconnect(False)
+        await self.disconnect(False)
         if self._shutdown:
             return
         if self.activate:
             self.log.info('try to reconnect to %s', self.uri)
-            self._connthread = mkthread(self._reconnect)
+            self._reconnect()
         else:
             self.log.warning('%s disconnected', self.uri)
             self._set_state(False, 'disconnected')
             
-    def __txthread(self):
+    async def transmit_messages(self):
         while self._running:
-            entry = self.txq.get()
+            entry = await self.txq.get()
             if entry is None:
                 break
             request = entry[0]
@@ -327,11 +430,162 @@ class AsyncSecopClient(SecopClient):
                 key = None
             if key in self.active_requests:
                 # store to requeue after the next reply was received
-                self.pending.put(entry)
+                await self.pending.put(entry)
             else:
                 self.active_requests[key] = entry
                 line = encode_msg_frame(*request)
                 self.log.debug('TX: %r', line)
-                self.io.send(line)
-        self._txthread = None
-        self.disconnect(False)
+                
+                print(line)
+                await self.send(line)
+        
+        await self.disconnect(False)
+        
+    async def disconnect(self, shutdown=True):
+        self._running = False
+        if shutdown:
+            self._shutdown = True
+            self._set_state(False, 'shutdown')
+            
+        self.disconnect_time = time.time()
+        try:  # make sure txq does not block
+            while not self.txq.empty():
+                await self.txq.get(False)
+        except Exception:
+            pass
+        
+        if not self.tx_task.done():
+            await self.txq.put(None)  # shutdown marker
+            self.tx_task = None
+        if not self.rx_task.done():
+            self.rx_task = None
+
+        self.writer.close()
+        await self.writer.wait_closed()
+        
+        self.writer = None
+        self.reader = None
+        
+        #TODO
+        # abort pending requests early
+        #try:  # avoid race condition
+        #    while self.active_requests:
+        #        _, (_, event, _) = self.active_requests.popitem()
+        #        event.set()
+        #except KeyError:
+        #    pass
+        #try:
+        #    while True:
+        #        _, event, _ = self.pending.get(block=False)
+        #        event.set()
+        #except queue.Empty:
+        #    pass
+        
+    def updateValue(self, module, param, value, timestamp, readerror):
+        entry = CacheItem(value, timestamp, readerror,
+                        self.modules[module]['parameters'][param]['datatype'])
+        self.cache[(module, param)] = entry
+        self.callback(None, 'updateItem', module, param, entry)
+        self.callback(module, 'updateItem', module, param, entry)
+        self.callback((module, param), 'updateItem', module, param, entry)
+        # TODO: change clients to use updateItem instead of updateEvent
+        self.callback(None, 'updateEvent', module, param, value, timestamp, readerror)
+        self.callback(module, 'updateEvent', module, param, value, timestamp, readerror)
+        self.callback((module, param), 'updateEvent', module, param, value, timestamp, readerror)
+
+    def _set_state(self, online, state=None):
+        # remark: reconnecting is treated as online
+        self.online = online
+        self.state = state or self.state
+        self.callback(None, 'nodeStateChange', self.online, self.state)
+        for mname in self.modules:
+            self.callback(mname, 'nodeStateChange', self.online, self.state)
+    def _unhandled_message(self, action, ident, data):
+        if not self.callback(None, 'unhandledMessage', action, ident, data):
+            self.log.warning('unhandled message: %s %s %r', action, ident, data)
+
+    
+    def register_callback(self, key, *args, **kwds):
+        """register callback functions
+
+        - key might be either:
+            1) None: general callback (all callbacks)
+            2) <module name>: callbacks related to a module (not called for 'unhandledMessage')
+            3) (<module name>, <parameter name>): callback for specified parameter (only called for 'updateEvent')
+        - all the following arguments are callback functions. The callback name may be
+          given by the keyword, or, for non-keyworded arguments it is taken from the
+          __name__ attribute of the function
+        """
+        for cbfunc in args:
+            kwds[cbfunc.__name__] = cbfunc
+        for cbname in self.CALLBACK_NAMES:
+            cbfunc = kwds.pop(cbname, None)
+            if not cbfunc:
+                continue
+            cbdict = self.callbacks[cbname]
+            cbdict[key].append(cbfunc)
+
+            # immediately call for some callback types
+            if cbname == 'updateItem':
+                if key is None:
+                    for (mname, pname), data in self.cache.items():
+                        cbfunc(mname, pname, data)
+                else:
+                    data = self.cache.get(key, None)
+                    if data:
+                        cbfunc(*key, data)  # case single parameter
+                    else:  # case key = module
+                        for (mname, pname), data in self.cache.items():
+                            if mname == key:
+                                cbfunc(mname, pname, data)
+            elif cbname == 'updateEvent':
+                if key is None:
+                    for (mname, pname), data in self.cache.items():
+                        cbfunc(mname, pname, *data)
+                else:
+                    data = self.cache.get(key, None)
+                    if data:
+                        cbfunc(*key, *data)  # case single parameter
+                    else:  # case key = module
+                        for (mname, pname), data in self.cache.items():
+                            if mname == key:
+                                cbfunc(mname, pname, *data)
+            elif cbname == 'nodeStateChange':
+                cbfunc(self.online, self.state)
+        if kwds:
+            raise TypeError(f"unknown callback: {', '.join(kwds)}")
+
+    def unregister_callback(self, key, *args, **kwds):
+        """unregister a callback
+
+        for the arguments see register_callback
+        """
+        for cbfunc in args:
+            kwds[cbfunc.__name__] = cbfunc
+        for cbname, func in kwds.items():
+            cblist = self.callbacks[cbname][key]
+            if func in cblist:
+                cblist.remove(func)
+            if not cblist:
+                self.callbacks[cbname].pop(key)
+
+    def callback(self, key, cbname, *args):
+        """perform callbacks
+
+        key=None:
+        key=<module name>: callbacks for specified module
+        key=(<module name>, <parameter name): callbacks for specified parameter
+        """
+        cblist = self.callbacks[cbname].get(key, [])
+        self.callbacks[cbname][key] = [cb for cb in cblist if cb(*args) is not UNREGISTER]
+        return bool(cblist)
+    
+
+    PREDEFINED_NAMES = set(frappy.params.PREDEFINED_ACCESSIBLES)
+    activate = True
+
+    def internalize_name(self, name):
+        """how to create internal names"""
+        if name.startswith('_') and name[1:] not in self.PREDEFINED_NAMES:
+            return name[1:]
+        return name
