@@ -213,7 +213,6 @@ class SECoPMoveableDevice(SECoPWritableDevice,Movable,Stoppable):
             v = current_stat[0].value
             print
             if 100 <= v  < 300:
-                print("done")
                 break
             #TODO other status transitions
         

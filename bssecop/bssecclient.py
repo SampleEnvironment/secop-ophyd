@@ -43,33 +43,33 @@ async def main():
 
 
 
-    #cryoNode = SECoP_Node_Device(secclient=secclient)
+    cryoNode = SECoP_Node_Device(secclient=secclient)
     
     #print(secclient.properties)
     #print(cryoNode.equipment_Id)
     #print(cryoNode.properties)
     
 
-    #cryo:SECoPMoveableDevice = cryoNode.cryo
+    cryo:SECoPMoveableDevice = cryoNode.cryo
     #cryoNode.set_name('sample_changer')
-    #await cryo.target._backend.put(10)
-    #new_conf = await cryo.read_configuration()
-    #print(new_conf.get(cryo.target.name))
+    await cryo.target._backend.put(10)
+    new_conf = await cryo.read_configuration()
+    print(new_conf.get(cryo.target.name))
     
-    #stat =  cryo.set(13.5)
-    #new_conf = await cryo.read_configuration()
-    #print(new_conf.get(cryo.target.name))
-    #await stat 
+    stat =  cryo.set(13.5)
+    new_conf = await cryo.read_configuration()
+    print(new_conf.get(cryo.target.name))
+    await stat 
     
-    #print(await cryo.read_configuration())
+    print(await cryo.read_configuration())
     
     
-    #print(await cryo.read())
+    print(await cryo.read())
     
-    #while True:
-    #    time.sleep(1)
-    #    print(await cryo.read())
-    #    pass
+    while True:
+        time.sleep(1)
+        print(await cryo.read())
+    
    # print(await cryoNode.describe_configuration())
 #print(secclient.getParameter('cryo','value'))
 
