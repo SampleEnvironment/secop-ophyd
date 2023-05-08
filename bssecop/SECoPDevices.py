@@ -62,6 +62,27 @@ import sys
     ||---dev4(readable)
 """
 
+## Predefined Status Codes
+DISABLED = 0
+IDLE = 100
+STANDBY = 130
+PREPARED = 150
+WARN = 200
+WARN_STANDBY = 230
+WARN_PREPARED = 250
+NSTABLE = 270  # not in SECoP standard (yet)
+BUSY = 300
+DISABLING = 310
+INITIALIZING = 320
+PREPARING = 340
+STARTING = 360
+RAMPING = 370
+STABILIZING = 380
+FINALIZING = 390
+ERROR = 400
+ERROR_STANDBY = 430
+ERROR_PREPARED = 450
+UNKNOWN = 401  # not in SECoP standard (yet)
 
 
 
@@ -99,7 +120,7 @@ class SECoPReadableDevice(StandardReadable):
     
         
         self._secclient = secclient
-        
+        self._module = module_name
         module_desc = secclient.modules[module_name]
         
         self.value: SECoPSignalR
@@ -197,8 +218,6 @@ class SECoPWritableDevice(SECoPReadableDevice,Movable):
 class SECoPMoveableDevice(SECoPWritableDevice,Movable,Stoppable):
     def __init__(self, secclient: AsyncSecopClient, module_name: str):
         super().__init__(secclient, module_name)
-        
-        
         self._success = True
         
     def set(self,new_target,timeout: Optional[float] = None) -> AsyncStatus:
@@ -211,16 +230,25 @@ class SECoPMoveableDevice(SECoPWritableDevice,Movable,Stoppable):
         await self.target.set(new_target,wait=False)
         async for current_stat in observe_value(self.status):
             v = current_stat[0].value
-            print
-            if 100 <= v  < 300:
+            print(v)
+           
+            #Error State or DISABLED
+            if v >= ERROR or v < IDLE:
+                self._success = False
                 break
+            
+            #Module is in IDLE/WARN state
+            if IDLE <= v  < BUSY:
+                break
+            
             #TODO other status transitions
         
         if not self._success:
             raise RuntimeError("Module was stopped")
         
     async def stop(self, success=True) -> SyncOrAsync[None]:
-        pass
+        self._success = success
+        await self._secclient.execCommand(self._module,'stop')
         
     
     

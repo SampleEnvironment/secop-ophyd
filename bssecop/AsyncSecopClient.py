@@ -262,7 +262,7 @@ class AsyncSecopClient:
             if argument is not None:
                 raise frappy.errors.WrongTypeError('command has no argument')
         # pylint: disable=unsubscriptable-object
-        data, qualifiers = await self.request(COMMANDREQUEST, self.identifier[module, command], argument)[2]
+        data, qualifiers = (await self.request(COMMANDREQUEST, self.identifier[module, command], argument))[2]
         datatype = self.modules[module]['commands'][command]['datatype'].result
         if datatype:
             data = datatype.import_value(data)

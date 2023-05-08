@@ -1,6 +1,21 @@
 import sys
 
 
+# Import bluesky and ophyd
+import matplotlib.pyplot as plt
+from bluesky import RunEngine
+from bluesky.callbacks.best_effort import BestEffortCallback
+from bluesky.plan_stubs import mov, movr, rd  # noqa
+from bluesky.plans import grid_scan  # noqa
+from bluesky.plans import count
+
+from bluesky.utils import ProgressBarManager, register_transform
+
+from ophyd import Component, Device, EpicsSignal, EpicsSignalRO
+from ophyd.v2 import epicsdemo
+from ophyd.v2.core import DeviceCollector
+
+
 
 from bssecop.AsyncSecopClient import AsyncSecopClient
 
@@ -11,16 +26,31 @@ from frappy.client import SecopClient
 import asyncio
 import time
 
-async def main():
 
-    secclient_threaded = SecopClient("localhost:10769")
-    secclient_threaded.connect(1)
+# Create a run engine, with plotting, progressbar and transform
+RE = RunEngine({}, call_returns_result=True)
+bec = BestEffortCallback()
+RE.subscribe(bec)
+RE.waiting_hook = ProgressBarManager()
+plt.ion()
+#register_transform("RE", prefix="<")
 
-    secclient = AsyncSecopClient(host='localhost',port='10769')
-
-    await secclient.connect(1)
 
 
+secclient = AsyncSecopClient(host='localhost',port='10769')
+asyncio.run(secclient.connect(1))
+
+
+
+
+ 
+# Create v2 devices
+with DeviceCollector():
+    cryoNode = SECoP_Node_Device(secclient=secclient)
+
+
+
+asyncio.run(print(await cryoNode.cryo.read()))
 
     #testSig = SECoPSignalR(path=('cryo','value'),prefix='cryo:',secclient=secclient      )
 
@@ -43,32 +73,34 @@ async def main():
 
 
 
-    cryoNode = SECoP_Node_Device(secclient=secclient)
+    #
     
     #print(secclient.properties)
     #print(cryoNode.equipment_Id)
     #print(cryoNode.properties)
     
 
-    cryo:SECoPMoveableDevice = cryoNode.cryo
+    #cryo:SECoPMoveableDevice = cryoNode.cryo
     #cryoNode.set_name('sample_changer')
-    await cryo.target._backend.put(10)
-    new_conf = await cryo.read_configuration()
-    print(new_conf.get(cryo.target.name))
+    #await cryo.target._backend.put(10)
+    #new_conf = await cryo.read_configuration()
+    #print(new_conf.get(cryo.target.name))
     
-    stat =  cryo.set(13.5)
-    new_conf = await cryo.read_configuration()
-    print(new_conf.get(cryo.target.name))
-    await stat 
+    #stat =  cryo.set(13.5)
+    #new_conf = await cryo.read_configuration()
+    #print(new_conf.get(cryo.target.name))
+    #await asyncio.sleep(5)
+    #await cryo.stop(False)
+    #await stat 
     
-    print(await cryo.read_configuration())
+    #print(await cryo.read_configuration())
     
     
-    print(await cryo.read())
+    #print(await cryo.read())
     
-    while True:
-        time.sleep(1)
-        print(await cryo.read())
+    #while True:
+    #    time.sleep(1)
+    #    print(await cryo.read())
     
    # print(await cryoNode.describe_configuration())
 #print(secclient.getParameter('cryo','value'))
@@ -131,5 +163,5 @@ async def main():
 
 
 
-if __name__ == "__main__":
-    asyncio.run(main(),debug=False)
+#if __name__ == "__main__":
+#    asyncio.run(main(),debug=False)
