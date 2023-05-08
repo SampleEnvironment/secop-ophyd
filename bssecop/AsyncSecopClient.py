@@ -69,17 +69,6 @@ class SECoPReading():
         
     
 
-class Event_ts(asyncio.Event):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        if self._loop is None:
-            self._loop = asyncio.get_event_loop()
-
-    def set(self):
-        self._loop.call_soon_threadsafe(super().set)
-
-    def clear(self):
-        self._loop.call_soon_threadsafe(super().clear)
 
 
 class AsyncSecopClient:
@@ -126,6 +115,7 @@ class AsyncSecopClient:
     
     
     async def send(self,message):
+        assert message != b''
         self.writer.write(message+ b'\n')
         await self.writer.drain()
     async def connect(self, try_period=0):
@@ -436,8 +426,8 @@ class AsyncSecopClient:
                 line = encode_msg_frame(*request)
                 self.log.debug('TX: %r', line)
                 
-                print(line)
-                await self.send(line)
+                self.writer.write(line)
+                await self.writer.drain()
         
         await self.disconnect(False)
         
