@@ -269,7 +269,7 @@ class SECoP_Node_Device(StandardReadable):
 
         
         #Name is set to sec-node equipment_id
-        name = self._secclient.properties[EQUIPMENT_ID] 
+        name = self._secclient.properties[EQUIPMENT_ID].replace('.','-')
         
         config = [] 
         

@@ -31,7 +31,7 @@ def cryo_sim(xprocess):
     
 @pytest.fixture
 async def cryo_client(cryo_sim):
-    secclient = AsyncSecopClient('localhost:10769')
+    secclient = AsyncSecopClient(host='localhost',port='10769')
 
     await secclient.connect(1)
     
@@ -41,12 +41,3 @@ async def cryo_client(cryo_sim):
 async def cryo_node(cryo_client,cryo_sim):
     return SECoP_Node_Device(secclient=cryo_client)
     
-@pytest.fixture
-def bluesky_runengine():
-    # Create a run engine, with plotting, progressbar and transform
-    RE = RunEngine({}, call_returns_result=True)
-    bec = BestEffortCallback()
-    RE.subscribe(bec)
-    RE.waiting_hook = ProgressBarManager()
-    plt.ion()
-    register_transform("RE", prefix="<")

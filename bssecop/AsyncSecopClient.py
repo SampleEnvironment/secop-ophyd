@@ -87,7 +87,7 @@ class AsyncSecopClient:
     modules = {}
     _last_error = None
     
-    def __init__(self,host,port, log=Logger):
+    def __init__(self,host,port,loop, log=Logger):
         # maps expected replies to [request, Event, is_error, result] until a response came
         # there can only be one entry per thread calling 'request'
         self.callbacks = {cbname: defaultdict(list) for cbname in self.CALLBACK_NAMES}
@@ -111,7 +111,7 @@ class AsyncSecopClient:
         self.tx_task:asyncio.Task = None
         self.rx_task:asyncio.Task = None
 
-        self._ev_loop = asyncio.get_event_loop()
+        self._ev_loop = loop
     
     
     async def send(self,message):

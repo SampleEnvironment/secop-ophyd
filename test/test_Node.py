@@ -14,6 +14,13 @@ async def test_node_describe(cryo_sim,cryo_node:SECoP_Node_Device):
     val_desc = await cryo_node.describe()
     assert  val_desc == {}
     
+async def test_dev_read(cryo_sim,cryo_node:SECoP_Node_Device):
+    # Node device has no read value, it has to return an empty dict
+    cryo_dev:SECoPMoveableDevice = cryo_node.cryo
+    cryo_val = await cryo_dev.read()
+    val_name =cryo_dev.value.name
+    assert  cryo_val[val_name].get('value') > 5 
+    
 
 #async def test_node_read_config(cryo_sim,cryo_node:SECoP_Node_Device):
 #    # Node device has no read value, it has to return an empty dict

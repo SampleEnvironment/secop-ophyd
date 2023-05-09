@@ -5,9 +5,9 @@ import sys
 import matplotlib.pyplot as plt
 from bluesky import RunEngine
 from bluesky.callbacks.best_effort import BestEffortCallback
-from bluesky.plan_stubs import mov, movr, rd  # noqa
-from bluesky.plans import grid_scan  # noqa
-from bluesky.plans import count
+from bluesky.plan_stubs import *
+from bluesky.plans import *
+
 
 from bluesky.utils import ProgressBarManager, register_transform
 
@@ -21,37 +21,47 @@ from bssecop.AsyncSecopClient import AsyncSecopClient
 
 from bssecop.SECoPDevices import SECoP_Node_Device, SECoPMoveableDevice
 
-from bssecop.SECoPSignal import SECoPSignalR ,SECoPSignalRW
 from frappy.client import SecopClient
 import asyncio
 import time
 
-
-# Create a run engine, with plotting, progressbar and transform
-RE = RunEngine({}, call_returns_result=True)
-bec = BestEffortCallback()
-RE.subscribe(bec)
-RE.waiting_hook = ProgressBarManager()
-plt.ion()
-#register_transform("RE", prefix="<")
+from concurrent.futures import Future
 
 
 
-secclient = AsyncSecopClient(host='localhost',port='10769')
-asyncio.run(secclient.connect(1))
 
+
+
+async def main( ):
+    
+    # Create a run engine, with plotting, progressbar and transform
+    RE = RunEngine({}, call_returns_result=True)
+    bec = BestEffortCallback()
+    RE.subscribe(bec)
+    RE.waiting_hook = ProgressBarManager()
+    RE.ignore_callback_exceptions = False
+    plt.ion()
+
+
+    #register_transform("RE", prefix="<")
+
+
+
+    secclient = AsyncSecopClient(host='localhost',port='10769', loop=RE._loop)
+    future =asyncio.run_coroutine_threadsafe(secclient.connect(1),loop=RE._loop)
+    
+    while(not future.done()):
+        pass
 
 
 
  
-# Create v2 devices
-with DeviceCollector():
+
     cryoNode = SECoP_Node_Device(secclient=secclient)
-
-
-
-asyncio.run(print(await cryoNode.cryo.read()))
-
+    
+    p = RE(rd(cryoNode.cryo))
+    p = RE(count([cryoNode.cryo],num=5,delay=1))
+    print(p)
     #testSig = SECoPSignalR(path=('cryo','value'),prefix='cryo:',secclient=secclient      )
 
     #testSigRW = SECoPSignalRW(path=('cryo','target'),prefix='cryo:',secclient=secclient)
@@ -163,5 +173,5 @@ asyncio.run(print(await cryoNode.cryo.read()))
 
 
 
-#if __name__ == "__main__":
-#    asyncio.run(main(),debug=False)
+if __name__ == "__main__":
+    asyncio.run(main(),debug=True)

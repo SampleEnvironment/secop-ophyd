@@ -10,7 +10,7 @@
             "request": "launch",
             "program": "${workspaceFolder}/bssecop/bssecclient.py",
             "console": "integratedTerminal",
-            "justMyCode": true,
+            "justMyCode": false,
             //"postDebugTask": "stop server"
         }
     ]
