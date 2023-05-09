@@ -69,8 +69,6 @@ class SECoPReading():
         
     
 
-
-
 class AsyncSecopClient:
     CALLBACK_NAMES = ('updateEvent', 'updateItem', 'descriptiveDataChange',
                       'nodeStateChange', 'unhandledMessage')
@@ -113,6 +111,8 @@ class AsyncSecopClient:
 
         self._ev_loop = loop
     
+    async def _init(self):
+        await self.connect(1)
     
     async def send(self,message):
         assert message != b''
@@ -579,3 +579,9 @@ class AsyncSecopClient:
         if name.startswith('_') and name[1:] not in self.PREDEFINED_NAMES:
             return name[1:]
         return name
+
+
+async def create_AsyncSECoPClient(host:str,port:str,loop) -> AsyncSecopClient:
+    client = AsyncSecopClient(host=host,port=port,loop=loop)
+    await client._init()
+    return client
