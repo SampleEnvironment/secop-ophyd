@@ -260,7 +260,14 @@ class SECoP_Node_Device(StandardReadable):
         loop 
         ):   
 
-        self._secclient:AsyncSecopClient = AsyncSecopClient(host=host,port=port,loop = loop)
+        
+        future = asyncio.run_coroutine_threadsafe(
+            AsyncSecopClient.create(host=host,port=port,loop = loop),
+            loop)
+        
+        self._secclient:AsyncSecopClient = future.result(2)
+        
+        
         
 
         

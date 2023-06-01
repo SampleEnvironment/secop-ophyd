@@ -21,11 +21,11 @@ from frappy.client import SecopClient, CacheItem
 import asyncio
 
 
-def test_asycnc_secopclient_conn(cryo_sim,cryo_client:AsyncSecopClient):
+async def test_asycnc_secopclient_conn(cryo_sim,cryo_client:AsyncSecopClient):
        
     
   assert cryo_client.online == True
-  cryo_client.disconnect()
+  await cryo_client.disconnect()
   
 
 

@@ -116,19 +116,17 @@ class AsyncSecopClient:
 
         self.loop = loop
 
-        if loop._thread_id == threading.current_thread().ident and loop.is_running():
-            loop.run_until_complete(self.connect(1))
-        else:
-           fut = asyncio.run_coroutine_threadsafe(
-            self.connect(1),
-            loop=self.loop,
-            )
-           fut.result(timeout=2)
+
         
-
-    
-
-    
+    @classmethod
+    async def create(cls,host,port,loop, log=Logger):
+        
+        
+        self = AsyncSecopClient(host,port,loop)
+        
+        await self.connect(1)
+        
+        return self
     async def send(self,message):
         assert message != b''
         self.writer.write(message+ b'\n')

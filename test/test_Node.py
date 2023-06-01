@@ -3,6 +3,7 @@ import numpy as np
 
 async def test_node_structure(cryo_sim,cryo_node):
     assert isinstance(cryo_node,SECoP_Node_Device)
+   
     
 async def test_node_read(cryo_sim,cryo_node:SECoP_Node_Device):
     # Node device has no read value, it has to return an empty dict

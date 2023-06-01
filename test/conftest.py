@@ -36,7 +36,7 @@ async def cryo_client(cryo_sim):
     loop =asyncio.get_running_loop()
 
 
-    return AsyncSecopClient(host='localhost',port='10769',loop=loop)
+    return await AsyncSecopClient.create(host='localhost',port='10769',loop=loop)
 
 
     
