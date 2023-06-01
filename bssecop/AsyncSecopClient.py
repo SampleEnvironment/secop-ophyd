@@ -3,12 +3,15 @@ from frappy.logging import logger
 import asyncio
 import time
 
+
+
 import re
 import json
 import queue
 import time
 from collections import defaultdict
-from threading import Event, RLock, current_thread
+import threading
+import weakref
 
 from frappy.datatypes import TupleOf,ArrayOf,EnumType
 from bluesky.protocols import Reading
@@ -85,6 +88,7 @@ class AsyncSecopClient:
     modules = {}
     _last_error = None
     
+    
     def __init__(self,host,port,loop, log=Logger):
         # maps expected replies to [request, Event, is_error, result] until a response came
         # there can only be one entry per thread calling 'request'
@@ -109,10 +113,21 @@ class AsyncSecopClient:
         self.tx_task:asyncio.Task = None
         self.rx_task:asyncio.Task = None
 
-        self._ev_loop = loop
+
+        self.loop = loop
+
+        if loop._thread_id == threading.current_thread().ident and loop.is_running():
+            loop.run_until_complete(self.connect(1))
+        else:
+           fut = asyncio.run_coroutine_threadsafe(
+            self.connect(1),
+            loop=self.loop,
+            )
+           fut.result(timeout=2)
+        
+
     
-    async def _init(self):
-        await self.connect(1)
+
     
     async def send(self,message):
         assert message != b''
@@ -395,6 +410,8 @@ class AsyncSecopClient:
             print('rxthread ended with %r', e)
             self.log.error('rxthread ended with %r', e)
             
+
+            
         print("rx none")
         self._rxthread = None
         await self.disconnect(False)
@@ -581,7 +598,5 @@ class AsyncSecopClient:
         return name
 
 
-async def create_AsyncSECoPClient(host:str,port:str,loop) -> AsyncSecopClient:
-    client = AsyncSecopClient(host=host,port=port,loop=loop)
-    await client._init()
-    return client
+
+

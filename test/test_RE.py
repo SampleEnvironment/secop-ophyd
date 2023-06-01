@@ -11,7 +11,7 @@ from ophyd import Component, Device, EpicsSignal, EpicsSignalRO
 from ophyd.v2 import epicsdemo
 from ophyd.v2.core import DeviceCollector
 
-def test_RE_count(cryo_sim,cryo_node):
+def test_RE_count(cryo_sim,RE,cryo_node):
     # Create a run engine, with plotting, progressbar and transform
     RE = RunEngine({}, call_returns_result=True)
     bec = BestEffortCallback()
@@ -20,11 +20,11 @@ def test_RE_count(cryo_sim,cryo_node):
     plt.ion()
 
     
-    cryo_dev:SECoPMoveableDevice = cryo_node.cryo
+
     
     
     
-    RE(read(cryo_dev))
-    
+    p = RE(count([cryo_node.cryo],num=5,delay=1))
+    print(p)
     assert True
     

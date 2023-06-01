@@ -16,20 +16,27 @@ from bssecop.AsyncSecopClient import AsyncSecopClient, SECoPReading
 
 from bssecop.SECoPDevices import SECoP_Node_Device
 from frappy.client import SecopClient, CacheItem
-from bssecop.SECoPSignal import SECoPSignalR ,SECoPSignalRW
 
 
+import asyncio
 
-async def test_asycnc_secopclient_conn(cryo_sim,cryo_client):
+
+def test_asycnc_secopclient_conn(cryo_sim,cryo_client:AsyncSecopClient):
        
     
   assert cryo_client.online == True
+  cryo_client.disconnect()
+  
 
 
+def test_asycnc_secopclient_get_Param(cryo_sim,cryo_client:AsyncSecopClient):
 
-async def test_asycnc_secopclient_get_Param(cryo_sim,cryo_client):
-  reading = await cryo_client.getParameter('cryo','value',False)
-
+  fut = asyncio.run_coroutine_threadsafe(
+        cryo_client.getParameter('cryo','value',False),
+        loop=cryo_client.loop,
+        )
+  
+  reading = fut.result(timeout = 2)
   assert isinstance( reading,SECoPReading) 
 
 

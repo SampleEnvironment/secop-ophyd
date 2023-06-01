@@ -9,3 +9,4 @@ matplotlib
 pytest-asyncio
 pytest-xprocess
 ipython
+ipykernel

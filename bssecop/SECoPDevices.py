@@ -123,8 +123,8 @@ class SECoPReadableDevice(StandardReadable):
         self._module = module_name
         module_desc = secclient.modules[module_name]
         
-        self.value: SECoPSignalR
-        self.status: SECoPSignalR
+        self.value:SignalR 
+        self.status:SignalR 
         
         
         #list for config signals
@@ -230,7 +230,7 @@ class SECoPMoveableDevice(SECoPWritableDevice,Movable,Stoppable):
         await self.target.set(new_target,wait=False)
         async for current_stat in observe_value(self.status):
             v = current_stat[0].value
-            print(v)
+            
            
             #Error State or DISABLED
             if v >= ERROR or v < IDLE:
@@ -255,12 +255,14 @@ class SECoPMoveableDevice(SECoPWritableDevice,Movable,Stoppable):
 class SECoP_Node_Device(StandardReadable):
     def __init__(
         self,
-        secclient: AsyncSecopClient
+        host:str,
+        port:str,
+        loop 
         ):   
-    
+
+        self._secclient:AsyncSecopClient = AsyncSecopClient(host=host,port=port,loop = loop)
         
-        self._secclient = secclient
-        
+
         
         self.modules :   Dict[str,T] = self._secclient.modules
         self.Devices : Dict[str,T] = {}
@@ -274,7 +276,7 @@ class SECoP_Node_Device(StandardReadable):
         config = [] 
         
         for property in self._secclient.properties:
-            propb = PropertyBackend(property,secclient.properties)
+            propb = PropertyBackend(property,self._secclient.properties)
             setattr(self,property,SignalR(backend=propb))
             config.append(getattr(self,property))
     
@@ -283,7 +285,7 @@ class SECoP_Node_Device(StandardReadable):
         for module, module_desc in self._secclient.modules.items():
             SECoPDeviceClass = class_from_interface(module_desc['properties'])
             
-            setattr(self,module,SECoPDeviceClass(secclient,module))
+            setattr(self,module,SECoPDeviceClass(self._secclient,module))
             
         super().__init__(name=name, config = config)
         

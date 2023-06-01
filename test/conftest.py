@@ -11,6 +11,8 @@ from bluesky.plan_stubs import mov, movr, rd  # noqa
 from bluesky.plans import grid_scan  # noqa
 from bluesky.utils import ProgressBarManager, register_transform
 
+import asyncio
+
 @pytest.fixture
 def cryo_sim(xprocess):
     class Starter(ProcessStarter):
@@ -18,7 +20,7 @@ def cryo_sim(xprocess):
         pattern = ".*: startup done, handling transport messages"
         timeout = 10
         # command to start process
-        args = ['python3', '../../../../frappy/bin/frappy-server', '-c', '../../../../frappy/cfg/cryo_cfg.py','cryo']
+        args = ['python3', '../../../../frappy/bin/frappy-server', '-c', '../../../../frappy/cfg/cryo_cfg.py','cryo','--verbose']
 
     # ensure process is running and return its logfile
     logfile = xprocess.ensure("cryo_sim", Starter)
@@ -31,13 +33,23 @@ def cryo_sim(xprocess):
     
 @pytest.fixture
 async def cryo_client(cryo_sim):
-    secclient = AsyncSecopClient(host='localhost',port='10769')
+    loop =asyncio.get_running_loop()
 
-    await secclient.connect(1)
+
+    return AsyncSecopClient(host='localhost',port='10769',loop=loop)
+
+
     
-    return secclient
+@pytest.fixture
+def RE():
+    RE = RunEngine({}, call_returns_result=True)
+    bec = BestEffortCallback()
+    RE.subscribe(bec)
+    RE.waiting_hook = ProgressBarManager()
+    plt.ion()
+    return RE
 
 @pytest.fixture
-async def cryo_node(cryo_client,cryo_sim):
-    return SECoP_Node_Device(secclient=cryo_client)
+def cryo_node(RE):
+    return SECoP_Node_Device(host='localhost',port='10769',loop=RE.loop)
     
