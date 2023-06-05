@@ -1,26 +1,29 @@
 from bssecop.SECoPDevices import SECoP_Node_Device,SECoPMoveableDevice
 import numpy as np
 
-async def test_node_structure(cryo_sim,cryo_node):
-    assert isinstance(cryo_node,SECoP_Node_Device)
-   
+async def test_node_structure(cryo_sim,cryo_node_internal_loop:SECoP_Node_Device):
+    assert isinstance(cryo_node_internal_loop,SECoP_Node_Device)
+    cryo_node_internal_loop.disconnect()
     
-async def test_node_read(cryo_sim,cryo_node:SECoP_Node_Device):
+async def test_node_read(cryo_sim,cryo_node_internal_loop:SECoP_Node_Device):
     # Node device has no read value, it has to return an empty dict
-    val_read = await cryo_node.read()
+    val_read = await cryo_node_internal_loop.read()
     assert  val_read == {}
+    cryo_node_internal_loop.disconnect()
     
-async def test_node_describe(cryo_sim,cryo_node:SECoP_Node_Device):
+async def test_node_describe(cryo_sim,cryo_node_internal_loop:SECoP_Node_Device):
     # Node device has no read value, it has to return an empty dict
-    val_desc = await cryo_node.describe()
+    val_desc = await cryo_node_internal_loop.describe()
     assert  val_desc == {}
+    cryo_node_internal_loop.disconnect()
     
-async def test_dev_read(cryo_sim,cryo_node:SECoP_Node_Device):
+async def test_dev_read(cryo_sim,cryo_node_internal_loop:SECoP_Node_Device):
     # Node device has no read value, it has to return an empty dict
-    cryo_dev:SECoPMoveableDevice = cryo_node.cryo
+    cryo_dev:SECoPMoveableDevice = cryo_node_internal_loop.cryo
     cryo_val = await cryo_dev.read()
     val_name =cryo_dev.value.name
     assert  cryo_val[val_name].get('value') > 5 
+    cryo_node_internal_loop.disconnect()
     
 
 #async def test_node_read_config(cryo_sim,cryo_node:SECoP_Node_Device):
@@ -29,12 +32,12 @@ async def test_dev_read(cryo_sim,cryo_node:SECoP_Node_Device):
 #    assert  val_desc == {}
 
 
-async def test_node_drive(cryo_sim,cryo_node:SECoP_Node_Device):
-    # Node device has no read value, it has to return an empty dict
-    cryo_dev:SECoPMoveableDevice = cryo_node.cryo
+async def test_node_drive(cryo_sim,cryo_node_internal_loop:SECoP_Node_Device):
+    
+    cryo_dev:SECoPMoveableDevice = cryo_node_internal_loop.cryo
     
     conf_old = await cryo_dev.read_configuration()
-    print(conf_old)
+
     new_target = 11
     
     old_target = conf_old.get(cryo_dev.target.name).get('value')
@@ -52,20 +55,24 @@ async def test_node_drive(cryo_sim,cryo_node:SECoP_Node_Device):
     
     assert np.isclose(reading.get(cryo_dev.value.name).get('value'),new_target,atol=0.2)
     
+    cryo_node_internal_loop.disconnect()
     
-async def test_node_drive_second(cryo_sim,cryo_node:SECoP_Node_Device):
-    # Node device has no read value, it has to return an empty dict
-    cryo_dev:SECoPMoveableDevice = cryo_node.cryo
+    
+async def test_node_drive_second(cryo_sim,cryo_node_internal_loop:SECoP_Node_Device):
+   
+    cryo_dev:SECoPMoveableDevice = cryo_node_internal_loop.cryo
     
     conf_old = await cryo_dev.read_configuration()
     
     new_target = 11
     
-    old_target = conf_old.get('target').get('value')
+    old_target = conf_old.get(cryo_dev.target.name).get('value')
 
     assert old_target != new_target
     
-    stat = await cryo_dev.set(new_target=new_target) 
+    
+   
+    stat =  cryo_dev.set(new_target=new_target) 
     
     conf_new = await cryo_dev.read_configuration()
 
@@ -75,4 +82,6 @@ async def test_node_drive_second(cryo_sim,cryo_node:SECoP_Node_Device):
 
     reading = await cryo_dev.read()
     
-    assert np.isclose(reading.get('value').get('value'),new_target,atol=0.2)
+    assert np.isclose(reading.get(cryo_dev.value.name).get('value'),new_target,atol=0.2)
+    
+    cryo_node_internal_loop.disconnect()

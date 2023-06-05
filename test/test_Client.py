@@ -29,15 +29,14 @@ async def test_asycnc_secopclient_conn(cryo_sim,cryo_client:AsyncSecopClient):
   
 
 
-def test_asycnc_secopclient_get_Param(cryo_sim,cryo_client:AsyncSecopClient):
+async def test_asycnc_secopclient_get_Param(cryo_sim,cryo_client:AsyncSecopClient):
 
-  fut = asyncio.run_coroutine_threadsafe(
-        cryo_client.getParameter('cryo','value',False),
-        loop=cryo_client.loop,
-        )
-  
-  reading = fut.result(timeout = 2)
+  reading = await cryo_client.getParameter('cryo','value',False)
+        
+        
   assert isinstance( reading,SECoPReading) 
+  
+  await cryo_client.disconnect()
 
 
 

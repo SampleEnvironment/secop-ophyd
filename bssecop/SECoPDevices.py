@@ -3,6 +3,7 @@ from collections import OrderedDict, namedtuple
 from ophyd.status import Status
 from ophyd import Kind
 from ophyd import BlueskyInterface
+import threading
 
 from ophyd.v2.core import StandardReadable, AsyncStatus, AsyncReadable, observe_value, Device,SignalRW, SignalR
 
@@ -207,12 +208,7 @@ class SECoPReadableDevice(StandardReadable):
     
 class SECoPWritableDevice(SECoPReadableDevice,Movable):
     """Fast settable device target"""
-    def __init__(self, secclient: AsyncSecopClient, module_name: str):
-        super().__init__(secclient, module_name)
-        self.target:SECoPSignalRW
-        
-    def set(self, value) -> AsyncStatus:
-        return AsyncStatus(self.target.set(value,False))
+    pass
     
 
 class SECoPMoveableDevice(SECoPWritableDevice,Movable,Stoppable):
@@ -253,30 +249,14 @@ class SECoPMoveableDevice(SECoPWritableDevice,Movable,Stoppable):
     
     
 class SECoP_Node_Device(StandardReadable):
-    def __init__(
-        self,
-        host:str,
-        port:str,
-        loop 
-        ):   
+    def __init__(self,secclient:AsyncSecopClient):   
 
-        
-        future = asyncio.run_coroutine_threadsafe(
-            AsyncSecopClient.create(host=host,port=port,loop = loop),
-            loop)
-        
-        self._secclient:AsyncSecopClient = future.result(2)
-        
-        
-        
-
+        self._secclient:AsyncSecopClient = secclient
         
         self.modules :   Dict[str,T] = self._secclient.modules
         self.Devices : Dict[str,T] = {}
         
-       
-
-        
+              
         #Name is set to sec-node equipment_id
         name = self._secclient.properties[EQUIPMENT_ID].replace('.','-')
         
@@ -295,8 +275,46 @@ class SECoP_Node_Device(StandardReadable):
             setattr(self,module,SECoPDeviceClass(self._secclient,module))
             
         super().__init__(name=name, config = config)
+    
+    @classmethod
+    async def create(cls,
+                    host:str,
+                    port:str,
+                    loop):
         
-
+        if loop._thread_id == threading.current_thread().ident and loop.is_running():
+            secclient = await AsyncSecopClient.create(host=host,port=port,loop = loop)
+            return SECoP_Node_Device(secclient=secclient)
+        else:
+            raise Exception
+    
+    
+    @classmethod
+    def create_external_thread(cls,
+                    host:str,
+                    port:str,
+                    loop):
+        if loop._thread_id == threading.current_thread().ident and loop.is_running():
+            raise Exception
+        else:
+            #Event loop is running in a different thread
+            future = asyncio.run_coroutine_threadsafe(
+                AsyncSecopClient.create(host=host,port=port,loop = loop),
+                loop)
+            
+            #TODO checking if connect fails 
+            return SECoP_Node_Device(future.result(2))
+             
+    
+    def disconnect(self):
+        if self._secclient.loop._thread_id == threading.current_thread().ident and self._secclient.loop.is_running():
+            asyncio.create_task(self._secclient.disconnect(True))
+        else:    
+            future = asyncio.run_coroutine_threadsafe(
+                self._secclient.disconnect(True),
+                self._secclient.loop)
+        
+            future.result(2)
         
     def set_name(self, name: str = ""):
         #if name and not self._name:

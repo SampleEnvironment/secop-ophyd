@@ -166,8 +166,8 @@ class AsyncSecopClient:
 
                 # now its safe to do secop stuff
                 self._running = True
-                self.rx_task = asyncio.create_task(self.receive_messages())
-                self.tx_task = asyncio.create_task(self.transmit_messages())
+                self.rx_task = asyncio.create_task(self.receive_messages(),name='rx_task')
+                self.tx_task = asyncio.create_task(self.transmit_messages(),name='tx_task')
                 
                 self.log.debug('connected to %s', self.uri)
                 # pylint: disable=unsubscriptable-object
@@ -341,8 +341,8 @@ class AsyncSecopClient:
                 # may raise ConnectionClosed
                 reply = await self.reader.readline()
                 
-
                 if reply is None:
+                    
                     noactivity += 1
                     if noactivity % 5 == 0:
                         # send ping to check if the connection is still alive
