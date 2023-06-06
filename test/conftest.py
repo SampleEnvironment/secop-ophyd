@@ -51,7 +51,7 @@ def RE():
 
 @pytest.fixture
 def cryo_node(RE):
-    return SECoP_Node_Device.create_external_thread(host='localhost',port='10769',loop=RE.loop)
+    return SECoP_Node_Device.create_external_loop(host='localhost',port='10769',loop=RE.loop)
     
 @pytest.fixture
 async def cryo_node_internal_loop():

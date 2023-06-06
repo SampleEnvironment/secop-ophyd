@@ -1,5 +1,6 @@
 from bssecop.SECoPDevices import SECoP_Node_Device,SECoPMoveableDevice
 import numpy as np
+import asyncio
 
 async def test_node_structure(cryo_sim,cryo_node_internal_loop:SECoP_Node_Device):
     assert isinstance(cryo_node_internal_loop,SECoP_Node_Device)
@@ -23,8 +24,9 @@ async def test_dev_read(cryo_sim,cryo_node_internal_loop:SECoP_Node_Device):
     cryo_val = await cryo_dev.read()
     val_name =cryo_dev.value.name
     assert  cryo_val[val_name].get('value') > 5 
-    cryo_node_internal_loop.disconnect()
+    await cryo_node_internal_loop.disconnect()
     
+
 
 #async def test_node_read_config(cryo_sim,cryo_node:SECoP_Node_Device):
 #    # Node device has no read value, it has to return an empty dict
@@ -58,6 +60,8 @@ async def test_node_drive(cryo_sim,cryo_node_internal_loop:SECoP_Node_Device):
     cryo_node_internal_loop.disconnect()
     
     
+    
+    
 async def test_node_drive_second(cryo_sim,cryo_node_internal_loop:SECoP_Node_Device):
    
     cryo_dev:SECoPMoveableDevice = cryo_node_internal_loop.cryo
@@ -85,3 +89,6 @@ async def test_node_drive_second(cryo_sim,cryo_node_internal_loop:SECoP_Node_Dev
     assert np.isclose(reading.get(cryo_dev.value.name).get('value'),new_target,atol=0.2)
     
     cryo_node_internal_loop.disconnect()
+    
+
+    

@@ -290,7 +290,7 @@ class SECoP_Node_Device(StandardReadable):
     
     
     @classmethod
-    def create_external_thread(cls,
+    def create_external_loop(cls,
                     host:str,
                     port:str,
                     loop):
@@ -306,9 +306,15 @@ class SECoP_Node_Device(StandardReadable):
             return SECoP_Node_Device(future.result(2))
              
     
-    def disconnect(self):
+    async def disconnect(self):
         if self._secclient.loop._thread_id == threading.current_thread().ident and self._secclient.loop.is_running():
-            asyncio.create_task(self._secclient.disconnect(True))
+            await self._secclient.disconnect(True)
+        else:
+            raise Exception
+    
+    def disconnect_external(self):
+        if self._secclient.loop._thread_id == threading.current_thread().ident and self._secclient.loop.is_running():
+            raise Exception
         else:    
             future = asyncio.run_coroutine_threadsafe(
                 self._secclient.disconnect(True),

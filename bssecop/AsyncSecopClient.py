@@ -116,6 +116,8 @@ class AsyncSecopClient:
 
         self.loop = loop
 
+        self._disconn_lock = asyncio.Lock()
+        self._disconnected = False
 
         
     @classmethod
@@ -168,7 +170,7 @@ class AsyncSecopClient:
                 self._running = True
                 self.rx_task = asyncio.create_task(self.receive_messages(),name='rx_task')
                 self.tx_task = asyncio.create_task(self.transmit_messages(),name='tx_task')
-                
+                self._disconnected = False
                 self.log.debug('connected to %s', self.uri)
                 # pylint: disable=unsubscriptable-object
                 rep =  await self.request(DESCRIPTIONREQUEST)
@@ -186,6 +188,7 @@ class AsyncSecopClient:
                     self._set_state(self.online and self.activate)
                     raise
                 time.sleep(1)
+        
         if not self._shutdown:
             self.log.info('%s ready', self.nodename)
                 
@@ -402,6 +405,8 @@ class AsyncSecopClient:
                     # let the TX thread sort out which entry to treat
                     # this may have bad performance, but happens rarely
                     await self.txq.put(await self.pending.get())
+        except asyncio.CancelledError:
+            print('Received a request to cancel')
         except ConnectionClosed:
             print("conn closed")
         except Exception as e:
@@ -410,8 +415,7 @@ class AsyncSecopClient:
             
 
             
-        print("rx none")
-        self._rxthread = None
+        
         await self.disconnect(False)
         if self._shutdown:
             return
@@ -423,53 +427,66 @@ class AsyncSecopClient:
             self._set_state(False, 'disconnected')
             
     async def transmit_messages(self):
-        while self._running:
-            entry = await self.txq.get()
-            if entry is None:
-                break
-            request = entry[0]
-            reply_action = REQUEST2REPLY.get(request[0], None)
-            if reply_action:
-                key = (reply_action, request[1])  # action and identifier
-            else:  # allow experimental unknown requests, but only one at a time
-                key = None
-            if key in self.active_requests:
-                # store to requeue after the next reply was received
-                await self.pending.put(entry)
-            else:
-                self.active_requests[key] = entry
-                line = encode_msg_frame(*request)
-                self.log.debug('TX: %r', line)
-                
-                self.writer.write(line)
-                await self.writer.drain()
-        
+        try:
+            while self._running:
+                entry = await self.txq.get()
+                if entry is None:
+                    break
+                request = entry[0]
+                reply_action = REQUEST2REPLY.get(request[0], None)
+                if reply_action:
+                    key = (reply_action, request[1])  # action and identifier
+                else:  # allow experimental unknown requests, but only one at a time
+                    key = None
+                if key in self.active_requests:
+                    # store to requeue after the next reply was received
+                    await self.pending.put(entry)
+                else:
+                    self.active_requests[key] = entry
+                    line = encode_msg_frame(*request)
+                    self.log.debug('TX: %r', line)
+                    
+                    self.writer.write(line)
+                    await self.writer.drain()
+        except asyncio.CancelledError:
+            print('Received a request to cancel')
+       
         await self.disconnect(False)
         
     async def disconnect(self, shutdown=True):
-        self._running = False
-        if shutdown:
-            self._shutdown = True
-            self._set_state(False, 'shutdown')
-            
-        self.disconnect_time = time.time()
-        try:  # make sure txq does not block
-            while not self.txq.empty():
-                await self.txq.get(False)
-        except Exception:
-            pass
-        
-        if not self.tx_task.done():
-            await self.txq.put(None)  # shutdown marker
-            self.tx_task = None
-        if not self.rx_task.done():
-            self.rx_task = None
+        async with self._disconn_lock:
+            self._running = False
+            if shutdown:
+                self._shutdown = True
+                self._set_state(False, 'shutdown')
 
-        self.writer.close()
-        await self.writer.wait_closed()
+            if self._disconnected:
+                return 
         
-        self.writer = None
-        self.reader = None
+            self.disconnect_time = time.time()
+            try:  # make sure txq does not block
+                while not self.txq.empty():
+                   await self.txq.get(False)
+            except Exception:
+             pass
+        
+            if not self.tx_task.done() :
+                await self.txq.put(None)  # shutdown marker
+                self.tx_task.cancel()
+                self.tx_task = None
+                
+            if not self.rx_task.done():
+                self.rx_task.cancel()
+                self.rx_task = None
+
+            self.writer.close()
+            await self.writer.wait_closed()
+        
+            self.writer = None
+            self.reader = None
+
+            self._disconnected = True
+        
         
         #TODO
         # abort pending requests early

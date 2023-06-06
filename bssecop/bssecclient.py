@@ -25,14 +25,13 @@ plt.ion()
 #######################################################################
 
 # Node device creation
-cryoNode = SECoP_Node_Device(host='localhost',port ='10769',loop= RE.loop)
+cryoNode = SECoP_Node_Device.create_external_loop(host='localhost',port ='10769',loop= RE.loop)
     
 
 # get five readings of cryo.value (1/s)
 p = RE(count([cryoNode.cryo],num=5,delay=1))
 
 # drive from 10K to 11K in five steps 
-#p = RE(scan([cryoNode.cryo],cryoNode.cryo,10,11,5))
+p = RE(scan([cryoNode.cryo],cryoNode.cryo,10,11,5))
 
-#cryoNode._secclient.tx_task.cancel()
-#cryoNode._secclient.rx_task.cancel()
+cryoNode.disconnect()
