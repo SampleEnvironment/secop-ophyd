@@ -57,7 +57,7 @@ async def test_node_drive(cryo_sim,cryo_node_internal_loop:SECoP_Node_Device):
     
     assert np.isclose(reading.get(cryo_dev.value.name).get('value'),new_target,atol=0.2)
     
-    cryo_node_internal_loop.disconnect()
+    await cryo_node_internal_loop.disconnect()
     
     
     
@@ -88,7 +88,7 @@ async def test_node_drive_second(cryo_sim,cryo_node_internal_loop:SECoP_Node_Dev
     
     assert np.isclose(reading.get(cryo_dev.value.name).get('value'),new_target,atol=0.2)
     
-    cryo_node_internal_loop.disconnect()
+    await cryo_node_internal_loop.disconnect()
     
 
     
