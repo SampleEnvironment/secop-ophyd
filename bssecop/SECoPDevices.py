@@ -232,6 +232,7 @@ class SECoPMoveableDevice(SECoPWritableDevice,Movable,Stoppable):
         self._success = success
         await self._secclient.execCommand(self._module,'stop')
         
+#class SECoP_structDevice
     
     
 class SECoP_Node_Device(StandardReadable):

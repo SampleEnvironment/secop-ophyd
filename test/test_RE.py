@@ -16,7 +16,7 @@ from ophyd.v2.core import DeviceCollector
 
 
 
-def test_RE_count(cryo_sim,RE,cryo_node):
+def test_RE_count(cryo_sim,RE,cryo_node:SECoP_Node_Device):
     
   
     
@@ -24,5 +24,5 @@ def test_RE_count(cryo_sim,RE,cryo_node):
     print(p)
     assert True
     
-    cryo_node.disconnect()
+    cryo_node.disconnect_external()
     
