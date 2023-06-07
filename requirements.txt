@@ -1,4 +1,4 @@
-bluesky
+bluesky @ git+https://github.com/bluesky/bluesky@master
 pytest
 wheel
 cycler
@@ -8,5 +8,3 @@ mlzlog
 matplotlib
 pytest-asyncio
 pytest-xprocess
-ipython
-ipykernel
