@@ -15,7 +15,7 @@ import weakref
 
 from frappy.datatypes import TupleOf,ArrayOf,EnumType
 from bluesky.protocols import Reading
-from ophyd.v2.core import T
+
 
 import frappy.errors
 import frappy.params
@@ -34,6 +34,10 @@ UPDATE_MESSAGES = {EVENTREPLY, READREPLY, WRITEREPLY, ERRORPREFIX + READREQUEST,
 
 
 from frappy.client import Logger
+
+from typing import TypeVar
+
+T = TypeVar("T")
 
 class UNREGISTER:
     """a magic value, used a returned value in a callback
