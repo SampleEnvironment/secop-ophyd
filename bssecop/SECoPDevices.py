@@ -2,7 +2,7 @@
 
 import threading
 
-from ophyd.v2.core import StandardReadable
+from ophyd.v2.core import AsyncReadable, StandardReadable
 
 from ophyd.v2.core import AsyncStatus, observe_value, Device,SignalRW, SignalR
 
@@ -127,7 +127,11 @@ class SECoPReadableDevice(StandardReadable):
 
         # generate Signals from Module parameters eiter r or rw
         for parameter, properties in module_desc['parameters'].items():
+            
+            
+            ## Normal types
             paramb = ParameterBackend((module_name,parameter),secclient=secclient)
+            
             #construct signal
             readonly = properties.get('readonly',None)
             if readonly == True:
@@ -137,10 +141,17 @@ class SECoPReadableDevice(StandardReadable):
             else:
                 raise Exception('Invalid SECoP Parameter, readonly property is mandatory, but was not found, or is not bool')
 
-            # in SECoP only the 'value' parameter is the primary read prameter
+
+            ## construct subdevices for tuples and structs
+
+
+            # In SECoP only the 'value' parameter is the primary read prameter, but
+            # if the value is a SECoP-tuple all elements belonging to the tuple are appended
+            # to the read list
             if parameter == 'value':
                 read.append(getattr(self,parameter))
-            else:
+                #TODO append tuple signals
+            elif parameter != 'target':
                 config.append(getattr(self,parameter))
         
         
@@ -232,9 +243,43 @@ class SECoPMoveableDevice(SECoPWritableDevice,Movable,Stoppable):
         self._success = success
         await self._secclient.execCommand(self._module,'stop')
         
-#class SECoP_structDevice
+class SECoP_Struct_Device(StandardReadable):
+    pass
     
-    
+class SECoP_Tuple_Device(StandardReadable):
+    def __init__(self,
+        secclient: AsyncSecopClient,
+        module_name: str,
+        parameter_name: str):
+        
+        name:str = module_name + '_tuple'
+        
+        self._secclient:AsyncSecopClient = secclient
+        
+        props = secclient.modules[module_name]['parameters'][parameter_name]
+        
+        datainfo = props[DATAINFO]
+        
+        for ix , member in datainfo['members']:
+            sig_name = parameter_name + ix
+            #TupleParamBackend()
+
+        
+        
+        #list for config signals
+        config = [] 
+        #list for read signals
+        read   = []
+        
+        # generate Signals from Module Properties
+        for property in module_desc['properties']:
+            propb = PropertyBackend(property,module_desc['properties'])
+            setattr(self,property,SignalR(backend=propb))
+            config.append(getattr(self,property))
+
+        
+        super().__init__(name, read = None)
+
 class SECoP_Node_Device(StandardReadable):
     def __init__(self,secclient:AsyncSecopClient):   
 

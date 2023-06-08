@@ -123,7 +123,122 @@ class ParameterBackend(SignalBackend):
     def _get_dtype(self) -> str:
         return SECOP2DTYPE.get(self._datainfo.get('type'),None) 
     
+class TupleParamBackend(SignalBackend):
+    def __init__(self,path:tuple[str,str,int],secclient:AsyncSecopClient) -> None:
+        # secclient 
+        self._secclient:AsyncSecopClient = secclient
+               
+        # module:acessible Path for reading/writing (module,accessible)
+        self._module = path[0]
+        self._parameter = path[1]
+        self._tuple_member = path[2]
+
+        self._param_desc = self._get_param_desc()        
+        self._datainfo = self._param_desc['datainfo']    
+        self._memberinfo = self._datainfo['members'][self._tuple_member]
+            
+        self.datatype = self._get_dtype()
+        
+        
+        
+        
+        self.source   = secclient.uri  + ":" +secclient.nodename + ":" + self._module + ":" +self._parameter + ":" + "member_" + self._tuple_member
+
+     
+    async def connect(self):
+        pass
     
+    async def put(self, value: Any | None, wait=True, timeout=None):
+        #TODO wait + timeout
+        if self._param_desc.get('readonly',None):
+            return
+        
+        reading = await self._secclient.getParameter(
+            module=self._module,
+            parameter=self._parameter,
+            trycache=True)
+            
+        currVal = list(reading.get_value)    
+        
+        currVal[self._tuple_member] = value
+        
+        newTuple = tuple(currVal)
+        
+        
+        
+        await self._secclient.setParameter(
+            module = self._module,
+            parameter= self._parameter,
+            value = newTuple)
+            
+        
+    async def get_descriptor(self) ->  Descriptor:
+        # get current Parameter description
+        self._param_desc = self._get_param_desc()
+        self._datainfo = self._param_desc.get('datainfo')        
+        
+        res  = {}
+        
+        res['source'] = self.source
+        
+        # convert SECoP datattype to a datatype Accepted by bluesky
+        res['dtype']  = self.datatype
+        
+        # get shape from datainfo and SECoPtype
+        
+        # SECoP tuples ar transmitted as JSON array
+        if self._datainfo['type'] == 'tuple':
+            res['shape'] = [1, len(self._datainfo.get('members'))]
+        #TODO if array is ragged only first dimension is used otherwise parse the array
+        elif self._datainfo['type'] == 'array':
+            res['shape'] = [ 1,  self._datainfo.get('maxlen',None)]
+        else:
+            res['shape']  = []
+        
+        for property_name, prop_val in self._param_desc.items():
+            if property_name == 'datainfo' or property_name == 'datatype' :
+                continue
+            res[property_name] = prop_val
+            
+        for property_name, prop_val in self._datainfo.items():
+            if property_name == 'type':
+                property_name = 'SECoPtype' 
+            res[property_name] = prop_val
+            
+        return res
+        
+    async def get_reading(self) -> Reading:
+        dataset = await self._secclient.getParameter(self._module,self._parameter,trycache =False)
+       
+        return dataset.get_reading()
+    
+    async def get_value(self) -> T:
+        dataset = await self._secclient.getParameter(self._module,self._parameter,trycache =False)
+       
+        return dataset.get_value
+    
+    def monitor_reading_value(self, callback: Callable[[Reading, Any], None]) -> Monitor:
+            def updateItem(module,parameter,entry:CacheItem):
+                value = entry.value
+            
+                reading ={parameter:{'value':value,'timestamp':entry.timestamp}}
+                callback(reading=reading,value=value)
+                
+            self._secclient.register_callback((self._module,self._parameter),updateItem)
+            return SECoPMonitor(callback= updateItem, backend= self)
+            
+    def _get_param_desc(self):
+        return self._secclient.modules[self._module]['parameters'][self._parameter]
+    
+    def _get_dtype(self) -> str:
+        SECoPdype = self._memberinfo['type']
+        
+        if SECoPdype == 'tuple':
+            raise NotImplementedError("nested Tuples are not yet supported")
+        if SECoPdype == 'struct':
+            raise NotImplementedError("nested Structs are not yet supported")
+        
+        return SECOP2DTYPE.get(SECoPdype,None) 
 
 class PropertyBackend(SignalBackend):
     """A read/write/monitor backend for a Signals"""
@@ -225,14 +340,14 @@ class ReadonlyError(Exception):
         super().__init__(prefix, name, module_name, param_desc, secclient, kind)
         self.dtype = 'string'
 
-#TODO: Assay: shape for now only for the first Dim, later maybe recursive??
+#TODO: Array: shape for now only for the first Dim, later maybe recursive??
 
 #TODO: status tuple 
 
-#TODO: is dtype = 'object' allowed???
+
 
     
-
+# Tuple and struct are handled in a special way. They are unfolded into subdevices
 
 SECOP2DTYPE = {
     'double' : 'number',
@@ -243,6 +358,6 @@ SECOP2DTYPE = {
     'string' : 'string',
     'blob'   : 'string',
     'array'  : 'array',
-    'tuple'  : 'array',
-    'struct' : 'object'
+    'tuple'  : 'string', # but variing types of array elements 
+    'struct' : 'string'
 }
