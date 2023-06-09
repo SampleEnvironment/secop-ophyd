@@ -142,7 +142,7 @@ class TupleParamBackend(SignalBackend):
         
         
         
-        self.source   = secclient.uri  + ":" +secclient.nodename + ":" + self._module + ":" +self._parameter + ":" + "member_" + self._tuple_member
+        self.source   = secclient.uri  + ":" +secclient.nodename + ":" + self._module + ":" +self._parameter + ":" + "member_" + str(self._tuple_member)
 
      
     async def connect(self):
