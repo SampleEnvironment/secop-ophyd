@@ -150,7 +150,8 @@ class SECoPReadableDevice(StandardReadable):
             # to the read list
             if parameter == 'value':
                 read.append(getattr(self,parameter))
-                
+
+            # target should only be set through the set method. And is not part of config
             elif parameter != 'target':
                 config.append(getattr(self,parameter))
         

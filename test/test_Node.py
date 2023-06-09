@@ -38,39 +38,11 @@ async def test_node_drive(cryo_sim,cryo_node_internal_loop:SECoP_Node_Device):
     
     cryo_dev:SECoPMoveableDevice = cryo_node_internal_loop.cryo
     
-    conf_old = await cryo_dev.read_configuration()
-
-    new_target = 11
+    target_old = await cryo_dev.target.read()
     
-    old_target = conf_old.get(cryo_dev.target.name).get('value')
-
+    new_target = 11.0
     
-    stat =  cryo_dev.set(new_target=new_target) 
-    
-    conf_new = await cryo_dev.read_configuration()
-
-    #assert new_target == conf_new.get('target').get('value')
-    
-    await stat       
-
-    reading = await cryo_dev.read()
-    
-    assert np.isclose(reading.get(cryo_dev.value.name).get('value'),new_target,atol=0.2)
-    
-    await cryo_node_internal_loop.disconnect()
-    
-    
-    
-    
-async def test_node_drive_second(cryo_sim,cryo_node_internal_loop:SECoP_Node_Device):
-   
-    cryo_dev:SECoPMoveableDevice = cryo_node_internal_loop.cryo
-    
-    conf_old = await cryo_dev.read_configuration()
-    
-    new_target = 11
-    
-    old_target = conf_old.get(cryo_dev.target.name).get('value')
+    old_target = target_old[cryo_dev.target.name].get('value')
 
     assert old_target != new_target
     
@@ -78,8 +50,6 @@ async def test_node_drive_second(cryo_sim,cryo_node_internal_loop:SECoP_Node_Dev
    
     stat =  cryo_dev.set(new_target=new_target) 
     
-    conf_new = await cryo_dev.read_configuration()
-
     #assert new_target == conf_new.get('target').get('value')
     
     await stat       
@@ -90,5 +60,10 @@ async def test_node_drive_second(cryo_sim,cryo_node_internal_loop:SECoP_Node_Dev
     
     await cryo_node_internal_loop.disconnect()
     
+    
+    
+    
+    
+
 
     
