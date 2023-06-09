@@ -164,8 +164,6 @@ class TupleParamBackend(SignalBackend):
         
         newTuple = tuple(currVal)
         
-        
-        
         await self._secclient.setParameter(
             module = self._module,
             parameter= self._parameter,
@@ -186,11 +184,8 @@ class TupleParamBackend(SignalBackend):
         
         # get shape from datainfo and SECoPtype
         
-        # SECoP tuples ar transmitted as JSON array
-        if self._datainfo['type'] == 'tuple':
-            res['shape'] = [1, len(self._datainfo.get('members'))]
         #TODO if array is ragged only first dimension is used otherwise parse the array
-        elif self._datainfo['type'] == 'array':
+        if self._datainfo['type'] == 'array':
             res['shape'] = [ 1,  self._datainfo.get('maxlen',None)]
         else:
             res['shape']  = []
@@ -200,7 +195,7 @@ class TupleParamBackend(SignalBackend):
                 continue
             res[property_name] = prop_val
             
-        for property_name, prop_val in self._datainfo.items():
+        for property_name, prop_val in self._memberinfo.items():
             if property_name == 'type':
                 property_name = 'SECoPtype' 
             res[property_name] = prop_val
@@ -210,11 +205,17 @@ class TupleParamBackend(SignalBackend):
     async def get_reading(self) -> Reading:
         dataset = await self._secclient.getParameter(self._module,self._parameter,trycache =False)
        
+        # select only the tuple member corresponding to the signal
+        dataset.value = dataset.value[self._tuple_member]
+        
         return dataset.get_reading()
     
     async def get_value(self) -> T:
         dataset = await self._secclient.getParameter(self._module,self._parameter,trycache =False)
-       
+        
+        # select only the tuple member corresponding to the signal
+        dataset.value = dataset.value[self._tuple_member]
+        
         return dataset.get_value
     
     def monitor_reading_value(self, callback: Callable[[Reading, Any], None]) -> Monitor:
