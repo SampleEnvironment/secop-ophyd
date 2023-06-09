@@ -51,7 +51,7 @@ class ParameterBackend(SignalBackend):
 
      
     async def connect(self):
-        pass
+        await self._secclient.connect(2)
     
     async def put(self, value: Any | None, wait=True, timeout=None):
         #TODO wait + timeout

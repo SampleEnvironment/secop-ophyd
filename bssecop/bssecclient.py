@@ -29,9 +29,15 @@ cryoNode = SECoP_Node_Device.create_external_loop(host='localhost',port ='10769'
     
 
 # get five readings of cryo.value (1/s)
-p = RE(count([cryoNode.cryo],num=5,delay=1))
+#p = RE(count([cryoNode.cryo],num=5,delay=1))
 
 # drive from 10K to 11K in five steps 
-p = RE(scan([cryoNode.cryo],cryoNode.cryo,10,11,5))
+#p = RE(scan([cryoNode.cryo],cryoNode.cryo,10,11,5))
+
+
+
+while True:
+    p = RE(count([cryoNode.cryo],num=5,delay=20))
+    
 
 cryoNode.disconnect()

@@ -8,3 +8,4 @@ mlzlog
 matplotlib
 pytest-asyncio
 pytest-xprocess
+ipykernelsu

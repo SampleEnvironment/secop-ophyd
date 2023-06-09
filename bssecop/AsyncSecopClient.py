@@ -83,7 +83,7 @@ class AsyncSecopClient:
     state = 'disconnected'  # further possible values: 'connecting', 'reconnecting', 'connected'
     log = None
     
-    reconnect_timeout = 10
+    reconnect_timeout = 100
     _running = False
     _shutdown = False
     disconnect_time = 0  # time of last disconnect
@@ -116,6 +116,7 @@ class AsyncSecopClient:
         
         self.tx_task:asyncio.Task = None
         self.rx_task:asyncio.Task = None
+        self._reconn_task: asyncio.Task = None
 
 
         self.loop = loop
@@ -174,7 +175,7 @@ class AsyncSecopClient:
                 self._running = True
                 self.rx_task = asyncio.create_task(self.receive_messages(),name='rx_task')
                 self.tx_task = asyncio.create_task(self.transmit_messages(),name='tx_task')
-                self._disconnected = False
+
                 self.log.debug('connected to %s', self.uri)
                 # pylint: disable=unsubscriptable-object
                 rep =  await self.request(DESCRIPTIONREQUEST)
@@ -314,10 +315,10 @@ class AsyncSecopClient:
         await self.txq.put(entry)
         return entry
     
-    def _reconnect(self, connected_callback=None):
+    async def _reconnect(self, connected_callback=None):
         while not self._shutdown:
             try:
-                asyncio.run(self.connect)
+                await self.connect(2)
                 if connected_callback:
                     connected_callback()
                 break
@@ -342,11 +343,18 @@ class AsyncSecopClient:
     
     async def receive_messages(self):
         noactivity = 0
+        print('rx task started')
         try:
             while self._running:
-            
-                # may raise ConnectionClosed
+                
+
+
+                
                 reply = await self.reader.readline()
+                
+                if self.reader.at_eof():
+                    print("conn closed")
+                    break
                 
                 if reply is None:
                     
@@ -354,6 +362,7 @@ class AsyncSecopClient:
                     if noactivity % 5 == 0:
                         # send ping to check if the connection is still alive
                         self.queue_request(HEARTBEATREQUEST, str(noactivity))
+                        await asyncio.sleep(1)
                     continue
                 self.log.debug('RX: %r', reply)
                 noactivity = 0
@@ -410,9 +419,9 @@ class AsyncSecopClient:
                     # this may have bad performance, but happens rarely
                     await self.txq.put(await self.pending.get())
         except asyncio.CancelledError:
-            print('Received a request to cancel')
-        except ConnectionClosed:
-            print("conn closed")
+            print('Received a request to cancel rx')
+
+
         except Exception as e:
             print('rxthread ended with %r', e)
             self.log.error('rxthread ended with %r', e)
@@ -425,12 +434,14 @@ class AsyncSecopClient:
             return
         if self.activate:
             self.log.info('try to reconnect to %s', self.uri)
-            self._reconnect()
+            self._reconn_task = asyncio.create_task(self._reconnect(),name='reconnect')
+            
         else:
             self.log.warning('%s disconnected', self.uri)
             self._set_state(False, 'disconnected')
             
     async def transmit_messages(self):
+        print('tx task started')
         try:
             while self._running:
                 entry = await self.txq.get()
@@ -453,9 +464,9 @@ class AsyncSecopClient:
                     self.writer.write(line)
                     await self.writer.drain()
         except asyncio.CancelledError:
-            print('Received a request to cancel')
+            print('Received a request to cancel tx')
        
-        await self.disconnect(False)
+
         
     async def disconnect(self, shutdown=True):
         async with self._disconn_lock:
@@ -473,6 +484,20 @@ class AsyncSecopClient:
                    await self.txq.get(False)
             except Exception:
              pass
+         
+            # abort pending requests early
+            try:  # avoid race condition
+                while self.active_requests:
+                    _, (_, event, _) = self.active_requests.popitem()
+                    event.set()
+            except KeyError:
+                pass
+            try:
+                while True:
+                    _, event, _ = self.pending.get(block=False)
+                    event.set()
+            except queue.Empty:
+                pass
         
             if not self.tx_task.done() :
                 await self.txq.put(None)  # shutdown marker
@@ -492,20 +517,8 @@ class AsyncSecopClient:
             self._disconnected = True
         
         
-        #TODO
-        # abort pending requests early
-        #try:  # avoid race condition
-        #    while self.active_requests:
-        #        _, (_, event, _) = self.active_requests.popitem()
-        #        event.set()
-        #except KeyError:
-        #    pass
-        #try:
-        #    while True:
-        #        _, event, _ = self.pending.get(block=False)
-        #        event.set()
-        #except queue.Empty:
-        #    pass
+
+
         
     def updateValue(self, module, param, value, timestamp, readerror):
         entry = CacheItem(value, timestamp, readerror,
