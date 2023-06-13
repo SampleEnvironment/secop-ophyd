@@ -5,6 +5,7 @@ import time
 
 
 
+
 import re
 import json
 import queue
@@ -83,7 +84,7 @@ class AsyncSecopClient:
     state = 'disconnected'  # further possible values: 'connecting', 'reconnecting', 'connected'
     log = None
     
-    reconnect_timeout = 100
+    reconnect_timeout = 10
     _running = False
     _shutdown = False
     disconnect_time = 0  # time of last disconnect
@@ -116,20 +117,21 @@ class AsyncSecopClient:
         
         self.tx_task:asyncio.Task = None
         self.rx_task:asyncio.Task = None
+    
         self._reconn_task: asyncio.Task = None
-
+        self._disconn_task: asyncio.Task = None
 
         self.loop = loop
 
         self._disconn_lock = asyncio.Lock()
-        self._disconnected = False
+
 
         
     @classmethod
     async def create(cls,host,port,loop, log=Logger):
         
         
-        self = AsyncSecopClient(host,port,loop)
+        self = AsyncSecopClient(host,port,loop,log=log)
         
         await self.connect(1)
         
@@ -153,7 +155,13 @@ class AsyncSecopClient:
         deadline = time.time() + try_period
         while not self._shutdown:
             try:
-                self.reader, self.writer = await asyncio.open_connection(self._host, self._port)
+                try:
+                    self.reader, self.writer = await asyncio.open_connection(self._host, self._port)
+                    self.log.debug('establishing connection')
+                except:
+                    #print('conn refused')
+                    
+                    raise Exception
                 
                 await self.send(IDENTREQUEST.encode('utf-8'))
                                
@@ -173,8 +181,17 @@ class AsyncSecopClient:
 
                 # now its safe to do secop stuff
                 self._running = True
-                self.rx_task = asyncio.create_task(self.receive_messages(),name='rx_task')
-                self.tx_task = asyncio.create_task(self.transmit_messages(),name='tx_task')
+                
+                try:
+                    self.rx_task = asyncio.create_task(self.receive_messages(),name='rx_task')
+                    self.tx_task = asyncio.create_task(self.transmit_messages(),name='tx_task')
+                    
+                    if not self._reconn_task or self._reconn_task.done():
+                        self._reconn_task = asyncio.create_task(self._reconnect(),name='reconnect')
+                        
+                except Exception as e:
+                    print('Exception:'+ e)
+                    
 
                 self.log.debug('connected to %s', self.uri)
                 # pylint: disable=unsubscriptable-object
@@ -184,6 +201,7 @@ class AsyncSecopClient:
                 self.nodename = self.properties.get('equipment_id', self.uri)
                 if self.activate:
                     await self.request(ENABLEEVENTSREQUEST)
+                #print('connected to %s', self.uri)
                 self._set_state(True, 'connected')
                 break
             except Exception:
@@ -317,43 +335,35 @@ class AsyncSecopClient:
     
     async def _reconnect(self, connected_callback=None):
         while not self._shutdown:
-            try:
-                await self.connect(2)
-                if connected_callback:
-                    connected_callback()
-                break
-            except Exception as e:
-                txt = str(e).split('\n', 1)[0]
-                if txt != self._last_error:
-                    self._last_error = txt
-                    if 'join' in str(e):
-                        raise
-                    self.log.error(str(e))
-                if time.time() > self.disconnect_time + self.reconnect_timeout:
-                    if self.online:  # was recently connected
-                        self.disconnect_time = 0
-                        self.log.warning('can not reconnect to %s (%r)', self.nodename, e)
-                        self.log.info('continue trying to reconnect')
-                        # self.log.warning(formatExtendedTraceback())
-                        self._set_state(False)
-                    time.sleep(self.reconnect_timeout)
-                else:
-                    time.sleep(1)
-        self._connthread = None
+            
+            if self._disconn_task and not self._disconn_task.done():
+                await self._disconn_task
+                
+            if not self.writer:
+                #print('reconnecting')
+                try:
+                    await self.connect(2)
+                    if connected_callback:
+                        connected_callback()
+                    self.log.debug('reconnect success')
+                except:
+                    self.log.debug('reconnect failed')
+              
+            if time.time() > self.disconnect_time + self.reconnect_timeout:
+                await asyncio.sleep(self.reconnect_timeout)
+            else:
+                await asyncio.sleep(1)
+    
     
     async def receive_messages(self):
         noactivity = 0
-        print('rx task started')
+        self.log.debug('Receive Task started')
         try:
-            while self._running:
-                
-
-
-                
+            while self._running: 
                 reply = await self.reader.readline()
                 
                 if self.reader.at_eof():
-                    print("conn closed")
+                    #print("conn closed")
                     break
                 
                 if reply is None:
@@ -419,29 +429,22 @@ class AsyncSecopClient:
                     # this may have bad performance, but happens rarely
                     await self.txq.put(await self.pending.get())
         except asyncio.CancelledError:
-            print('Received a request to cancel rx')
+            self.log.warning('rx-Task canceld')
 
 
         except Exception as e:
-            print('rxthread ended with %r', e)
-            self.log.error('rxthread ended with %r', e)
+            self.log.error('rxTask ended with %r', e)
             
+       
+        self._disconn_task =    asyncio.create_task(self.disconnect(False))
+        
+
 
             
-        
-        await self.disconnect(False)
-        if self._shutdown:
-            return
-        if self.activate:
-            self.log.info('try to reconnect to %s', self.uri)
-            self._reconn_task = asyncio.create_task(self._reconnect(),name='reconnect')
-            
-        else:
-            self.log.warning('%s disconnected', self.uri)
-            self._set_state(False, 'disconnected')
-            
     async def transmit_messages(self):
-        print('tx task started')
+        #print('tx task started')
+        #print('running: '+str(self._running))
+        self.log.debug('Transmit Task started')
         try:
             while self._running:
                 entry = await self.txq.get()
@@ -475,8 +478,8 @@ class AsyncSecopClient:
                 self._shutdown = True
                 self._set_state(False, 'shutdown')
 
-            if self._disconnected:
-                return 
+            if self.state == 'disconnected':
+                return
         
             self.disconnect_time = time.time()
             try:  # make sure txq does not block
@@ -494,27 +497,30 @@ class AsyncSecopClient:
                 pass
             try:
                 while True:
-                    _, event, _ = self.pending.get(block=False)
+                    _, event, _ = self.pending.get_nowait()
                     event.set()
-            except queue.Empty:
+            except asyncio.QueueEmpty:
                 pass
         
-            if not self.tx_task.done() :
+            if self.tx_task and not self.tx_task.done() :
                 await self.txq.put(None)  # shutdown marker
-                self.tx_task.cancel()
-                self.tx_task = None
+                #self.tx_task.cancel()
                 
-            if not self.rx_task.done():
+                      
+            if self.rx_task and not self.rx_task.done():
                 self.rx_task.cancel()
-                self.rx_task = None
-
-            self.writer.close()
-            await self.writer.wait_closed()
+                
+            self.rx_task = None
+            self.tx_task = None
+            
+            if self.writer:
+                self.writer.close()
+                await self.writer.wait_closed()
         
             self.writer = None
             self.reader = None
 
-            self._disconnected = True
+            self._set_state(False,'disconnected')
         
         
 
@@ -534,6 +540,10 @@ class AsyncSecopClient:
 
     def _set_state(self, online, state=None):
         # remark: reconnecting is treated as online
+        if state:
+            self.log.debug('state changed to: \''+ state + '\' online: '+str(online))
+        else:
+            self.log.debug('online state: '+ str(online))
         self.online = online
         self.state = state or self.state
         self.callback(None, 'nodeStateChange', self.online, self.state)
