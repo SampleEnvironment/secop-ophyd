@@ -146,6 +146,8 @@ class AsyncSecopClient:
 
         if a <try_period> is given, repeat trying for the given time (sec)
         """
+        self._shutdown = False
+        
         if self.writer:
             return
         if self.online:
@@ -342,7 +344,7 @@ class AsyncSecopClient:
             if not self.writer:
                 #print('reconnecting')
                 try:
-                    await self.connect(2)
+                    await self.connect()
                     if connected_callback:
                         connected_callback()
                     self.log.debug('reconnect success')
@@ -520,7 +522,8 @@ class AsyncSecopClient:
             self.writer = None
             self.reader = None
 
-            self._set_state(False,'disconnected')
+            if not self._shutdown:
+                self._set_state(False,'disconnected')
         
         
 
