@@ -1,17 +1,17 @@
-from collections import OrderedDict, namedtuple
 
-from bssecop.AsyncSecopClient import AsyncSecopClient
-from ophyd import Kind
-from typing import Any, Dict, Generic, List, Optional, Type
 
-from ophyd.v2.core import AsyncStatus, Monitor, ReadingValueCallback,Signal,SignalW,SignalR,SignalRW,T,Callback,SignalBackend
+from bssecop.AsyncSecopClient import AsyncSecopClient, SECoPReading
+
+from typing import Any, Dict, Optional, Type
+
+from ophyd.v2.core import  ReadingValueCallback, T,SignalBackend
 from bluesky.protocols import Reading, Descriptor
-import asyncio
-import copy
+
+
 import time
 from frappy.client import CacheItem
 import collections.abc
-import traceback
+
 
 from typing import Callable
 
@@ -107,16 +107,23 @@ class ParameterBackend(SignalBackend):
        
         return dataset.get_value
     
-    def monitor_reading_value(self, callback: Callable[[Reading, Any], None]) -> Monitor:
+
+
+    def set_callback(self, callback: Callable[[Reading, Any], None] | None) -> None:
             def updateItem(module,parameter,entry:CacheItem):
-                value = entry.value
-            
-                reading ={parameter:{'value':value,'timestamp':entry.timestamp}}
-                callback(reading=reading,value=value)
-                
-            self._secclient.register_callback((self._module,self._parameter),updateItem)
-            return SECoPMonitor(callback= updateItem, backend= self)
-            
+                           
+                data =SECoPReading(entry)
+                callback(reading=data.get_reading(),value=data.get_value())
+
+            if callback != None:
+                self._secclient.register_callback((self._module,self._parameter),updateItem)
+
+
+            else:
+                self._secclient.unregister_callback((self._module,self._parameter),updateItem)
+
+
+
     def _get_signal_desc(self):
         return self._secclient.modules.get(self._module).get('parameters').get(self._parameter)
     
@@ -218,15 +225,18 @@ class TupleParamBackend(SignalBackend):
         
         return dataset.get_value
     
-    def monitor_reading_value(self, callback: Callable[[Reading, Any], None]) -> Monitor:
+    def set_callback(self, callback: Callable[[Reading, Any], None] | None) -> None:
             def updateItem(module,parameter,entry:CacheItem):
-                value = entry.value
-            
-                reading ={parameter:{'value':value,'timestamp':entry.timestamp}}
-                callback(reading=reading,value=value)
-                
-            self._secclient.register_callback((self._module,self._parameter),updateItem)
-            return SECoPMonitor(callback= updateItem, backend= self)
+                           
+                data =SECoPReading(entry)
+                callback(reading=data.get_reading(),value=data.get_value())
+
+            if callback != None:
+                self._secclient.register_callback((self._module,self._parameter),updateItem)
+
+
+            else:
+                self._secclient.unregister_callback((self._module,self._parameter),updateItem)
             
     def _get_param_desc(self):
         return self._secclient.modules[self._module]['parameters'][self._parameter]
@@ -299,31 +309,14 @@ class PropertyBackend(SignalBackend):
         """The current value"""
         #TODO correct timestamp
         return self._property_dict[self._prop_key]
-
-    def monitor_reading_value(self, callback: ReadingValueCallback[T]) -> Monitor:
-        """Observe changes to the current value, timestamp and severity"""
-        return SECoPPropertyMonitor()
-
-
-class SECoPMonitor:
-    def __init__(self,callback,backend:ParameterBackend) -> None:
-        self._secclient:AsyncSecopClient = backend._secclient
-        self._callback:Callable          = callback
-        self._module:str                 = backend._module
-        self._parameter:str              = backend._parameter
-        
-        
-    def close(self):
-        self._secclient.unregister_callback((self._module,self._parameter),self._callback)
-
-
-class SECoPPropertyMonitor:
-    def __init__(self) -> None:
+    
+    def set_callback(self, callback: Callable[[Reading, Any], None] | None) -> None:
         pass
-        
-    def close(self):
-        pass
-        
+
+    
+
+
+
 
 
 

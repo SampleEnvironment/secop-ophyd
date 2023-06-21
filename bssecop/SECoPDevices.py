@@ -2,7 +2,7 @@
 
 import threading
 
-from ophyd.v2.core import AsyncReadable, StandardReadable
+from ophyd.v2.core import  StandardReadable
 
 from ophyd.v2.core import AsyncStatus, observe_value, Device,SignalRW, SignalR
 
@@ -36,6 +36,7 @@ from bssecop.propertykeys import *
 
 import re
 import importlib
+import asyncio
 
 
 """_summary_
@@ -157,8 +158,9 @@ class SECoPReadableDevice(StandardReadable):
         
         
         #TODO Commands!!!
-        
-        super().__init__(name=module_name, config = config,read=read)
+        self.set_readable_signals(read=read,config=config)
+
+        super().__init__(name=module_name)
         
     def set_name(self, name: str = ""):
         #if name and not self._name:
@@ -283,12 +285,12 @@ class SECoP_Tuple_Device(StandardReadable):
 
             read.append(getattr(self,sig_name))
         
-        
+            self.set_readable_signals(read=read)
 
         
 
         
-        super().__init__(name, read = read)
+        super().__init__(name)
 
 class SECoP_Node_Device(StandardReadable):
     def __init__(self,secclient:AsyncSecopClient):   
@@ -316,7 +318,10 @@ class SECoP_Node_Device(StandardReadable):
             
             setattr(self,module,SECoPDeviceClass(self._secclient,module))
             
-        super().__init__(name=name, config = config)
+
+        self.set_readable_signals(config=config)
+
+        super().__init__(name=name)
     
     @classmethod
     async def create(cls,

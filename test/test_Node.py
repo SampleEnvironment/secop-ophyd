@@ -4,19 +4,19 @@ import asyncio
 
 async def test_node_structure(cryo_sim,cryo_node_internal_loop:SECoP_Node_Device):
     assert isinstance(cryo_node_internal_loop,SECoP_Node_Device)
-    cryo_node_internal_loop.disconnect()
+    await cryo_node_internal_loop.disconnect()
     
 async def test_node_read(cryo_sim,cryo_node_internal_loop:SECoP_Node_Device):
     # Node device has no read value, it has to return an empty dict
     val_read = await cryo_node_internal_loop.read()
     assert  val_read == {}
-    cryo_node_internal_loop.disconnect()
+    await cryo_node_internal_loop.disconnect()
     
 async def test_node_describe(cryo_sim,cryo_node_internal_loop:SECoP_Node_Device):
     # Node device has no read value, it has to return an empty dict
     val_desc = await cryo_node_internal_loop.describe()
     assert  val_desc == {}
-    cryo_node_internal_loop.disconnect()
+    await cryo_node_internal_loop.disconnect()
     
 async def test_dev_read(cryo_sim,cryo_node_internal_loop:SECoP_Node_Device):
     # Node device has no read value, it has to return an empty dict
