@@ -247,7 +247,68 @@ class SECoPMoveableDevice(SECoPWritableDevice,Movable,Stoppable):
         await self._secclient.execCommand(self._module,'stop')
         
 class SECoP_Struct_Device(StandardReadable):
-    pass
+    def __init__(self,
+        secclient: AsyncSecopClient,
+        module_name: str,
+        parameter_name: str,
+        depth:int,
+        dev_path:list):
+
+
+        delim = "_"
+        dev_path_str = delim.join(map(str, dev_path))
+
+        name:str = parameter_name + dev_path_str + "_struct"
+        
+
+        self._secclient:AsyncSecopClient = secclient
+        
+        #all parameter properties
+        # TODO where to put Parametrer properties???
+        struct_properties:dict = secclient.modules[module_name]['parameters'][parameter_name]
+        
+        # root datainfo dict
+        struct_datainfo = struct_properties[DATAINFO]
+        
+
+        #list for read signals
+        read   = []
+
+
+        member_path = dev_path + ['members']
+
+        for key, value  in deep_get(struct_datainfo,member_path).items():
+
+            if value['type'] == 'struct':
+                setattr
+
+            sig_name = key 
+            sparamb = StructParamBackend(path= [module_name,parameter_name,dev_path] + [key],secclient= secclient)
+            
+            
+            #construct signal
+            readonly = struct_properties.get('readonly',None)
+            
+            
+            if readonly == True:
+                setattr(self,sig_name,SignalR(sparamb))
+            elif readonly == False:
+                setattr(self,sig_name,SignalRW(sparamb))
+            else:
+                raise Exception('Invalid SECoP Parameter, readonly property is mandatory, but was not found, or is not bool')
+
+            read.append(getattr(self,sig_name))
+        
+            self.set_readable_signals(read=read)
+
+        
+
+
+
+        super.__init__(name)
+
+
+
     
 class SECoP_Tuple_Device(StandardReadable):
     def __init__(self,

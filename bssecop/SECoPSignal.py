@@ -12,6 +12,8 @@ import time
 from frappy.client import CacheItem
 import collections.abc
 
+from functools import reduce
+
 
 from typing import Callable
 
@@ -30,6 +32,10 @@ def get_shape(datainfo):
     else:
         return []
 
+
+
+def deep_get(dictionary, keys, default=None)-> dict:
+    return reduce(lambda d, key: d.get(key, default) if isinstance(d, dict) else default, keys, dictionary)
 
 
 class ParameterBackend(SignalBackend):
@@ -131,7 +137,11 @@ class ParameterBackend(SignalBackend):
         return SECOP2DTYPE.get(self._datainfo.get('type'),None) 
     
 class TupleParamBackend(SignalBackend):
-    def __init__(self,path:tuple[str,str,int],secclient:AsyncSecopClient) -> None:
+    def __init__(
+            self,
+            path:tuple[str,str,int],
+            secclient:AsyncSecopClient) -> None:
+        
         # secclient 
         self._secclient:AsyncSecopClient = secclient
                
@@ -250,6 +260,9 @@ class TupleParamBackend(SignalBackend):
             raise NotImplementedError("nested Structs are not yet supported")
         
         return SECOP2DTYPE.get(SECoPdype,None) 
+
+class StructParamBackend(SignalBackend):
+    pass
 
 class PropertyBackend(SignalBackend):
     """A read/write/monitor backend for a Signals"""
