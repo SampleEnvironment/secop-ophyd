@@ -13,6 +13,7 @@ from frappy.client import CacheItem
 import collections.abc
 
 from functools import reduce
+from itertools import chain
 
 
 from typing import Callable
@@ -35,7 +36,38 @@ def get_shape(datainfo):
 
 
 def deep_get(dictionary, keys, default=None)-> dict:
-    return reduce(lambda d, key: d.get(key, default) if isinstance(d, dict) else default, keys, dictionary)
+    def get_val(obj,key,default):
+        if isinstance(obj,dict):
+            return obj.get(key,default)
+        if isinstance(obj,tuple):
+            return obj[key]        
+        return default
+
+    return reduce(lambda d, key: get_val(d,key,default) , keys, dictionary)
+
+
+
+
+def get_memberpath(path:list) -> list:
+    # Python3 code to demonstrate
+    # inserting K after every Nth number
+    # using itertool.chain()
+    
+    # insert element
+    k = 'members'
+    
+    # insert after every other element
+    N = 1
+    
+    # using itertool.chain()
+    # inserting K after every Nth number
+    return [k] + list(chain(*[path[i : i+N] + [k]
+                if len(path[i : i+N]) == N
+                else path[i : i+N]
+                for i in range(0, len(path), N)]))
+    
+    
+
 
 
 class ParameterBackend(SignalBackend):
@@ -139,20 +171,26 @@ class ParameterBackend(SignalBackend):
 class TupleParamBackend(SignalBackend):
     def __init__(
             self,
-            path:tuple[str,str,int],
+            module_name:str,
+            parameter_name:str,
+            dev_path:list,
             secclient:AsyncSecopClient) -> None:
         
         # secclient 
         self._secclient:AsyncSecopClient = secclient
                
         # module:acessible Path for reading/writing (module,accessible)
-        self._module = path[0]
-        self._parameter = path[1]
-        self._tuple_member = path[2]
+        self._module = module_name
+        self._parameter = parameter_name
+        self._dev_path = dev_path
+        self._tuple_path = dev_path[:-1]
+        self._member_path = get_memberpath(self._dev_path)
+        self._tuple_member = dev_path[-1]
+
 
         self._param_desc = self._get_param_desc()        
         self._datainfo = self._param_desc['datainfo']    
-        self._memberinfo = self._datainfo['members'][self._tuple_member]
+        self._memberinfo = deep_get(self._datainfo,self._member_path)
             
         self.datatype = self._get_dtype()
         
@@ -174,17 +212,41 @@ class TupleParamBackend(SignalBackend):
             module=self._module,
             parameter=self._parameter,
             trycache=True)
+        
+        curr_val = reading.get_value()
+
+        currTup = list(deep_get(curr_val,self._tuple_path))    
+        
+        currTup[self._tuple_member] = value
+        
+        newTuple = tuple(currTup)
+
+        def insert_tuple(dic:dict,keys:list,new_val):
+            if keys == []:
+                return dic
             
-        currVal = list(reading.get_value)    
-        
-        currVal[self._tuple_member] = value
-        
-        newTuple = tuple(currVal)
+            d = dic
+            for key in keys[:-1]:
+                if key in d:
+                    d = d[key]
+                else:
+                    # wrong path
+                    raise Exception('path is incorrect ' + key + ' is not in dic: ' + str(dic)) 
+            # insert new value 
+            if keys[-1]  in  d :
+                d[keys[-1]] = value
+            else:
+                # wrong path
+                raise Exception('path is incorrect ' + key + ' is not in dic: ' + str(dic)) 
+            return dic
+
+        new_val = insert_tuple(curr_val,self._tuple_path,newTuple)
+
         
         await self._secclient.setParameter(
             module = self._module,
             parameter= self._parameter,
-            value = newTuple)
+            value = new_val)
             
         
     async def get_descriptor(self) ->  Descriptor:
@@ -248,7 +310,7 @@ class TupleParamBackend(SignalBackend):
             else:
                 self._secclient.unregister_callback((self._module,self._parameter),updateItem)
             
-    def _get_param_desc(self):
+    def _get_param_desc(self) -> dict:
         return self._secclient.modules[self._module]['parameters'][self._parameter]
     
     def _get_dtype(self) -> str:
