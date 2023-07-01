@@ -33,6 +33,27 @@ def cryo_sim(xprocess):
     # clean up whole process tree afterwards
     xprocess.getinfo("cryo_sim").terminate()
     
+
+
+@pytest.fixture
+def nested_struct_sim(xprocess):
+    class Starter(ProcessStarter):
+        # startup pattern
+        pattern = ".*: startup done, handling transport messages"
+        timeout = 10
+        # command to start process
+        args = ['python3', '../../../../frappy/bin/frappy-server', '-c', '../../../../frappy/cfg/ophyd_secop_test_cfg.py','nested']
+
+    pname = 'nested'
+    # ensure process is running and return its logfile
+    logfile = xprocess.ensure(pname, Starter)
+
+
+    yield 
+
+    # clean up whole process tree afterwards
+    xprocess.getinfo(pname).terminate()
+
 @pytest.fixture
 def logger():
     class NoRXFilter(logging.Filter):
@@ -63,18 +84,19 @@ def logger():
     
     
 @pytest.fixture
-async def cryo_client(cryo_sim,logger):
+async def client(cryo_sim,logger,port = '10769'):
     
+   
+    loop =asyncio.get_running_loop()
 
+    return await AsyncSecopClient.create(host='localhost',port=port,loop=loop,log=logger)
 
-
+@pytest.fixture
+async def nested_client(cryo_sim,logger,port = '10771'):
     
     loop =asyncio.get_running_loop()
 
-
-    return await AsyncSecopClient.create(host='localhost',port='10769',loop=loop,log=logger)
-
-
+    return await AsyncSecopClient.create(host='localhost',port=port,loop=loop,log=logger)
     
 @pytest.fixture
 def RE():
@@ -93,3 +115,8 @@ def cryo_node(RE):
 async def cryo_node_internal_loop():
     return await SECoP_Node_Device.create(host='localhost',port='10769',loop=asyncio.get_running_loop())
     
+
+@pytest.fixture
+async def nested_node():
+    return await SECoP_Node_Device.create(host='localhost',port='10771',loop=asyncio.get_running_loop())
+

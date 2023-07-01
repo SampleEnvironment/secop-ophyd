@@ -37,10 +37,13 @@ def get_shape(datainfo):
 
 def deep_get(dictionary, keys, default=None)-> dict:
     def get_val(obj,key,default):
+
         if isinstance(obj,dict):
             return obj.get(key,default)
+        if isinstance(obj,list):
+            return obj[key]
         if isinstance(obj,tuple):
-            return obj[key]        
+            return obj[key]         
         return default
 
     return reduce(lambda d, key: get_val(d,key,default) , keys, dictionary)
@@ -61,7 +64,7 @@ def get_memberpath(path:list) -> list:
     
     # using itertool.chain()
     # inserting K after every Nth number
-    return [k] + list(chain(*[path[i : i+N] + [k]
+    return  list(chain(*[[k] + path[i : i+N] 
                 if len(path[i : i+N]) == N
                 else path[i : i+N]
                 for i in range(0, len(path), N)]))
@@ -250,9 +253,6 @@ class TupleParamBackend(SignalBackend):
             
         
     async def get_descriptor(self) ->  Descriptor:
-        # get current Parameter description
-        self._param_desc = self._get_param_desc()
-        self._datainfo = self._param_desc.get('datainfo')        
         
         res  = {}
         
@@ -264,8 +264,8 @@ class TupleParamBackend(SignalBackend):
         # get shape from datainfo and SECoPtype
         
         #TODO if array is ragged only first dimension is used otherwise parse the array
-        if self._datainfo['type'] == 'array':
-            res['shape'] = [ 1,  self._datainfo.get('maxlen',None)]
+        if self._memberinfo['type'] == 'array':
+            res['shape'] = [ 1,  self._memberinfo.get('maxlen',None)]
         else:
             res['shape']  = []
         
@@ -285,7 +285,7 @@ class TupleParamBackend(SignalBackend):
         dataset = await self._secclient.getParameter(self._module,self._parameter,trycache =False)
        
         # select only the tuple member corresponding to the signal
-        dataset.value = dataset.value[self._tuple_member]
+        dataset.value = deep_get(dataset.value,self._dev_path)
         
         return dataset.get_reading()
     
@@ -293,9 +293,9 @@ class TupleParamBackend(SignalBackend):
         dataset = await self._secclient.getParameter(self._module,self._parameter,trycache =False)
         
         # select only the tuple member corresponding to the signal
-        dataset.value = dataset.value[self._tuple_member]
+        dataset.value = deep_get(dataset.value,self._dev_path)
         
-        return dataset.get_value
+        return dataset.get_value()
     
     def set_callback(self, callback: Callable[[Reading, Any], None] | None) -> None:
             def updateItem(module,parameter,entry:CacheItem):
@@ -324,7 +324,150 @@ class TupleParamBackend(SignalBackend):
         return SECOP2DTYPE.get(SECoPdype,None) 
 
 class StructParamBackend(SignalBackend):
-    pass
+    def __init__(
+            self,
+            module_name:str,
+            parameter_name:str,
+            dev_path:list,
+            secclient:AsyncSecopClient) -> None:
+        
+        # secclient 
+        self._secclient:AsyncSecopClient = secclient
+               
+        # module:acessible Path for reading/writing (module,accessible)
+        self._module = module_name
+        self._parameter = parameter_name
+        self._dev_path = dev_path
+        self._member_path = get_memberpath(self._dev_path)
+
+
+
+        self._param_desc = self._get_param_desc()        
+        self._datainfo = self._param_desc['datainfo']    
+        self._memberinfo = deep_get(self._datainfo,self._member_path)
+            
+        self.datatype = self._get_dtype()
+        
+        
+        
+        
+        self.source   = secclient.uri  + ":" +secclient.nodename + ":" + self._module + ":" +self._parameter + ":" + "member_" + str(self._dev_path[-1])
+
+     
+    async def connect(self):
+        pass
+    
+    async def put(self, value: Any | None, wait=True, timeout=None):
+        #TODO wait + timeout
+        if self._param_desc.get('readonly',None):
+            return
+        
+        reading = await self._secclient.getParameter(
+            module=self._module,
+            parameter=self._parameter,
+            trycache=True)
+        
+        curr_val = reading.get_value()
+
+
+        def insert_val(dic:dict,keys:list,new_val):
+            if keys == []:
+                return dic
+            
+            d = dic
+            for key in keys[:-1]:
+                if key in d:
+                    d = d[key]
+                else:
+                    # wrong path
+                    raise Exception('path is incorrect ' + key + ' is not in dic: ' + str(dic)) 
+            # insert new value 
+            if keys[-1]  in  d :
+                d[keys[-1]] = value
+            else:
+                # wrong path
+                raise Exception('path is incorrect ' + key + ' is not in dic: ' + str(dic)) 
+            return dic
+
+        new_val = insert_val(curr_val,self._dev_path,value)
+
+        
+        await self._secclient.setParameter(
+            module = self._module,
+            parameter= self._parameter,
+            value = new_val)
+            
+        
+    async def get_descriptor(self) ->  Descriptor:
+        
+        res  = {}
+        
+        res['source'] = self.source
+        
+        # convert SECoP datattype to a datatype Accepted by bluesky
+        res['dtype']  = self.datatype
+        
+        # get shape from datainfo and SECoPtype
+        
+        #TODO if array is ragged only first dimension is used otherwise parse the array
+        if self._memberinfo['type'] == 'array':
+            res['shape'] = [ 1,  self._memberinfo.get('maxlen',None)]
+        else:
+            res['shape']  = []
+        
+        for property_name, prop_val in self._param_desc.items():
+            if property_name == 'datainfo' or property_name == 'datatype' :
+                continue
+            res[property_name] = prop_val
+            
+        for property_name, prop_val in self._memberinfo.items():
+            if property_name == 'type':
+                property_name = 'SECoPtype' 
+            res[property_name] = prop_val
+            
+        return res
+        
+    async def get_reading(self) -> Reading:
+        dataset = await self._secclient.getParameter(self._module,self._parameter,trycache =False)
+       
+        # select only the tuple member corresponding to the signal
+        dataset.value = deep_get(dataset.value,self._dev_path)
+        
+        return dataset.get_reading()
+    
+    async def get_value(self) -> T:
+        dataset = await self._secclient.getParameter(self._module,self._parameter,trycache =False)
+        
+        # select only the tuple member corresponding to the signal
+        dataset.value = deep_get(dataset.value,self._dev_path)
+        
+        return dataset.get_value()
+    
+    def set_callback(self, callback: Callable[[Reading, Any], None] | None) -> None:
+            def updateItem(module,parameter,entry:CacheItem):
+                           
+                data =SECoPReading(entry)
+                callback(reading=data.get_reading(),value=data.get_value())
+
+            if callback != None:
+                self._secclient.register_callback((self._module,self._parameter),updateItem)
+
+
+            else:
+                self._secclient.unregister_callback((self._module,self._parameter),updateItem)
+            
+    def _get_param_desc(self) -> dict:
+        return self._secclient.modules[self._module]['parameters'][self._parameter]
+    
+    def _get_dtype(self) -> str:
+        SECoPdype = self._memberinfo['type']
+        
+        if SECoPdype == 'tuple':
+            raise NotImplementedError("nested Tuples are not yet supported")
+        if SECoPdype == 'struct':
+            raise NotImplementedError("nested Structs are not yet supported")
+        
+        return SECOP2DTYPE.get(SECoPdype,None) 
 
 class PropertyBackend(SignalBackend):
     """A read/write/monitor backend for a Signals"""

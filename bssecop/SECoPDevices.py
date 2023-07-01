@@ -144,7 +144,10 @@ class SECoPReadableDevice(StandardReadable):
 
             ## construct subdevices for tuples and structs
             if properties['datainfo']['type'] == 'tuple':
-                setattr(self,parameter + '_tuple',SECoP_Tuple_Device(secclient,module_name,parameter))
+                setattr(self,parameter + '_tuple',SECoP_Tuple_Device(
+                    secclient = secclient,
+                    module_name = module_name,
+                    parameter_name= parameter))
 
             # In SECoP only the 'value' parameter is the primary read prameter, but
             # if the value is a SECoP-tuple all elements belonging to the tuple are appended
@@ -241,7 +244,11 @@ class SECoP_Tuple_Device(StandardReadable):
 
         for ix , member in enumerate(deep_get(datainfo,member_path)):
             sig_name = parameter_name + str(ix)
-            tparamb = TupleParamBackend(path= (module_name,parameter_name,ix),secclient= secclient)
+            tparamb = TupleParamBackend(
+                module_name=module_name,
+                parameter_name=parameter_name,
+                dev_path=dev_path + [ix],
+                secclient=secclient)
             
             
             #construct signal
