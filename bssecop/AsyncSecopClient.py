@@ -52,7 +52,7 @@ class UNREGISTER:
 #TODO better name
 class SECoPReading():
     def __init__(self,entry:CacheItem) -> None:
-        
+
         if isinstance(entry.value,TupleOf):
             self.value = list(entry.value)
         
@@ -60,7 +60,7 @@ class SECoPReading():
             self.value = entry.value.value
         
         if isinstance(entry.value,ArrayOf):
-            self.value = entry.value
+           self.value = entry.value
         
         else:
             self.value = entry.value 
@@ -282,7 +282,7 @@ class AsyncSecopClient:
         if trycache:
             cached = self.cache.get((module, parameter), None)
             if cached:
-                return cached
+                return SECoPReading(cached)
         if self.online:
             await self.readParameter(module, parameter)
         return SECoPReading(self.cache[module, parameter])

@@ -1,4 +1,4 @@
-
+from __future__ import annotations
 
 from bssecop.AsyncSecopClient import AsyncSecopClient, SECoPReading
 
@@ -15,6 +15,7 @@ import collections.abc
 from functools import reduce
 from itertools import chain
 
+import copy
 
 from typing import Callable
 
@@ -70,8 +71,48 @@ def get_memberpath(path:list) -> list:
                 for i in range(0, len(path), N)]))
     
     
+class Path():
+    def __init__(self,parameter_name:str,module_name:str) -> None:
+        self._parameter_name = parameter_name
+        self._module_name = module_name
 
+        self._dev_path = [] 
 
+    # Path is extended
+    def append(self,elem:str or int) -> Path:
+        new_path = copy.deepcopy(self)
+        new_path._dev_path.append(elem)
+
+        return new_path
+    
+    def get_signal_name(self):
+        #top level: signal name == Parameter name
+        if self._dev_path == []:
+            return self._parameter_name
+        
+        # path points to a tuple element
+        if isinstance(self._dev_path[-1],int): 
+
+            #handling of nested tuples 
+            tuple_indices = []   
+
+            for elem in reversed(self._dev_path):
+                if isinstance(elem,int):
+                    tuple_indices.append(elem)
+                else:
+                    #append last named elemnt
+                    tuple_indices.append(elem)
+                    break
+            
+                      
+            if isinstance(tuple_indices[0],int):
+                tuple_indices =  tuple_indices.append(self._parameter_name)
+            
+            tuple_indices_rev =  tuple_indices.reverse()
+            delim = "-"
+            return delim.join(map(str, tuple_indices_rev))
+
+            
 
 class ParameterBackend(SignalBackend):
     def __init__(self,path:tuple[str,str],secclient:AsyncSecopClient) -> None:
@@ -194,6 +235,7 @@ class TupleParamBackend(SignalBackend):
         self._param_desc = self._get_param_desc()        
         self._datainfo = self._param_desc['datainfo']    
         self._memberinfo = deep_get(self._datainfo,self._member_path)
+        self._SECoPdType = self._memberinfo['type']
             
         self.datatype = self._get_dtype()
         
@@ -285,7 +327,12 @@ class TupleParamBackend(SignalBackend):
         dataset = await self._secclient.getParameter(self._module,self._parameter,trycache =False)
        
         # select only the tuple member corresponding to the signal
-        dataset.value = deep_get(dataset.value,self._dev_path)
+        val = deep_get(dataset.value,self._dev_path)
+
+        if self._SECoPdType == "enum":
+            dataset.value = val.value
+        else:
+            dataset.value = val
         
         return dataset.get_reading()
     
@@ -293,7 +340,12 @@ class TupleParamBackend(SignalBackend):
         dataset = await self._secclient.getParameter(self._module,self._parameter,trycache =False)
         
         # select only the tuple member corresponding to the signal
-        dataset.value = deep_get(dataset.value,self._dev_path)
+        val = deep_get(dataset.value,self._dev_path)
+
+        if self._SECoPdType == "enum":
+            dataset.value = val.value
+        else:
+            dataset.value = val
         
         return dataset.get_value()
     

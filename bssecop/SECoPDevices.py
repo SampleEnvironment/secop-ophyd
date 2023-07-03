@@ -220,11 +220,19 @@ class SECoP_Tuple_Device(StandardReadable):
         
 
         delim = "_"
-        dev_path_str = delim.join(map(str, dev_path))
+        #dev_path_str = delim.join(map(str, dev_path))
 
-        name:str = parameter_name + dev_path_str + "_tuple"
+        if dev_path == []:
+            name:str = parameter_name + "_tuple"
+        elif isinstance(dev_path[-1],int):
+            if len(dev_path) == 1:
+                name:str = parameter_name + str(dev_path[-1]) + "_tuple"
+            else:
+                name:str = str(dev_path[-2]) + str(dev_path[-1]) + "_tuple"
 
-       
+        else: 
+            name:str = str(dev_path[-1]) + "_tuple"
+
         self._secclient:AsyncSecopClient = secclient
         
         props = secclient.modules[module_name]['parameters'][parameter_name]
@@ -243,7 +251,7 @@ class SECoP_Tuple_Device(StandardReadable):
 
 
         for ix , member in enumerate(deep_get(datainfo,member_path)):
-            sig_name = parameter_name + str(ix)
+            
             tparamb = TupleParamBackend(
                 module_name=module_name,
                 parameter_name=parameter_name,
@@ -253,7 +261,20 @@ class SECoP_Tuple_Device(StandardReadable):
             
             #construct signal
             readonly = props.get('readonly',None)
-            sig_name = parameter_name + str(tparamb._tuple_member)
+
+            if dev_path == []:
+                sig_name = parameter_name + "-" +str(tparamb._tuple_member)
+            elif isinstance(dev_path[-1],int):
+                if len(dev_path) == 1:
+                    sig_name = parameter_name + str(dev_path[-1])
+                else:
+                    sig_name = str(dev_path[-2]) + str(dev_path[-1])
+
+            else: 
+                sig_name = str(dev_path[-1]) 
+
+
+       
             
             if readonly == True:
                 setattr(self,sig_name,SignalR(tparamb))
@@ -340,7 +361,7 @@ class SECoP_Struct_Device(StandardReadable):
         read   = []
 
 
-        member_path = get_memberpath(dev_path)
+        member_path = get_memberpath(dev_path) + ['members']
 
         for member_name, value  in deep_get(struct_datainfo,member_path).items():
 
@@ -364,8 +385,12 @@ class SECoP_Struct_Device(StandardReadable):
 
             
             # struct member is eithera single element or an array ofa basic datatype 
-            sparamb = StructParamBackend(path= [module_name,parameter_name,dev_path] + [member_name],secclient= secclient)
-            
+            sparamb = StructParamBackend(
+                dev_path=dev_path + [member_name],
+                parameter_name=parameter_name,
+                module_name=module_name,
+                secclient=secclient)
+
             #construct signal
             readonly = struct_properties.get('readonly',None)
             
@@ -384,7 +409,7 @@ class SECoP_Struct_Device(StandardReadable):
 
 
 
-        super.__init__(name)
+        super().__init__(name=name)
 
 
 
