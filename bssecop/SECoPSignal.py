@@ -1,7 +1,6 @@
-from __future__ import annotations
 
 from bssecop.AsyncSecopClient import AsyncSecopClient, SECoPReading
-
+from bssecop.util import deep_get, Path
 from typing import Any, Dict, Optional, Type
 
 from ophyd.v2.core import  ReadingValueCallback, T,SignalBackend
@@ -12,10 +11,10 @@ import time
 from frappy.client import CacheItem
 import collections.abc
 
-from functools import reduce
-from itertools import chain
 
-import copy
+
+
+
 
 from typing import Callable
 
@@ -36,100 +35,183 @@ def get_shape(datainfo):
 
 
 
-def deep_get(dictionary, keys, default=None)-> dict:
-    def get_val(obj,key,default):
-
-        if isinstance(obj,dict):
-            return obj.get(key,default)
-        if isinstance(obj,list):
-            return obj[key]
-        if isinstance(obj,tuple):
-            return obj[key]         
-        return default
-
-    return reduce(lambda d, key: get_val(d,key,default) , keys, dictionary)
 
 
 
 
-def get_memberpath(path:list) -> list:
-    # Python3 code to demonstrate
-    # inserting K after every Nth number
-    # using itertool.chain()
-    
-    # insert element
-    k = 'members'
-    
-    # insert after every other element
-    N = 1
-    
-    # using itertool.chain()
-    # inserting K after every Nth number
-    return  list(chain(*[[k] + path[i : i+N] 
-                if len(path[i : i+N]) == N
-                else path[i : i+N]
-                for i in range(0, len(path), N)]))
+
     
     
-class Path():
-    def __init__(self,parameter_name:str,module_name:str) -> None:
-        self._parameter_name = parameter_name
-        self._module_name = module_name
-
-        self._dev_path = [] 
-
-    # Path is extended
-    def append(self,elem:str or int) -> Path:
-        new_path = copy.deepcopy(self)
-        new_path._dev_path.append(elem)
-
-        return new_path
-    
-    def get_signal_name(self):
-        #top level: signal name == Parameter name
-        if self._dev_path == []:
-            return self._parameter_name
+class SECoP_Param_Backend(SignalBackend):
+    def __init__(
+            self,
+            path:Path,
+            secclient:AsyncSecopClient) -> None:
         
-        # path points to a tuple element
-        if isinstance(self._dev_path[-1],int): 
-
-            #handling of nested tuples 
-            tuple_indices = []   
-
-            for elem in reversed(self._dev_path):
-                if isinstance(elem,int):
-                    tuple_indices.append(elem)
-                else:
-                    #append last named elemnt
-                    tuple_indices.append(elem)
-                    break
-            
-                      
-            if isinstance(tuple_indices[0],int):
-                tuple_indices =  tuple_indices.append(self._parameter_name)
-            
-            tuple_indices_rev =  tuple_indices.reverse()
-            delim = "-"
-            return delim.join(map(str, tuple_indices_rev))
-
-            
-
-class ParameterBackend(SignalBackend):
-    def __init__(self,path:tuple[str,str],secclient:AsyncSecopClient) -> None:
         # secclient 
         self._secclient:AsyncSecopClient = secclient
                
         # module:acessible Path for reading/writing (module,accessible)
-        self._module = path[0]
-        self._parameter = path[1]
+        self.path:Path = path
+
+        self._param_description:dict = self._get_param_desc()
+        
+        #Root datainfo or memberinfo for nested datatypes 
+        self.datainfo:dict = deep_get(
+            self._param_description['datainfo'],
+            self.path.get_memberinfo_path())
+        
+        self.readonly = self._param_description.get('readonly')
+
+        self.datatype = self._get_dtype()
+
         
 
-        self._signal_desc = self._get_signal_desc()        
+
+
+        #self._param_desc = self._get_param_desc()        
+        #self._datainfo = self._param_desc['datainfo']    
+        #self._memberinfo = deep_get(self._datainfo,path.get_memberinfo_path())
+            
+        
+        
+        
+        
+        
+        self.source   = secclient.uri  + ":" +secclient.nodename + ":" + self.path._module_name + ":" +self.path._parameter_name 
+
+     
+    async def connect(self):
+        pass
+    
+    async def put(self, value: Any | None, wait=True, timeout=None):
+        #TODO wait + timeout
+        if self.readonly:
+            return
+        
+        # signal is a root SECoP parameter
+        if self.path._dev_path== []:
+            await self._secclient.setParameter(
+                **self.get_param_path(),
+                value = new_val)
+            return
+
+        # signal sub element of SECoP parameter (tuple or struct member)
+
+            # get current value
+        reading = await self._secclient.getParameter(
+            **self.get_param_path(),
+            trycache=True)
+        
+        curr_val = reading.get_value()
+
+            # insert new val 
+        new_val = self.path.insert_val(curr_val,value)
+
+            # set new value
+        await self._secclient.setParameter(
+            **self.get_param_path(),
+            value = new_val)
+            
+        
+    async def get_descriptor(self) ->  Descriptor:
+        
+        res  = {}
+        
+        res['source'] = self.source
+        
+        # ophyd datatype (some SECoP datatypeshaveto be converted)
+        res['dtype']  = self.datatype
+        
+        # get shape from datainfo and SECoPtype
+        
+        #TODO if array is ragged only first dimension is used otherwise parse the array
+        if self.datainfo['type'] == 'array':
+            res['shape'] = [ 1,  self.datainfo.get('maxlen',None)]
+        else:
+            res['shape']  = []
+        
+        for property_name, prop_val in self._param_description.items():
+            # skip datainfo (treated seperately)
+            if property_name == 'datainfo' or property_name == 'datatype' :
+                continue
+            res[property_name] = prop_val
+            
+        for property_name, prop_val in self.datainfo.items():
+
+            if property_name == 'type':
+                property_name = 'SECoPtype' 
+            res[property_name] = prop_val
+            
+        return res
+        
+    async def get_reading(self) -> Reading:
+        dataset = await self._secclient.getParameter(**self.get_param_path(),trycache =False)
+       
+        # select only the tuple member corresponding to the signal
+        dataset.value = deep_get(dataset.value,self.path._dev_path)
+        
+        return dataset.get_reading()
+    
+    async def get_value(self) -> T:
+        dataset = await self._secclient.getParameter(**self.get_param_path(),trycache =False)
+        
+        # select only the tuple member corresponding to the signal
+        dataset.value = deep_get(dataset.value,self.path._dev_path)
+        
+        return dataset.get_value()
+    
+    def set_callback(self, callback: Callable[[Reading, Any], None] | None) -> None:
+            def updateItem(module,parameter,entry:CacheItem):
+                           
+                data =SECoPReading(entry)
+                callback(reading=data.get_reading(),value=data.get_value())
+
+            if callback != None:
+                self._secclient.register_callback(self.get_path_tuple(),updateItem)
+            else:
+                self._secclient.unregister_callback(self.get_path_tuple(),updateItem)
+            
+    def _get_param_desc(self) -> dict:
+        return deep_get(self._secclient.modules,self.path.get_param_desc_path())
+
+    
+    def get_param_path(self):
+        return self.path.get_param_path()
+    
+    def get_path_tuple(self):
+        return self.path.get_path_tuple()
+
+
+    
+    def _get_dtype(self) -> str:
+
+        
+        SECoPdype = self.datainfo['type']
+        
+        if SECoPdype == 'tuple' or SECoPdype == 'struct':
+            raise TypeError("Signals cannot be of type: " + SECoPdype )
+
+        
+        return SECOP2DTYPE.get(SECoPdype,None) 
+
+            
+
+class ParameterBackend(SignalBackend):
+    def __init__(self,path:Path,secclient:AsyncSecopClient) -> None:
+        # secclient 
+        self._secclient:AsyncSecopClient = secclient
+               
+        # module:acessible Path for reading/writing (module,accessible)
+        self.path:Path = path
+
+
+        self._signal_desc = self._get_param_desc()        
         self._datainfo = self._signal_desc.get('datainfo')    
 
         self.datatype = self._get_dtype()
         
-        self.source   = secclient.uri  + ":" +secclient.nodename + ":" + self._module + ":" +self._parameter
+        self.source   = secclient.uri  + ":" +secclient.nodename + ":" + path._module_name + ":" + path._parameter_name
 
      
     async def connect(self):
@@ -138,15 +220,12 @@ class ParameterBackend(SignalBackend):
     async def put(self, value: Any | None, wait=True, timeout=None):
         #TODO wait + timeout
         if self._signal_desc.get('readonly',None) != True:
-            await self._secclient.setParameter(
-                module = self._module,
-                parameter= self._parameter,
-                value=value)
+            await self._secclient.setParameter(self.path,value=value)
             
         
     async def get_descriptor(self) ->  Descriptor:
         # get current Parameter description
-        self._signal_desc = self._get_signal_desc()
+        self._signal_desc = self._get_param_desc()
         self._datainfo = self._signal_desc.get('datainfo')        
         
         res  = {}
@@ -180,14 +259,14 @@ class ParameterBackend(SignalBackend):
         return res
         
     async def get_reading(self) -> Reading:
-        dataset = await self._secclient.getParameter(self._module,self._parameter,trycache =False)
+        dataset = await self._secclient.getParameter(self.path,trycache =False)
        
         return dataset.get_reading()
     
     async def get_value(self) -> T:
-        dataset = await self._secclient.getParameter(self._module,self._parameter,trycache =False)
+        dataset = await self._secclient.getParameter(self.path,trycache =False)
        
-        return dataset.get_value
+        return dataset.get_value()
     
 
 
@@ -198,16 +277,16 @@ class ParameterBackend(SignalBackend):
                 callback(reading=data.get_reading(),value=data.get_value())
 
             if callback != None:
-                self._secclient.register_callback((self._module,self._parameter),updateItem)
+                self._secclient.register_callback((self.path._module_name,self.path._parameter_name),updateItem)
 
 
             else:
-                self._secclient.unregister_callback((self._module,self._parameter),updateItem)
+                self._secclient.unregister_callback((self.path._module_name,self.path._parameter_name),updateItem)
 
 
 
-    def _get_signal_desc(self):
-        return self._secclient.modules.get(self._module).get('parameters').get(self._parameter)
+
+
     
     def _get_dtype(self) -> str:
         return SECOP2DTYPE.get(self._datainfo.get('type'),None) 

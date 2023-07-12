@@ -120,3 +120,83 @@ async def cryo_node_internal_loop():
 async def nested_node():
     return await SECoP_Node_Device.create(host='localhost',port='10771',loop=asyncio.get_running_loop())
 
+
+@pytest.fixture
+def struct_val():
+    return {"number": 5.0, "string": "blablalbla", "tupl": [1.0, 1.0, 1.0], "pos_struct": {"x": 5.0, "y": 10.0, "z": 15.0, "col": "green", "enum": 1}}
+
+@pytest.fixture
+def nested_param_description():
+    return {"_nested_struct":{
+          "datainfo":{
+            "members":{
+              "number":{
+                "max":100.0,
+                "min":0.0,
+                "type":"double",
+                "unit":"s"
+              },
+              "pos_struct":{
+                "members":{
+                  "col":{
+                    "type":"string"
+                  },
+                  "enum":{
+                    "members":{
+                      "mode_max":2,
+                      "mode_one":1,
+                      "mode_zero":0
+                    },
+                    "type":"enum"
+                  },
+                  "x":{
+                    "max":100.0,
+                    "min":0.0,
+                    "type":"double",
+                    "unit":"m"
+                  },
+                  "y":{
+                    "max":100.0,
+                    "min":0.0,
+                    "type":"double",
+                    "unit":"m"
+                  },
+                  "z":{
+                    "max":100.0,
+                    "min":0.0,
+                    "type":"double",
+                    "unit":"m"
+                  }
+                },
+                "type":"struct"
+              },
+              "string":{
+                "type":"string"
+              },
+              "tupl":{
+                "members":[
+                  {
+                    "max":100.0,
+                    "min":0.0,
+                    "type":"double"
+                  },
+                  {
+                    "max":100.0,
+                    "min":0.0,
+                    "type":"double"
+                  },
+                  {
+                    "max":100.0,
+                    "min":0.0,
+                    "type":"double"
+                  }
+                ],
+                "type":"tuple"
+              }
+            },
+            "type":"struct"
+          },
+          "description":"nestedstruct dict containing other structs and tuples ",
+          "readonly":True
+        }
+        }

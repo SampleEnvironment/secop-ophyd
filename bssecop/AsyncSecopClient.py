@@ -8,12 +8,12 @@ import time
 
 import re
 import json
-import queue
+
 import time
 from collections import defaultdict
-import threading
-import weakref
 
+
+from bssecop.util import deep_get, Path
 from frappy.datatypes import TupleOf,ArrayOf,EnumType
 from bluesky.protocols import Reading
 
@@ -21,8 +21,8 @@ from bluesky.protocols import Reading
 import frappy.errors
 import frappy.params
 from frappy.datatypes import get_datatype
-from frappy.lib import mkthread, formatExtendedStack
-from frappy.lib.asynconn import AsynConn, ConnectionClosed
+
+
 from frappy.protocol.interface import decode_msg, encode_msg_frame
 from frappy.protocol.messages import COMMANDREQUEST, \
     DESCRIPTIONREQUEST, ENABLEEVENTSREQUEST, ERRORPREFIX, \
@@ -635,6 +635,9 @@ class AsyncSecopClient:
 
     PREDEFINED_NAMES = set(frappy.params.PREDEFINED_ACCESSIBLES)
     activate = True
+
+
+        
 
     def internalize_name(self, name):
         """how to create internal names"""

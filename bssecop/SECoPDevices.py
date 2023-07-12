@@ -33,6 +33,7 @@ from bssecop.SECoPSignal import *
 
 from bssecop.propertykeys import * 
 
+from bssecop.util import deep_get, Path
 
 import re
 import importlib
@@ -447,12 +448,14 @@ class SECoP_Node_Device(StandardReadable):
 
         super().__init__(name=name)
     
+
     @classmethod
     async def create(cls,
                     host:str,
                     port:str,
                     loop):
         
+        #check if asyncio eventloop is running in the same thread
         if loop._thread_id == threading.current_thread().ident and loop.is_running():
             secclient = await AsyncSecopClient.create(host=host,port=port,loop = loop)
             return SECoP_Node_Device(secclient=secclient)
@@ -491,62 +494,10 @@ class SECoP_Node_Device(StandardReadable):
                 self._secclient.disconnect(True),
                 self._secclient.loop)
         
-            future.result(2)
-        
-    def set_name(self, name: str = ""):
-        #if name and not self._name:
-        self._name = name
-        for attr_name, attr in self.__dict__.items():
-            # TODO: support lists and dicts of devices
-            if isinstance(attr, Device):
-                attr.set_name(f"{name}-{attr_name.rstrip('_')}")
-                attr.parent = self
+            future.result(2)    
 
 
-   
-    def init_Devices_from_Description(self):
-        
-        prefix = self._get_prefix()
-        setupInfo = {}
-        
-        # retrieve Object initialization Data for Devices from the Module Descriptions
-        for module , module_description in self._secclient.modules.items():
-            # Descriptive Data of Module:
-            module_properties = module_description.get('properties', {})
-            module_parameters = module_description.get('parameters',{})
-         
-            # Interfaceclass:
-            cls = class_from_interface(module_properties)
-            
-            
-            module_cfg = {}
-            module_cfg["name"] = module
-            module_cfg["secclient"] = self._secclient
-            module_cfg["parent"] = self
-
-            # Split into read attributes
-            module_cfg["read_attrs"] = {"value" : module_parameters.get('value', {})}
-            # and configuration attributes
-            module_cfg["configuration_attrs"] = get_config_attrs(module_parameters)
-            
-            #TODO kind
-            #TODO Prefix
-            #TODO module properties
-
-            setupInfo[module] = ('SECoPDevices',cls.__name__, module_cfg)
-        
-        # Initialize Device objects
-        for devname, devcfg in setupInfo.items():  
-                       
-            devcls = getattr(importlib.import_module(devcfg[0]), devcfg[1])
-            dev = devcls(**devcfg[2])
-            
-            print(devname)
-            
-            self.Devices[devname] = dev
-            self.__setattr__(devname,dev)
-            
-     
+  
 
 
     
