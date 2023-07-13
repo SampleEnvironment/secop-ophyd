@@ -129,36 +129,43 @@ class SECoPReadableDevice(StandardReadable):
 
         # generate Signals from Module parameters eiter r or rw
         for parameter, properties in module_desc['parameters'].items():
-                        
-            ## Normal types
-            paramb = ParameterBackend((module_name,parameter),secclient=secclient)
             
-            #construct signal
-            readonly = properties.get('readonly',None)
-            if readonly == True:
-                setattr(self,parameter,SignalR(paramb))
-            elif readonly == False:
-                setattr(self,parameter,SignalRW(paramb))
-            else:
-                raise Exception('Invalid SECoP Parameter, readonly property is mandatory, but was not found, or is not bool')
+            # generate new root path
+            param_path = Path(parameter_name=parameter,module_name=module_name)
+
+            dtype = properties['datainfo']['type'] == 'tuple'
 
 
-            ## construct subdevices for tuples and structs
-            if properties['datainfo']['type'] == 'tuple':
-                setattr(self,parameter + '_tuple',SECoP_Tuple_Device(
-                    secclient = secclient,
-                    module_name = module_name,
-                    parameter_name= parameter))
+            match dtype:
 
-            # In SECoP only the 'value' parameter is the primary read prameter, but
-            # if the value is a SECoP-tuple all elements belonging to the tuple are appended
-            # to the read list
-            if parameter == 'value':
-                read.append(getattr(self,parameter))
+                case 'tuple':
+                    setattr(self,parameter + '_tuple',SECoP_Tuple_Device(path = param_path, secclient= secclient))
+                case 'struct':
+                    setattr(self,parameter + '_struct',SECoP_Struct_Device(path = param_path, secclient= secclient))
+                case _:
+                    ## Normal types
+                    paramb = SECoP_Param_Backend(path=param_path,secclient=secclient)
+                    
+                    #construct signal
+                    readonly = properties.get('readonly',None)
+                    if readonly == True:
+                        setattr(self,parameter,SignalR(paramb))
+                    elif readonly == False:
+                        setattr(self,parameter,SignalRW(paramb))
+                    else:
+                        raise Exception('Invalid SECoP Parameter, readonly property is mandatory, but was not found, or is not bool')
 
-            # target should only be set through the set method. And is not part of config
-            elif parameter != 'target':
-                config.append(getattr(self,parameter))
+
+                    # In SECoP only the 'value' parameter is the primary read prameter, but
+                    # if the value is a SECoP-tuple all elements belonging to the tuple are appended
+                    # to the read list
+                    if parameter == 'value':
+                        read.append(getattr(self,parameter))
+
+                    # target should only be set through the set method. And is not part of config
+                    elif parameter != 'target':
+                        config.append(getattr(self,parameter))
+
         
         
         #TODO Commands!!!
@@ -197,7 +204,7 @@ class SECoPReadableDevice(StandardReadable):
         old = await self.read_configuration()
         stat = []
         for key, val in d.items():
-            if key not in self._conf_signals:
+            if key not in self._configuration_signals:
                 # a little extra checking for a more specific error msg
                 raise ValueError(
                     "%s is not one of the "
@@ -213,30 +220,16 @@ class SECoPReadableDevice(StandardReadable):
 
 class SECoP_Tuple_Device(StandardReadable):
     def __init__(self,
-        secclient: AsyncSecopClient,
-        module_name: str,
-        parameter_name: str,
-        depth:int = 0,
-        dev_path:list = []):
+        path: Path,
+        secclient: AsyncSecopClient):
         
-
-        delim = "_"
-        #dev_path_str = delim.join(map(str, dev_path))
-
-        if dev_path == []:
-            name:str = parameter_name + "_tuple"
-        elif isinstance(dev_path[-1],int):
-            if len(dev_path) == 1:
-                name:str = parameter_name + str(dev_path[-1]) + "_tuple"
-            else:
-                name:str = str(dev_path[-2]) + str(dev_path[-1]) + "_tuple"
-
-        else: 
-            name:str = str(dev_path[-1]) + "_tuple"
-
+        self._path = path
         self._secclient:AsyncSecopClient = secclient
-        
-        props = secclient.modules[module_name]['parameters'][parameter_name]
+
+        dev_name:str = path.get_signal_name() + "_tuple"
+
+       
+        props = secclient.modules[path._module_name]['parameters'][path._parameter_name]
         
         datainfo = props[DATAINFO]
         
@@ -245,53 +238,49 @@ class SECoP_Tuple_Device(StandardReadable):
         read   = []
         
 
-        #TODO tuples containing other Tuples/structs
-
-        member_path = get_memberpath(dev_path)
 
 
+        for ix , member_info in enumerate(deep_get(datainfo,path.get_memberinfo_path())):
+            #new path object for tuple member
+            tuplemember_path = path.append(ix)
+            attr_name = tuplemember_path.get_signal_name()
 
-        for ix , member in enumerate(deep_get(datainfo,member_path)):
+            match member_info['type']:
+                
+                case 'tuple':
+                    setattr(self,attr_name + '_tuple',SECoP_Tuple_Device(path = tuplemember_path, secclient= secclient))
+                case 'struct':
+                    setattr(self,attr_name + '_struct',SECoP_Struct_Device(path = tuplemember_path, secclient= secclient))
+
+                # atomic datatypes & arrays
+                case _:
+                
+                    tparamb = SECoP_Param_Backend(
+                        path=tuplemember_path,
+                        client= secclient)
+                    
+                    
+                    #construct signal
+                    readonly = props.get('readonly',None)
+
+                    
             
-            tparamb = TupleParamBackend(
-                module_name=module_name,
-                parameter_name=parameter_name,
-                dev_path=dev_path + [ix],
-                secclient=secclient)
-            
-            
-            #construct signal
-            readonly = props.get('readonly',None)
+                    
+                    if readonly == True:
+                        setattr(self,attr_name,SignalR(tparamb))
+                    elif readonly == False:
+                        setattr(self,attr_name,SignalRW(tparamb))
+                    else:
+                        raise Exception('Invalid SECoP Parameter, readonly property is mandatory, but was not found, or is not bool')
 
-            if dev_path == []:
-                sig_name = parameter_name + "-" +str(tparamb._tuple_member)
-            elif isinstance(dev_path[-1],int):
-                if len(dev_path) == 1:
-                    sig_name = parameter_name + str(dev_path[-1])
-                else:
-                    sig_name = str(dev_path[-2]) + str(dev_path[-1])
-
-            else: 
-                sig_name = str(dev_path[-1]) 
-
-
-       
-            
-            if readonly == True:
-                setattr(self,sig_name,SignalR(tparamb))
-            elif readonly == False:
-                setattr(self,sig_name,SignalRW(tparamb))
-            else:
-                raise Exception('Invalid SECoP Parameter, readonly property is mandatory, but was not found, or is not bool')
-
-            read.append(getattr(self,sig_name))
+                    read.append(getattr(self,attr_name))
         
             self.set_readable_signals(read=read)
 
         
 
         
-        super().__init__(name)
+        super().__init__(dev_name)
 
 class SECoPWritableDevice(SECoPReadableDevice,Movable):
     """Fast settable device target"""
@@ -335,82 +324,68 @@ class SECoPMoveableDevice(SECoPWritableDevice,Movable,Stoppable):
         
 class SECoP_Struct_Device(StandardReadable):
     def __init__(self,
-        secclient: AsyncSecopClient,
-        module_name: str,
-        parameter_name: str,
-        depth:int,
-        dev_path:list):
+        path:Path,
+        secclient: AsyncSecopClient):
 
-
-        delim = "_"
-        dev_path_str = delim.join(map(str, dev_path))
-
-        name:str = parameter_name + dev_path_str + "_struct"
-        
+        dev_name:str = path.get_signal_name() + "_struct"
 
         self._secclient:AsyncSecopClient = secclient
+
+
+        props = secclient.modules[path._module_name]['parameters'][path._parameter_name]
         
-        #all parameter properties
-        # TODO where to put Parametrer properties???
-        struct_properties:dict = secclient.modules[module_name]['parameters'][parameter_name]
-        
-        # root datainfo dict
-        struct_datainfo = struct_properties[DATAINFO]
+        datainfo = props[DATAINFO]
         
 
         #list for read signals
         read   = []
 
-
-        member_path = get_memberpath(dev_path) + ['members']
-
-        for member_name, value  in deep_get(struct_datainfo,member_path).items():
-
-            if value['type'] == 'struct':
-                setattr(self,member_name,SECoP_Struct_Device(
-                    secclient=secclient,
-                    module_name=module_name,
-                    parameter_name=parameter_name,
-                    depth=depth + 1,
-                    dev_path=dev_path + [member_name]))                
-                continue
-
-            if value['type'] == 'tuple':
-                setattr(self,member_name,SECoP_Tuple_Device(
-                    secclient=secclient,
-                    module_name=module_name,
-                    parameter_name=parameter_name,
-                    depth = depth + 1,
-                    dev_path = dev_path + [member_name]))
-                continue
-
-            
-            # struct member is eithera single element or an array ofa basic datatype 
-            sparamb = StructParamBackend(
-                dev_path=dev_path + [member_name],
-                parameter_name=parameter_name,
-                module_name=module_name,
-                secclient=secclient)
-
-            #construct signal
-            readonly = struct_properties.get('readonly',None)
-            
-            if readonly == True:
-                setattr(self,member_name,SignalR(sparamb))
-            elif readonly == False:
-                setattr(self,member_name,SignalRW(sparamb))
-            else:
-                raise Exception('Invalid SECoP Parameter, readonly property is mandatory, but was not found, or is not bool')
-
-            read.append(getattr(self,member_name))
         
+        
+
+        for member_name, member_info  in deep_get(datainfo,path.get_memberinfo_path()).items():
+            
+            # new path object for tuple member
+            struct_member_path = path.append(member_name)
+            attr_name = struct_member_path.get_signal_name()
+
+            match member_info['type']:
+                
+                case 'tuple':
+                    setattr(self,attr_name + '_tuple',SECoP_Tuple_Device(path = struct_member_path, secclient= secclient))
+                case 'struct':
+                    setattr(self,attr_name + '_struct',SECoP_Struct_Device(path = struct_member_path, secclient= secclient))
+
+                # atomic datatypes & arrays
+                case _:
+                
+                    struct_param_backend = SECoP_Param_Backend(
+                        path=struct_member_path,
+                        client= secclient)
+                    
+                    
+                    #construct signal
+                    readonly = props.get('readonly',None)
+
+                               
+                    
+                    if readonly == True:
+                        setattr(self,attr_name,SignalR(struct_param_backend))
+                    elif readonly == False:
+                        setattr(self,attr_name,SignalRW(struct_param_backend))
+                    else:
+                        raise Exception('Invalid SECoP Parameter, readonly property is mandatory, but was not found, or is not bool')
+
+                    read.append(getattr(self,member_name))
+        
+
             self.set_readable_signals(read=read)
 
         
 
 
 
-        super().__init__(name=name)
+        super().__init__(name=dev_name)
 
 
 
