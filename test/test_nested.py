@@ -2,7 +2,8 @@ from bssecop.SECoPDevices import SECoP_Node_Device,SECoPMoveableDevice,SECoP_Str
 import numpy as np
 import asyncio
 import pytest
-
+from bssecop.util import Path
+from frappy.lib.enum import EnumMember
 from bssecop.AsyncSecopClient import AsyncSecopClient
 
 async def test_nested_connect(nested_struct_sim,nested_node:SECoP_Node_Device):
@@ -12,12 +13,11 @@ async def test_nested_connect(nested_struct_sim,nested_node:SECoP_Node_Device):
 
 
 async def test_tuple_dev(nested_struct_sim,nested_client:AsyncSecopClient):
+    path = Path(module_name='ophy_struct',parameter_name='status')
+    
     status_dev = SECoP_Tuple_Device(
-        secclient=nested_client,
-        module_name='ophy_struct',
-        parameter_name='status',
-        depth=0,
-        dev_path=[]
+        path=path,
+        secclient=nested_client
         )
     
     reading = await status_dev.read()
@@ -43,13 +43,12 @@ async def test_tuple_dev(nested_struct_sim,nested_client:AsyncSecopClient):
     await nested_client.disconnect(True)
 
 
+#TODO
 async def test_struct_dev(nested_struct_sim,nested_client:AsyncSecopClient):
+        path = Path(module_name='ophy_struct',parameter_name='nested_struct')
         nested_dev = SECoP_Struct_Device(
         secclient=nested_client,
-        module_name='ophy_struct',
-        parameter_name='nested_struct',
-        depth=0,
-        dev_path=[]
+        path=path
         )
 
         reading_toplvl = await nested_dev.read()

@@ -113,7 +113,7 @@ class SECoPReadableDevice(StandardReadable):
         module_desc = secclient.modules[module_name]
         
         self.value:SignalR 
-        self.status:SignalR 
+        self.status_code:SignalR 
         
         
         #list for config signals
@@ -155,9 +155,11 @@ class SECoPReadableDevice(StandardReadable):
             else:
                 raise Exception('Invalid SECoP Parameter, readonly property is mandatory, but was not found, or is not bool')
 
-
-            #TODO status signal
-
+            #add status code signal to root device
+            if parameter == 'status':                
+                self.status_code = SignalR(
+                    SECoP_Param_Backend(path=param_path.append(0),secclient=secclient))
+                
             # In SECoP only the 'value' parameter is the primary read prameter, but
             # if the value is a SECoP-tuple all elements belonging to the tuple are appended
             # to the read list
@@ -240,14 +242,15 @@ class SECoP_Tuple_Device(StandardReadable):
         read   = []
         
 
-
-
-        for ix , member_info in enumerate(deep_get(datainfo,path.get_memberinfo_path())):
+        
+        for ix , member_info in enumerate(deep_get(datainfo,path.get_memberinfo_path()+['members'])):
             #new path object for tuple member
             tuplemember_path = path.append(ix)
             attr_name = tuplemember_path.get_signal_name()
 
+            
             match member_info['type']:
+                
                 
                 case 'tuple':
                     setattr(self,attr_name + '_tuple',SECoP_Tuple_Device(path = tuplemember_path, secclient= secclient))
@@ -259,7 +262,7 @@ class SECoP_Tuple_Device(StandardReadable):
                 
                     tparamb = SECoP_Param_Backend(
                         path=tuplemember_path,
-                        client= secclient)
+                        secclient= secclient)
                     
                     
                     #construct signal
@@ -276,10 +279,10 @@ class SECoP_Tuple_Device(StandardReadable):
                         raise Exception('Invalid SECoP Parameter, readonly property is mandatory, but was not found, or is not bool')
 
                     read.append(getattr(self,attr_name))
-        
+                
             self.set_readable_signals(read=read)
 
-        
+            
 
         
         super().__init__(dev_name)
@@ -302,7 +305,7 @@ class SECoPMoveableDevice(SECoPWritableDevice,Movable,Stoppable):
     async def _move(self,new_target):
         self._success = True
         await self.target.set(new_target,wait=False)
-        async for current_stat in observe_value(self.status):
+        async for current_stat in observe_value(self.status_code):
             v = current_stat[0].value
             
            
@@ -345,7 +348,7 @@ class SECoP_Struct_Device(StandardReadable):
         
         
 
-        for member_name, member_info  in deep_get(datainfo,path.get_memberinfo_path()).items():
+        for member_name, member_info  in deep_get(datainfo,path.get_memberinfo_path()+['members']).items():
             
             # new path object for tuple member
             struct_member_path = path.append(member_name)
@@ -362,8 +365,8 @@ class SECoP_Struct_Device(StandardReadable):
                 case _:
                 
                     struct_param_backend = SECoP_Param_Backend(
-                        path=struct_member_path,
-                        client= secclient)
+                        path = struct_member_path,
+                        secclient = secclient)
                     
                     
                     #construct signal

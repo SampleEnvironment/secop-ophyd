@@ -13,8 +13,9 @@ import time
 from collections import defaultdict
 
 
+
 from bssecop.util import deep_get, Path
-from frappy.datatypes import TupleOf,ArrayOf,EnumType
+from frappy.datatypes import TupleOf,ArrayOf,EnumType,StructOf
 from bluesky.protocols import Reading
 
 
@@ -52,16 +53,11 @@ class UNREGISTER:
 #TODO better name
 class SECoPReading():
     def __init__(self,entry:CacheItem) -> None:
-
-        if isinstance(entry.value,TupleOf):
-            self.value = list(entry.value)
         
         if isinstance(entry.value,EnumType):
             self.value = entry.value.value
-        
-        if isinstance(entry.value,ArrayOf):
-           self.value = entry.value
-        
+              
+
         else:
             self.value = entry.value 
             
