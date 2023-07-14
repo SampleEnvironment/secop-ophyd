@@ -6,7 +6,7 @@ from typing import Any, Dict, Optional, Type
 from ophyd.v2.core import  ReadingValueCallback, T,SignalBackend
 from bluesky.protocols import Reading, Descriptor
 
-
+from frappy.datatypes import StructOf, TupleOf
 import time
 from frappy.client import CacheItem
 import collections.abc
@@ -63,20 +63,14 @@ class SECoP_Param_Backend(SignalBackend):
         
         self.readonly = self._param_description.get('readonly')
 
-        self.datatype = self._get_dtype()
-
-        
 
 
-
-        #self._param_desc = self._get_param_desc()        
-        #self._datainfo = self._param_desc['datainfo']    
-        #self._memberinfo = deep_get(self._datainfo,path.get_memberinfo_path())
-            
+        self.datatype:str
+        self.SECoPdtype:str
         
-        
-        
-        
+        self._set_dtype()
+      
+               
         
         self.source   = secclient.uri  + ":" +secclient.nodename + ":" + self.path._module_name + ":" +self.path._parameter_name 
 
@@ -91,6 +85,13 @@ class SECoP_Param_Backend(SignalBackend):
         
         # signal is a root SECoP parameter
         if self.path._dev_path== []:
+            
+            if self.SECoPdtype == 'tuple':
+                value = TupleOf.from_string(value) 
+
+            if self.SECoPdtype == 'struct':
+                value = StructOf.from_string(value)
+
             await self._secclient.setParameter(
                 **self.get_param_path(),
                 value = new_val)
@@ -148,8 +149,12 @@ class SECoP_Param_Backend(SignalBackend):
     async def get_reading(self) -> Reading:
         dataset = await self._secclient.getParameter(**self.get_param_path(),trycache =False)
        
-        # select only the tuple member corresponding to the signal
+        # select only the tuple/struct member corresponding to the signal
         dataset.value = deep_get(dataset.value,self.path._dev_path)
+
+        if self.SECoPdtype in ['tuple','struct']:
+            dataset.value = str(dataset.value)
+        
         
         return dataset.get_reading()
     
@@ -158,6 +163,10 @@ class SECoP_Param_Backend(SignalBackend):
         
         # select only the tuple member corresponding to the signal
         dataset.value = deep_get(dataset.value,self.path._dev_path)
+
+        if self.SECoPdtype in ['tuple','struct']:
+            dataset.value = str(dataset.value)
+        
         
         return dataset.get_value()
     
@@ -184,16 +193,9 @@ class SECoP_Param_Backend(SignalBackend):
 
 
     
-    def _get_dtype(self) -> str:
-
-        
-        SECoPdype = self.datainfo['type']
-        
-        if SECoPdype == 'tuple' or SECoPdype == 'struct':
-            raise TypeError("Signals cannot be of type: " + SECoPdype )
-
-        
-        return SECOP2DTYPE.get(SECoPdype,None) 
+    def _set_dtype(self) -> None:        
+        self.SECoPdtype = self.datainfo['type']      
+        self.datatype =  SECOP2DTYPE.get(self.SECoPdtype,None) 
 
             
 

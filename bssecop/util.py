@@ -45,7 +45,6 @@ class Path():
         return (self._module_name,self._parameter_name)
 
     def get_memberinfo_path(self) -> list:
-        # Python3 code to demonstrate
         # inserting K after every Nth number
         # using itertool.chain()
         

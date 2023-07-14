@@ -133,38 +133,40 @@ class SECoPReadableDevice(StandardReadable):
             # generate new root path
             param_path = Path(parameter_name=parameter,module_name=module_name)
 
-            dtype = properties['datainfo']['type'] == 'tuple'
+            dtype = properties['datainfo']['type'] 
 
-
+            # sub devices for nested datatypes
             match dtype:
 
                 case 'tuple':
                     setattr(self,parameter + '_tuple',SECoP_Tuple_Device(path = param_path, secclient= secclient))
                 case 'struct':
                     setattr(self,parameter + '_struct',SECoP_Struct_Device(path = param_path, secclient= secclient))
-                case _:
-                    ## Normal types
-                    paramb = SECoP_Param_Backend(path=param_path,secclient=secclient)
-                    
-                    #construct signal
-                    readonly = properties.get('readonly',None)
-                    if readonly == True:
-                        setattr(self,parameter,SignalR(paramb))
-                    elif readonly == False:
-                        setattr(self,parameter,SignalRW(paramb))
-                    else:
-                        raise Exception('Invalid SECoP Parameter, readonly property is mandatory, but was not found, or is not bool')
+                
+            ## Normal types + (struct and tuple as JSON object Strings)
+            paramb = SECoP_Param_Backend(path=param_path,secclient=secclient)
+            
+            #construct signal
+            readonly = properties.get('readonly',None)
+            if readonly == True:
+                setattr(self,parameter,SignalR(paramb))
+            elif readonly == False:
+                setattr(self,parameter,SignalRW(paramb))
+            else:
+                raise Exception('Invalid SECoP Parameter, readonly property is mandatory, but was not found, or is not bool')
 
 
-                    # In SECoP only the 'value' parameter is the primary read prameter, but
-                    # if the value is a SECoP-tuple all elements belonging to the tuple are appended
-                    # to the read list
-                    if parameter == 'value':
-                        read.append(getattr(self,parameter))
+            #TODO status signal
 
-                    # target should only be set through the set method. And is not part of config
-                    elif parameter != 'target':
-                        config.append(getattr(self,parameter))
+            # In SECoP only the 'value' parameter is the primary read prameter, but
+            # if the value is a SECoP-tuple all elements belonging to the tuple are appended
+            # to the read list
+            if parameter == 'value':
+                read.append(getattr(self,parameter))
+
+            # target should only be set through the set method. And is not part of config
+            elif parameter != 'target':
+                config.append(getattr(self,parameter))
 
         
         
