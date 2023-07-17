@@ -7,6 +7,7 @@ from ophyd.v2.core import  StandardReadable
 from ophyd.v2.core import AsyncStatus, observe_value, Device,SignalRW, SignalR
 
 from bluesky.protocols import Movable, Stoppable, SyncOrAsync
+
  
 from typing import (
     Any,
@@ -26,7 +27,7 @@ from typing import (
 
 from bluesky.protocols import Movable
  
-from bssecop.AsyncSecopClient import AsyncSecopClient
+from bssecop.AsyncFrappyClient import AsyncFrappyClient
 from frappy.logging import logger
 
 from bssecop.SECoPSignal import *
@@ -103,7 +104,7 @@ class SECoPReadableDevice(StandardReadable):
 
     def __init__(
         self,
-        secclient: AsyncSecopClient,
+        secclient: AsyncFrappyClient,
         module_name: str
         ):   
     
@@ -225,10 +226,10 @@ class SECoPReadableDevice(StandardReadable):
 class SECoP_Tuple_Device(StandardReadable):
     def __init__(self,
         path: Path,
-        secclient: AsyncSecopClient):
+        secclient: AsyncFrappyClient):
         
         self._path = path
-        self._secclient:AsyncSecopClient = secclient
+        self._secclient:AsyncFrappyClient = secclient
 
         dev_name:str = path.get_signal_name() + "_tuple"
 
@@ -293,7 +294,7 @@ class SECoPWritableDevice(SECoPReadableDevice,Movable):
     
 
 class SECoPMoveableDevice(SECoPWritableDevice,Movable,Stoppable):
-    def __init__(self, secclient: AsyncSecopClient, module_name: str):
+    def __init__(self, secclient: AsyncFrappyClient, module_name: str):
         super().__init__(secclient, module_name)
         self._success = True
         
@@ -307,7 +308,7 @@ class SECoPMoveableDevice(SECoPWritableDevice,Movable,Stoppable):
         await self.target.set(new_target,wait=False)
         async for current_stat in observe_value(self.status_code):
             v = current_stat[0].value
-            
+
            
             #Error State or DISABLED
             if v >= ERROR or v < IDLE:
@@ -330,11 +331,11 @@ class SECoPMoveableDevice(SECoPWritableDevice,Movable,Stoppable):
 class SECoP_Struct_Device(StandardReadable):
     def __init__(self,
         path:Path,
-        secclient: AsyncSecopClient):
+        secclient: AsyncFrappyClient):
 
         dev_name:str = path.get_signal_name() + "_struct"
 
-        self._secclient:AsyncSecopClient = secclient
+        self._secclient:AsyncFrappyClient = secclient
 
 
         props = secclient.modules[path._module_name]['parameters'][path._parameter_name]
@@ -398,9 +399,9 @@ class SECoP_Struct_Device(StandardReadable):
 
 
 class SECoP_Node_Device(StandardReadable):
-    def __init__(self,secclient:AsyncSecopClient):   
+    def __init__(self,secclient:AsyncFrappyClient):   
 
-        self._secclient:AsyncSecopClient = secclient
+        self._secclient:AsyncFrappyClient = secclient
         
         self.modules :   Dict[str,T] = self._secclient.modules
         self.Devices : Dict[str,T] = {}
@@ -437,7 +438,7 @@ class SECoP_Node_Device(StandardReadable):
         
         #check if asyncio eventloop is running in the same thread
         if loop._thread_id == threading.current_thread().ident and loop.is_running():
-            secclient = await AsyncSecopClient.create(host=host,port=port,loop = loop)
+            secclient = await AsyncFrappyClient.create(host=host,port=port,loop = loop)
             return SECoP_Node_Device(secclient=secclient)
         else:
             raise Exception
@@ -453,11 +454,14 @@ class SECoP_Node_Device(StandardReadable):
         else:
             #Event loop is running in a different thread
             future = asyncio.run_coroutine_threadsafe(
-                AsyncSecopClient.create(host=host,port=port,loop = loop),
+                AsyncFrappyClient.create(host=host,port=port,loop = loop),
                 loop)
             
             #TODO checking if connect fails 
-            return SECoP_Node_Device(future.result(2))
+            
+            #TODO find better solution than sleep
+            time.sleep(2)
+            return SECoP_Node_Device(future.result(10))
              
     
     async def disconnect(self):

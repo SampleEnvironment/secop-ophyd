@@ -1,7 +1,8 @@
 import pytest
 from xprocess import ProcessStarter
-from bssecop.AsyncSecopClient import AsyncSecopClient
+from bssecop.AsyncSecopClient import AsyncFrappyClient
 from bssecop.SECoPDevices import SECoP_Node_Device
+from bssecop.AsyncFrappyClient import AsyncFrappyClient
 
 # Import bluesky and ophyd
 import matplotlib.pyplot as plt
@@ -10,6 +11,7 @@ from bluesky.callbacks.best_effort import BestEffortCallback
 from bluesky.plan_stubs import mov, movr, rd  # noqa
 from bluesky.plans import grid_scan  # noqa
 from bluesky.utils import ProgressBarManager, register_transform
+
 import logging
 
 
@@ -84,19 +86,29 @@ def logger():
     
     
 @pytest.fixture
-async def client(cryo_sim,logger,port = '10769'):
+async def async_frappy_client(cryo_sim,logger,port = '10769'):
     
    
     loop =asyncio.get_running_loop()
 
-    return await AsyncSecopClient.create(host='localhost',port=port,loop=loop,log=logger)
+    return await AsyncFrappyClient.create(host='localhost',port=port,loop=loop,log=logger)
+
+
+@pytest.fixture
+async def async_frappy_client(cryo_sim,logger,port = '10769'):
+    
+   
+    loop =asyncio.get_running_loop()
+
+    return await AsyncFrappyClient.create(host='localhost',port=port,loop=loop,log=logger)
+
 
 @pytest.fixture
 async def nested_client(cryo_sim,logger,port = '10771'):
     
     loop =asyncio.get_running_loop()
 
-    return await AsyncSecopClient.create(host='localhost',port=port,loop=loop,log=logger)
+    return await AsyncFrappyClient.create(host='localhost',port=port,loop=loop,log=logger)
     
 @pytest.fixture
 def RE():

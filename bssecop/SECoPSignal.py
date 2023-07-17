@@ -1,5 +1,5 @@
 
-from bssecop.AsyncSecopClient import AsyncSecopClient, SECoPReading
+from bssecop.AsyncFrappyClient import AsyncFrappyClient, SECoPReading
 from bssecop.util import deep_get, Path
 from typing import Any, Dict, Optional, Type
 
@@ -10,8 +10,9 @@ from frappy.datatypes import StructOf, TupleOf
 import time
 from frappy.client import CacheItem
 import collections.abc
+import asyncio
 
-
+from functools import wraps
 
 
 
@@ -46,10 +47,10 @@ class SECoP_Param_Backend(SignalBackend):
     def __init__(
             self,
             path:Path,
-            secclient:AsyncSecopClient) -> None:
+            secclient:AsyncFrappyClient) -> None:
         
         # secclient 
-        self._secclient:AsyncSecopClient = secclient
+        self._secclient:AsyncFrappyClient = secclient
                
         # module:acessible Path for reading/writing (module,accessible)
         self.path:Path = path
@@ -174,10 +175,22 @@ class SECoP_Param_Backend(SignalBackend):
         return dataset.get_value()
     
     def set_callback(self, callback: Callable[[Reading, Any], None] | None) -> None:
+            def awaitify(sync_func):
+                """Wrap a synchronous callable to allow ``await``'ing it"""
+                @wraps(sync_func)
+                async def async_func(*args, **kwargs):
+                    return sync_func(*args, **kwargs)
+                return async_func
+
+
+
             def updateItem(module,parameter,entry:CacheItem):
                            
                 data =SECoPReading(entry)
-                callback(reading=data.get_reading(),value=data.get_value())
+                async_callback = awaitify(callback)
+
+                asyncio.run_coroutine_threadsafe(async_callback(reading=data.get_reading(),value=data.get_value()), self._secclient.loop)
+                
 
             if callback != None:
                 self._secclient.register_callback(self.get_path_tuple(),updateItem)

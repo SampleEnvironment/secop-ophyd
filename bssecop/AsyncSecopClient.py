@@ -73,7 +73,7 @@ class SECoPReading():
         
     
 
-class AsyncSecopClient:
+class AsyncFrappyClient:
     CALLBACK_NAMES = ('updateEvent', 'updateItem', 'descriptiveDataChange',
                       'nodeStateChange', 'unhandledMessage')
     online = False  # connected or reconnecting since a short time
@@ -127,7 +127,7 @@ class AsyncSecopClient:
     async def create(cls,host,port,loop, log=Logger):
         
         
-        self = AsyncSecopClient(host,port,loop,log=log)
+        self = AsyncFrappyClient(host,port,loop,log=log)
         
         await self.connect(1)
         
