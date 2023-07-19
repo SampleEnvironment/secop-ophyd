@@ -152,8 +152,8 @@ class SECoP_CMD_X_Backend(SignalBackend):
 
         self.callback:function = None
 
-        arguments:list = arguments
-        result:list = result
+        self.arguments:list = arguments
+        self.result:list = result
         
         #Root datainfo or memberinfo for nested datatypes 
         self.datainfo:dict = deep_get(
@@ -181,7 +181,7 @@ class SECoP_CMD_X_Backend(SignalBackend):
         # TupleOf()
 
         # single atomic datatype
-        argument = arg_datatype.export_datatype(self.)
+        argument = arg_datatype.export_datatype(self.arguments[0].)
 
 
         res = await self._secclient.execCommand(
