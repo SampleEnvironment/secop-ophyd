@@ -6,7 +6,7 @@ from typing import Any, Dict, Optional, Type
 from ophyd.v2.core import  ReadingValueCallback, T,SignalBackend
 from bluesky.protocols import Reading, Descriptor
 
-from frappy.datatypes import StructOf, TupleOf
+from frappy.datatypes import StructOf, TupleOf,CommandType,DataType
 import time
 from frappy.client import CacheItem
 import collections.abc
@@ -41,8 +41,107 @@ def get_shape(datainfo):
 
 
 
+        
+
+class SECoP_CMD_IO_Backend(SignalBackend):
+    def __init__(
+            self,
+            path:Path,
+            frappy_datatype:DataType,
+            cmd_desc:dict
+            ) -> None:
+            
+
+        self.reading:SECoPReading = None
+        self.value = None
+
+        # module:acessible Path for reading/writing (module,accessible)
+        self.path:Path = path
+
+        self._cmd_desc:dict = cmd_desc 
+
+        self.callback:function = None
+
+        
+        #Root datainfo or memberinfo for nested datatypes 
+        self.datainfo:dict = deep_get(
+            self._cmd_desc['datainfo'],
+            self.path._dev_path)
+  
+        self.frappy_datatype:DataType = frappy_datatype 
+        self.datatype:str
+        self.SECoPdtype:str
+        
+        self._set_dtype()
+      
+               
+        
+        self.source   = self.path._module_name + ":" +self.path._accessible_name 
+
+
+    async def connect(self):
+        pass
     
+    async def put(self, value: Any | None, wait=True, timeout=None):
+        if isinstance(self.frappy_datatype,(StructOf,TupleOf)):
+            self.value = self.frappy_datatype.from_string(value)    
+        else:
+            self.value = self.frappy_datatype.import_value(value)
+        
+        self.reading.set_reading(value)
+        
+        if self.callback != None:
+            self.callback(self.reading.get_reading(),self.reading.get_value())            
+        
+    async def get_descriptor(self) ->  Descriptor:
+        
+        res  = {}
+        
+        res['source'] = self.source
+        
+        # ophyd datatype (some SECoP datatypeshaveto be converted)
+        res['dtype']  = self.datatype
+        
+        # get shape from datainfo and SECoPtype
+        
+        #TODO if array is ragged only first dimension is used otherwise parse the array
+        if self.datainfo['type'] == 'array':
+            res['shape'] = [ 1,  self.datainfo.get('maxlen',None)]
+        else:
+            res['shape']  = []
+        
+        for property_name, prop_val in self.datainfo.items():
+
+            if property_name == 'type':
+                property_name = 'SECoPtype' 
+            res[property_name] = prop_val
+            
+        return res
+        
+    async def get_reading(self) -> Reading:
+        self.reading.get_reading()
+
+    async def get_value(self) -> T:
+        self.reading.get_value()
     
+    def set_callback(self, callback: Callable[[Reading, Any], None] | None) -> None:
+        self.callback = callback
+
+            
+    
+    def _set_dtype(self) -> None:        
+        self.SECoPdtype = self.datainfo['type']      
+        self.datatype =  SECOP2DTYPE.get(self.SECoPdtype,None) 
+       
+
+class SECoP_CMD_X_Backend(SignalBackend):
+    def __init__(
+            self,path:Path,
+            secclient:AsyncFrappyClient,
+            arguments:list,
+            result:list) -> None:
+        pass
+
 class SECoP_Param_Backend(SignalBackend):
     def __init__(
             self,
@@ -73,7 +172,7 @@ class SECoP_Param_Backend(SignalBackend):
       
                
         
-        self.source   = secclient.uri  + ":" +secclient.nodename + ":" + self.path._module_name + ":" +self.path._parameter_name 
+        self.source   = secclient.uri  + ":" +secclient.nodename + ":" + self.path._module_name + ":" +self.path._accessible_name 
 
      
     async def connect(self):

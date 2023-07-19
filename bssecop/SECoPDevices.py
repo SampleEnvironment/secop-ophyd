@@ -234,7 +234,7 @@ class SECoP_Tuple_Device(StandardReadable):
         dev_name:str = path.get_signal_name() + "_tuple"
 
        
-        props = secclient.modules[path._module_name]['parameters'][path._parameter_name]
+        props = secclient.modules[path._module_name]['parameters'][path._accessible_name]
         
         datainfo = props[DATAINFO]
         
@@ -338,7 +338,7 @@ class SECoP_Struct_Device(StandardReadable):
         self._secclient:AsyncFrappyClient = secclient
 
 
-        props = secclient.modules[path._module_name]['parameters'][path._parameter_name]
+        props = secclient.modules[path._module_name]['parameters'][path._accessible_name]
         
         datainfo = props[DATAINFO]
         
@@ -395,8 +395,35 @@ class SECoP_Struct_Device(StandardReadable):
 
 
 
-    
+class SECoP_CMD_Device(StandardReadable):
 
+    def __init__(self,
+        path:Path,
+        secclient: AsyncFrappyClient):
+        
+        dev_name:str = path.get_signal_name() + "_cmd"
+
+        self._secclient:AsyncFrappyClient = secclient
+
+
+        cmd_props = secclient.modules[path._module_name]['commands'][path._accessible_name]
+        
+        datainfo = cmd_props[DATAINFO]
+
+
+     
+
+        # Argument Signals (config Signals write only)
+
+        # Result Signals  (read Signals)    
+
+        # SignalX
+
+        #list for read signals
+        read   = []
+
+    
+        super().__init__(name=dev_name)
 
 class SECoP_Node_Device(StandardReadable):
     def __init__(self,secclient:AsyncFrappyClient):   

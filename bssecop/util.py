@@ -21,7 +21,7 @@ def deep_get(dictionary, keys, default=None)-> dict:
 
 class Path():
     def __init__(self,parameter_name:str,module_name:str) -> None:
-        self._parameter_name = parameter_name
+        self._accessible_name = parameter_name
         self._module_name = module_name
         self._last_named_param = None
 
@@ -39,10 +39,10 @@ class Path():
         return new_path
     
     def get_param_path(self):
-        return {'module':self._module_name,'parameter':self._parameter_name}
+        return {'module':self._module_name,'parameter':self._accessible_name}
 
     def get_path_tuple(self):
-        return (self._module_name,self._parameter_name)
+        return (self._module_name,self._accessible_name)
 
     def get_memberinfo_path(self) -> list:
         # inserting K after every Nth number
@@ -65,18 +65,21 @@ class Path():
     def get_signal_name(self):
         #top level: signal name == Parameter name
         if self._dev_path == []:
-            return self._parameter_name
+            return self._accessible_name
         
         sig_name_postfix = self._dev_path[self._last_named_param :]
 
         if self._last_named_param == None:
-            sig_name_postfix = [self._parameter_name] + sig_name_postfix
+            sig_name_postfix = [self._accessible_name] + sig_name_postfix
 
         delim = "-"
         return delim.join(map(str, sig_name_postfix))
     
     def get_param_desc_path(self):
-        return [self._module_name,'parameters',self._parameter_name]
+        return [self._module_name,'parameters',self._accessible_name]
+    
+    def get_cmd_desc_path(self):
+        return [self._module_name,'commands',self._accessible_name]
          
     def insert_val(self,dic:dict,new_val):
                 if self._dev_path == []:
