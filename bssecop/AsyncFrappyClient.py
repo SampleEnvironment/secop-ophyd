@@ -7,6 +7,7 @@ from frappy.datatypes import TupleOf,ArrayOf,EnumType,StructOf
 
 from typing import TypeVar
 
+import time
 
 T = TypeVar("T")
 
@@ -28,7 +29,12 @@ class SECoPReading():
     def get_reading(self) -> Reading:
         return {'value':self.value,'timestamp':self.timestamp}
     def get_value(self) -> T:
-        return self.value 
+        return self.value
+
+    def set_reading(self,value) -> None:
+        self.value = value
+        self.timestamp = time.time()
+
 
 
 class AsyncFrappyClient():

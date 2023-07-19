@@ -89,7 +89,7 @@ class SECoP_CMD_IO_Backend(SignalBackend):
             self.value = self.frappy_datatype.import_value(value)
         
         self.reading.set_reading(value)
-        
+
         if self.callback != None:
             self.callback(self.reading.get_reading(),self.reading.get_value())            
         
@@ -138,9 +138,97 @@ class SECoP_CMD_X_Backend(SignalBackend):
     def __init__(
             self,path:Path,
             secclient:AsyncFrappyClient,
+            frappy_datatype:CommandType,
+            cmd_desc:dict,
             arguments:list,
             result:list) -> None:
+
+        self._secclient:AsyncFrappyClient = secclient
+
+        # module:acessible Path for reading/writing (module,accessible)
+        self.path:Path = path
+
+        self._cmd_desc:dict = cmd_desc 
+
+        self.callback:function = None
+
+        arguments:list = arguments
+        result:list = result
+        
+        #Root datainfo or memberinfo for nested datatypes 
+        self.datainfo:dict = deep_get(
+            self._cmd_desc['datainfo'],
+            self.path._dev_path)
+  
+        self.frappy_datatype:CommandType = frappy_datatype 
+
+            
+        self.source   = self.path._module_name + ":" +self.path._accessible_name 
+
+
+    async def connect(self):
         pass
+    
+    async def put(self, value: Any | None, wait=True, timeout=None):
+        argument = None
+        
+        arg_datatype = self.frappy_datatype.argument
+
+        # Tree different cases:
+
+        # StructOf()
+
+        # TupleOf()
+
+        # single atomic datatype
+        argument = arg_datatype.export_datatype(self.)
+
+
+        res = await self._secclient.execCommand(
+            module=self.path._module_name,
+            command=self.path._accessible_name,
+            argument=argument)          
+        
+    async def get_descriptor(self) ->  Descriptor:
+        
+        res  = {}
+        
+        res['source'] = self.source
+        
+        # ophyd datatype (some SECoP datatypeshaveto be converted)
+        res['dtype']  = 'string' #TODO or None??? signalx is never read
+        
+        # get shape from datainfo and SECoPtype
+        
+        #TODO if array is ragged only first dimension is used otherwise parse the array
+        if self.datainfo['type'] == 'array':
+            res['shape'] = [ 1,  self.datainfo.get('maxlen',None)]
+        else:
+            res['shape']  = []
+        
+        for property_name, prop_val in self._cmd_desc.items():
+            # skip datainfo (treated seperately)
+            if property_name == 'datainfo' or property_name == 'datatype' :
+                continue
+            res[property_name] = prop_val
+
+        for property_name, prop_val in self.datainfo.items():
+
+            if property_name == 'type':
+                property_name = 'SECoPtype' 
+            res[property_name] = prop_val
+            
+        return res
+        
+    async def get_reading(self) -> Reading:
+        return None
+
+    async def get_value(self) -> T:
+        return None
+    
+    def set_callback(self, callback: Callable[[Reading, Any], None] | None) -> None:
+        pass           
+      
 
 class SECoP_Param_Backend(SignalBackend):
     def __init__(
@@ -415,5 +503,6 @@ SECOP2DTYPE = {
     'blob'   : 'string',
     'array'  : 'array',
     'tuple'  : 'string', # but variing types of array elements 
-    'struct' : 'string'
+    'struct' : 'string',
+    'command': 'string'
 }
