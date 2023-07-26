@@ -12,8 +12,14 @@ import time
 T = TypeVar("T")
 
 class SECoPReading():
-    def __init__(self,entry:CacheItem) -> None:
-        
+    def __init__(self,entry:CacheItem = None) -> None:
+        if entry == None:
+            self.timestamp = None
+            self.value = None
+            self.readerror = None
+            return
+
+
         if isinstance(entry.value,EnumType):
             self.value = entry.value.value
               

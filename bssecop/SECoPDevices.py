@@ -4,7 +4,7 @@ import threading
 
 from ophyd.v2.core import  StandardReadable
 
-from ophyd.v2.core import AsyncStatus, observe_value, Device,SignalRW, SignalR
+from ophyd.v2.core import AsyncStatus, observe_value, Device,SignalRW, SignalR, SignalX
 
 from bluesky.protocols import Movable, Stoppable, SyncOrAsync
 
@@ -73,7 +73,6 @@ ERROR = 400
 ERROR_STANDBY = 430
 ERROR_PREPARED = 450
 UNKNOWN = 401  # not in SECoP standard (yet)
-
 
 
 def clean_identifier(anystring):
@@ -170,8 +169,13 @@ class SECoPReadableDevice(StandardReadable):
             # target should only be set through the set method. And is not part of config
             elif parameter != 'target':
                 config.append(getattr(self,parameter))
-
         
+        
+        # Initialize Command Devices
+        for command, properties in module_desc['commands'].items():
+            # generate new root path
+            cmd_path = Path(parameter_name=command,module_name=module_name)
+            setattr(self,command + '_dev' ,SECoP_CMD_Device(path=cmd_path,secclient=secclient))
         
         #TODO Commands!!!
         self.set_readable_signals(read=read,config=config)
@@ -407,21 +411,97 @@ class SECoP_CMD_Device(StandardReadable):
 
 
         cmd_props = secclient.modules[path._module_name]['commands'][path._accessible_name]
-        
+        cmd_datatype:CommandType = cmd_props['datatype']
         datainfo = cmd_props[DATAINFO]
 
-
+        arg_dtype = cmd_datatype.argument
+        res_dtype = cmd_datatype.result
      
 
-        # Argument Signals (config Signals write only)
+        # Argument Signals (config Signals, can also be read)
+        arg_path = path.append('argument')
+        arguments = {}
+        result = {}
+        
+        # result signals
+        read   = []
+        # argument signals
+        config = []
+
+        if isinstance(arg_dtype,StructOf):
+            for signame, sig_desc in datainfo['argument']['members'].items():
+                arg_backend = SECoP_CMD_IO_Backend(
+                    path= arg_path.append(signame),
+                    frappy_datatype=arg_dtype.members.get(signame),
+                    sig_datainfo=sig_desc)
+                
+                arguments[signame] = arg_backend
+
+                signame = signame + '_arg'
+                setattr(self,signame,SignalRW(arg_backend))
+                config.append(getattr(self,signame))
+        
+        elif isinstance(arg_dtype,TupleOf):
+            raise NotImplementedError
+        
+
+        elif isinstance(arg_dtype,atomic_dtypes): 
+            arg_backend = SECoP_CMD_IO_Backend(
+                path= arg_path,
+                frappy_datatype= arg_dtype,
+                sig_datainfo = datainfo['argument']
+            )
+            signame = path._accessible_name+'_arg'
+            setattr(self,signame,SignalRW(arg_backend))
+            config.append(getattr(self,signame))
+            arguments[signame] = arg_backend
+        
+        
+
 
         # Result Signals  (read Signals)    
+        res_path = path.append('result')
 
-        # SignalX
+        if isinstance(res_dtype,StructOf):
+            for signame, sig_desc in datainfo['result']['members'].items():
+                res_backend = SECoP_CMD_IO_Backend(
+                    path= res_path.append(signame),
+                    frappy_datatype=res_dtype.members.get(signame),
+                    sig_datainfo=sig_desc)
+                result[signame] = res_backend
+                
+                signame = signame + '_res'
+                setattr(self,signame,SignalRW(res_backend))
+                read.append(getattr(self,signame))
+                
+        
+        elif isinstance(res_dtype,TupleOf):
+            raise NotImplementedError
 
-        #list for read signals
-        read   = []
+        elif isinstance(res_dtype,atomic_dtypes): 
+            res_backend = SECoP_CMD_IO_Backend(
+                path= res_path,
+                frappy_datatype= res_dtype,
+                sig_datainfo= datainfo['result']
+            )
+            signame = path._accessible_name+'_res'
+            setattr(self,signame,SignalRW(res_backend))
+            read.append(getattr(self,signame))
+            result[signame] = res_backend
 
+
+        # SignalX (signal that triggers execution of the Command)
+        exec_backend = SECoP_CMD_X_Backend(
+            path=path,
+            secclient=secclient,
+            frappy_datatype=cmd_datatype,
+            cmd_desc=cmd_props,
+            arguments=arguments,
+            result=result)
+
+        setattr(self,path._accessible_name + '_x',SignalX(exec_backend))
+
+        self.set_readable_signals(read=read,config=config)
     
         super().__init__(name=dev_name)
 

@@ -3,14 +3,19 @@ from bssecop.AsyncFrappyClient import AsyncFrappyClient, SECoPReading
 from bssecop.util import deep_get, Path
 from typing import Any, Dict, Optional, Type
 
-from ophyd.v2.core import  ReadingValueCallback, T,SignalBackend
+from ophyd.v2.core import  ReadingValueCallback, T,SignalBackend, SignalRW
 from bluesky.protocols import Reading, Descriptor
 
-from frappy.datatypes import StructOf, TupleOf,CommandType,DataType
+from frappy.datatypes import StructOf, TupleOf,CommandType,DataType,IntRange, FloatRange,StringType,BLOBType,BoolType,ScaledInteger,ArrayOf
+
+
+
 import time
 from frappy.client import CacheItem
 import collections.abc
 import asyncio
+
+
 
 from functools import wraps
 
@@ -18,6 +23,10 @@ from functools import wraps
 
 
 from typing import Callable
+
+atomic_dtypes = (StringType,ScaledInteger,IntRange,FloatRange,BoolType,BLOBType,ArrayOf)
+
+
 
 def get_read_str(value,timestamp):
     return {"value":value,"timestamp":timestamp}
@@ -48,25 +57,24 @@ class SECoP_CMD_IO_Backend(SignalBackend):
             self,
             path:Path,
             frappy_datatype:DataType,
-            cmd_desc:dict
+            sig_datainfo:dict
             ) -> None:
             
 
-        self.reading:SECoPReading = None
+        self.reading:SECoPReading = SECoPReading(None)
         self.value = None
 
         # module:acessible Path for reading/writing (module,accessible)
         self.path:Path = path
 
-        self._cmd_desc:dict = cmd_desc 
+        #Root datainfo or memberinfo for nested datatypes     
+        self.datainfo:dict = sig_datainfo 
 
         self.callback:function = None
 
         
-        #Root datainfo or memberinfo for nested datatypes 
-        self.datainfo:dict = deep_get(
-            self._cmd_desc['datainfo'],
-            self.path._dev_path)
+        
+
   
         self.frappy_datatype:DataType = frappy_datatype 
         self.datatype:str
@@ -99,7 +107,7 @@ class SECoP_CMD_IO_Backend(SignalBackend):
         
         res['source'] = self.source
         
-        # ophyd datatype (some SECoP datatypeshaveto be converted)
+        # ophyd datatype (some SECo       argument = {signame:await sig.get_value() for  (signame,sig) in self.arguments.items()}P datatypeshaveto be converted)
         res['dtype']  = self.datatype
         
         # get shape from datainfo and SECoPtype
@@ -119,10 +127,10 @@ class SECoP_CMD_IO_Backend(SignalBackend):
         return res
         
     async def get_reading(self) -> Reading:
-        self.reading.get_reading()
+        return self.reading.get_reading()
 
     async def get_value(self) -> T:
-        self.reading.get_value()
+        return self.reading.get_value()
     
     def set_callback(self, callback: Callable[[Reading, Any], None] | None) -> None:
         self.callback = callback
@@ -140,8 +148,8 @@ class SECoP_CMD_X_Backend(SignalBackend):
             secclient:AsyncFrappyClient,
             frappy_datatype:CommandType,
             cmd_desc:dict,
-            arguments:list,
-            result:list) -> None:
+            arguments:dict[SECoP_CMD_IO_Backend],
+            result:dict[SECoP_CMD_IO_Backend]) -> None:
 
         self._secclient:AsyncFrappyClient = secclient
 
@@ -152,8 +160,8 @@ class SECoP_CMD_X_Backend(SignalBackend):
 
         self.callback:function = None
 
-        self.arguments:list = arguments
-        self.result:list = result
+        self.arguments:dict = arguments
+        self.result:dict = result
         
         #Root datainfo or memberinfo for nested datatypes 
         self.datainfo:dict = deep_get(
@@ -174,20 +182,48 @@ class SECoP_CMD_X_Backend(SignalBackend):
         
         arg_datatype = self.frappy_datatype.argument
 
-        # Tree different cases:
-
+        # Three different cases:
+        
         # StructOf()
+        if isinstance(arg_datatype,StructOf):
+            argument = {signame: await sig.get_value() for (signame,sig) in self.arguments.items()}
 
+     
         # TupleOf()
+        elif isinstance(arg_datatype,TupleOf):
+            raise NotImplementedError
+        
+        # Atomic datatypes
+        elif isinstance(arg_datatype,atomic_dtypes): 
+            sig = next(iter(self.arguments.values()))
+            argument = arg_datatype.export_datatype(await sig.get_value())
 
-        # single atomic datatype
-        argument = arg_datatype.export_datatype(self.arguments[0].)
 
-
+        # Run SECoP Command
         res = await self._secclient.execCommand(
             module=self.path._module_name,
             command=self.path._accessible_name,
-            argument=argument)          
+            argument=argument)      
+
+        # write return Value to corresponding Backends
+
+        # Three different cases:
+        res_datatype = self.frappy_datatype.result
+
+        # StructOf()
+        if isinstance(res_datatype,StructOf):
+            sig:SECoP_CMD_IO_Backend
+            for sig_name,sig in self.result.items():
+                await sig.put(res.get(sig_name))
+
+        # TupleOf()
+        elif isinstance(res_datatype,TupleOf):
+            raise NotImplementedError
+
+        elif isinstance(res_datatype,atomic_dtypes):
+            sig = next(iter(self.result.values()))
+            await sig.put(res)
+    
         
     async def get_descriptor(self) ->  Descriptor:
         
@@ -267,11 +303,7 @@ class SECoP_Param_Backend(SignalBackend):
         pass
     
     async def put(self, value: Any | None, wait=True, timeout=None):
-        #TODO wait + timeout
-        if self.readonly:
-            return
-        
-        # signal is a root SECoP parameter
+        #TODO wait + timeoutxIjDLUmkQwX4er
         if self.path._dev_path== []:
             
             if self.SECoPdtype == 'tuple':
