@@ -69,7 +69,7 @@ class Path():
         
         sig_name_postfix = self._dev_path[self._last_named_param :]
 
-        if self._last_named_param == None:
+        if self._last_named_param is None:
             sig_name_postfix = [self._accessible_name] + sig_name_postfix
 
         delim = "-"
@@ -80,6 +80,13 @@ class Path():
     
     def get_cmd_desc_path(self):
         return [self._module_name,'commands',self._accessible_name]
+    
+    def get_leaf(self):
+
+        if self._dev_path == []:
+            return None
+        
+        return self._dev_path[-1]
          
     def insert_val(self,dic:dict,new_val):
                 if self._dev_path == []:
@@ -91,11 +98,17 @@ class Path():
                         d = d[key]
                     else:
                         # wrong path
-                        raise Exception('path is incorrect ' + key + ' is not in dict: ' + str(dic)) 
+                        raise Exception('path is incorrect ' + 
+                                        key + 
+                                        ' is not in dict: ' + 
+                                        str(dic)) 
                 # insert new value 
                 if self._dev_path[-1]  in  d :
                     d[self._dev_path[-1]] = new_val
                 else:
                     # wrong path
-                    raise Exception('path is incorrect ' + key + ' is not in dict: ' + str(dic)) 
+                    raise Exception('path is incorrect ' + 
+                                    key + 
+                                    ' is not in dict: ' + 
+                                    str(dic)) 
                 return dic

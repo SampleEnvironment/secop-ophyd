@@ -1,12 +1,24 @@
 
 from bssecop.AsyncFrappyClient import AsyncFrappyClient, SECoPReading
 from bssecop.util import deep_get, Path
-from typing import Any, Dict, Optional, Type
+from typing import Any, Dict, Optional
 
-from ophyd.v2.core import  ReadingValueCallback, T,SignalBackend, SignalRW
+from ophyd.v2.core import   T,SignalBackend
 from bluesky.protocols import Reading, Descriptor
 
-from frappy.datatypes import StructOf, TupleOf,CommandType,DataType,IntRange, FloatRange,StringType,BLOBType,BoolType,ScaledInteger,ArrayOf
+from frappy.datatypes import (
+    StructOf,
+    TupleOf,
+    CommandType,
+    DataType,
+    IntRange,
+    FloatRange,
+    StringType,
+    BLOBType,
+    BoolType,
+    ScaledInteger,
+    ArrayOf
+    )
 
 
 
@@ -70,7 +82,7 @@ class SECoP_CMD_IO_Backend(SignalBackend):
         #Root datainfo or memberinfo for nested datatypes     
         self.datainfo:dict = sig_datainfo 
 
-        self.callback:function = None
+        self.callback:Callable = None
 
         
         
@@ -98,7 +110,7 @@ class SECoP_CMD_IO_Backend(SignalBackend):
         
         self.reading.set_reading(value)
 
-        if self.callback != None:
+        if self.callback is not None:
             self.callback(self.reading.get_reading(),self.reading.get_value())            
         
     async def get_descriptor(self) ->  Descriptor:
@@ -107,7 +119,7 @@ class SECoP_CMD_IO_Backend(SignalBackend):
         
         res['source'] = self.source
         
-        # ophyd datatype (some SECo       argument = {signame:await sig.get_value() for  (signame,sig) in self.arguments.items()}P datatypeshaveto be converted)
+        # ophyd datatype (some SECoP datatypeshaveto be converted)
         res['dtype']  = self.datatype
         
         # get shape from datainfo and SECoPtype
@@ -158,7 +170,7 @@ class SECoP_CMD_X_Backend(SignalBackend):
 
         self._cmd_desc:dict = cmd_desc 
 
-        self.callback:function = None
+        self.callback:Callable = None
 
         self.arguments:dict = arguments
         self.result:dict = result
@@ -186,7 +198,10 @@ class SECoP_CMD_X_Backend(SignalBackend):
         
         # StructOf()
         if isinstance(arg_datatype,StructOf):
-            argument = {signame: await sig.get_value() for (signame,sig) in self.arguments.items()}
+            argument = {
+                signame: await sig.get_value() 
+                for (signame,sig) in self.arguments.items()
+                }
 
      
         # TupleOf()
@@ -296,7 +311,10 @@ class SECoP_Param_Backend(SignalBackend):
       
                
         
-        self.source   = secclient.uri  + ":" +secclient.nodename + ":" + self.path._module_name + ":" +self.path._accessible_name 
+        self.source   = (secclient.uri  +
+                        ":" +secclient.nodename + 
+                        ":" + self.path._module_name + 
+                        ":" +self.path._accessible_name )
 
      
     async def connect(self):
@@ -367,7 +385,9 @@ class SECoP_Param_Backend(SignalBackend):
         return res
         
     async def get_reading(self) -> Reading:
-        dataset = await self._secclient.getParameter(**self.get_param_path(),trycache =False)
+        dataset = await self._secclient.getParameter(
+            **self.get_param_path(),
+            trycache =False)
        
         # select only the tuple/struct member corresponding to the signal
         dataset.value = deep_get(dataset.value,self.path._dev_path)
@@ -382,7 +402,9 @@ class SECoP_Param_Backend(SignalBackend):
         return dataset.get_reading()
     
     async def get_value(self) -> T:
-        dataset = await self._secclient.getParameter(**self.get_param_path(),trycache =False)
+        dataset = await self._secclient.getParameter(
+            **self.get_param_path(),
+            trycache =False)
         
         # select only the tuple member corresponding to the signal
         dataset.value = deep_get(dataset.value,self.path._dev_path)
@@ -408,10 +430,12 @@ class SECoP_Param_Backend(SignalBackend):
                 data =SECoPReading(entry)
                 async_callback = awaitify(callback)
 
-                asyncio.run_coroutine_threadsafe(async_callback(reading=data.get_reading(),value=data.get_value()), self._secclient.loop)
+                asyncio.run_coroutine_threadsafe(
+                    async_callback(reading=data.get_reading(),value=data.get_value()), 
+                    self._secclient.loop)
                 
 
-            if callback != None:
+            if callback is not None:
                 self._secclient.register_callback(self.get_path_tuple(),updateItem)
             else:
                 self._secclient.unregister_callback(self.get_path_tuple(),updateItem)
@@ -458,7 +482,9 @@ class PropertyBackend(SignalBackend):
         if isinstance(prop_val,bool):
             return 'bool'
         
-        raise Exception('unsupported datatype in Node Property: ' + str(prop_val.__class__.__name__) )
+        raise Exception(
+            'unsupported datatype in Node Property: ' + 
+            str(prop_val.__class__.__name__) )
 
 
     async def connect(self):
@@ -507,7 +533,8 @@ class PropertyBackend(SignalBackend):
 
 
 class ReadonlyError(Exception):
-    "Raised, when Secop parameter is readonly, but was used to construct rw ophyd Signal"
+    """Raised, when Secop parameter is readonly, but was used to 
+    construct rw ophyd Signal"""
     pass
     
 

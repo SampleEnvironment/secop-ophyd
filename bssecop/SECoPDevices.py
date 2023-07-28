@@ -2,42 +2,49 @@
 
 import threading
 
-from ophyd.v2.core import  StandardReadable
+from ophyd.v2.core import  StandardReadable,T
 
 from ophyd.v2.core import AsyncStatus, observe_value, Device,SignalRW, SignalR, SignalX
 
 from bluesky.protocols import Movable, Stoppable, SyncOrAsync
 
- 
+from frappy.datatypes import (
+    StructOf,
+    TupleOf,
+    CommandType
+    )
+
 from typing import (
     Any,
 
     Dict,
-    Generic,
-    Iterable,
-    List,
     Optional,
-    Protocol,
-    Sequence,
-    Set,
-    TypeVar,
-    cast,
-    runtime_checkable,
 )
 
-from bluesky.protocols import Movable
+
+import time
  
 from bssecop.AsyncFrappyClient import AsyncFrappyClient
-from frappy.logging import logger
 
-from bssecop.SECoPSignal import *
 
-from bssecop.propertykeys import * 
+from bssecop.SECoPSignal import (
+    SECoP_CMD_IO_Backend,
+    SECoP_CMD_X_Backend,
+    PropertyBackend,
+    SECoP_Param_Backend,
+    atomic_dtypes
+    )
+
+from bssecop.propertykeys import (
+    INTERFACE_CLASSES,
+    DATAINFO,
+    EQUIPMENT_ID
+    )
 
 from bssecop.util import deep_get, Path
 
 import re
-import importlib
+
 import asyncio
 
 
@@ -85,7 +92,9 @@ def class_from_interface(mod_properties : dict):
             return IF_CLASSES[interface_class]
         except KeyError:
             continue
-    raise Exception("no compatible Interfaceclass found in: " + str(mod_properties.get(INTERFACE_CLASSES)))
+    raise Exception(
+        "no compatible Interfaceclass found in: " + 
+        str(mod_properties.get(INTERFACE_CLASSES)))
 
 def get_config_attrs(parameters):
     parameters_cfg = parameters.copy()
@@ -139,21 +148,26 @@ class SECoPReadableDevice(StandardReadable):
             match dtype:
 
                 case 'tuple':
-                    setattr(self,parameter + '_tuple',SECoP_Tuple_Device(path = param_path, secclient= secclient))
+                    setattr(
+                        self,parameter + '_tuple',
+                        SECoP_Tuple_Device(path = param_path, secclient= secclient))
                 case 'struct':
-                    setattr(self,parameter + '_struct',SECoP_Struct_Device(path = param_path, secclient= secclient))
+                    setattr(
+                        self,parameter + '_struct',
+                        SECoP_Struct_Device(path = param_path, secclient= secclient))
                 
             ## Normal types + (struct and tuple as JSON object Strings)
             paramb = SECoP_Param_Backend(path=param_path,secclient=secclient)
             
             #construct signal
             readonly = properties.get('readonly',None)
-            if readonly == True:
+            if readonly is True:
                 setattr(self,parameter,SignalR(paramb))
-            elif readonly == False:
+            elif readonly is False:
                 setattr(self,parameter,SignalRW(paramb))
             else:
-                raise Exception('Invalid SECoP Parameter, readonly property is mandatory, but was not found, or is not bool')
+                raise Exception('Invalid SECoP Parameter, readonly property '+
+                                'is mandatory, but was not found, or is not bool')
 
             #add status code signal to root device
             if parameter == 'status':                
@@ -161,12 +175,13 @@ class SECoPReadableDevice(StandardReadable):
                     SECoP_Param_Backend(path=param_path.append(0),secclient=secclient))
                 
             # In SECoP only the 'value' parameter is the primary read prameter, but
-            # if the value is a SECoP-tuple all elements belonging to the tuple are appended
-            # to the read list
+            # if the value is a SECoP-tuple all elements belonging to the tuple are 
+            # appended to the read list
             if parameter == 'value':
                 read.append(getattr(self,parameter))
 
-            # target should only be set through the set method. And is not part of config
+            # target should only be set through the set method. And is not part of 
+            # config
             elif parameter != 'target':
                 config.append(getattr(self,parameter))
         
@@ -175,7 +190,9 @@ class SECoPReadableDevice(StandardReadable):
         for command, properties in module_desc['commands'].items():
             # generate new root path
             cmd_path = Path(parameter_name=command,module_name=module_name)
-            setattr(self,command + '_dev' ,SECoP_CMD_Device(path=cmd_path,secclient=secclient))
+            setattr(
+                self,command + '_dev' ,
+                SECoP_CMD_Device(path=cmd_path,secclient=secclient))
         
         #TODO Commands!!!
         self.set_readable_signals(read=read,config=config)
@@ -192,7 +209,7 @@ class SECoPReadableDevice(StandardReadable):
                 attr.parent = self
 
     
-    async def configure(self, d: Dict[str, Any]) -> tuple[Dict[str, Any], Dict[str, Any]]:
+    async def configure(self, d: Dict[str, Any]) -> tuple[Dict[str, Any], Dict[str, Any]]:  # noqa: E501
         """Configure the device for something during a run
 
         This default implementation allows the user to change any of the
@@ -238,7 +255,7 @@ class SECoP_Tuple_Device(StandardReadable):
         dev_name:str = path.get_signal_name() + "_tuple"
 
        
-        props = secclient.modules[path._module_name]['parameters'][path._accessible_name]
+        props = secclient.modules[path._module_name]['parameters'][path._accessible_name]  # noqa: E501
         
         datainfo = props[DATAINFO]
         
@@ -248,7 +265,7 @@ class SECoP_Tuple_Device(StandardReadable):
         
 
         
-        for ix , member_info in enumerate(deep_get(datainfo,path.get_memberinfo_path()+['members'])):
+        for ix , member_info in enumerate(deep_get(datainfo,path.get_memberinfo_path()+['members'])):  # noqa: E501
             #new path object for tuple member
             tuplemember_path = path.append(ix)
             attr_name = tuplemember_path.get_signal_name()
@@ -258,9 +275,21 @@ class SECoP_Tuple_Device(StandardReadable):
                 
                 
                 case 'tuple':
-                    setattr(self,attr_name + '_tuple',SECoP_Tuple_Device(path = tuplemember_path, secclient= secclient))
+                    setattr(
+                        self,attr_name + '_tuple',
+                        SECoP_Tuple_Device(
+                            path = tuplemember_path,
+                            secclient= secclient
+                            )
+                        )
                 case 'struct':
-                    setattr(self,attr_name + '_struct',SECoP_Struct_Device(path = tuplemember_path, secclient= secclient))
+                    setattr(
+                        self,attr_name + '_struct',
+                        SECoP_Struct_Device(
+                            path = tuplemember_path,
+                            secclient= secclient
+                            )
+                        )
 
                 # atomic datatypes & arrays
                 case _:
@@ -276,12 +305,13 @@ class SECoP_Tuple_Device(StandardReadable):
                     
             
                     
-                    if readonly == True:
+                    if readonly is True:
                         setattr(self,attr_name,SignalR(tparamb))
-                    elif readonly == False:
+                    elif readonly is False:
                         setattr(self,attr_name,SignalRW(tparamb))
                     else:
-                        raise Exception('Invalid SECoP Parameter, readonly property is mandatory, but was not found, or is not bool')
+                        raise Exception('Invalid SECoP Parameter, readonly property'+
+                                    ' is mandatory, but was not found, or is not bool')
 
                     read.append(getattr(self,attr_name))
                 
@@ -342,7 +372,7 @@ class SECoP_Struct_Device(StandardReadable):
         self._secclient:AsyncFrappyClient = secclient
 
 
-        props = secclient.modules[path._module_name]['parameters'][path._accessible_name]
+        props = secclient.modules[path._module_name]['parameters'][path._accessible_name]  # noqa: E501
         
         datainfo = props[DATAINFO]
         
@@ -353,7 +383,7 @@ class SECoP_Struct_Device(StandardReadable):
         
         
 
-        for member_name, member_info  in deep_get(datainfo,path.get_memberinfo_path()+['members']).items():
+        for member_name, member_info  in deep_get(datainfo,path.get_memberinfo_path()+['members']).items():  # noqa: E501
             
             # new path object for tuple member
             struct_member_path = path.append(member_name)
@@ -362,9 +392,21 @@ class SECoP_Struct_Device(StandardReadable):
             match member_info['type']:
                 
                 case 'tuple':
-                    setattr(self,attr_name + '_tuple',SECoP_Tuple_Device(path = struct_member_path, secclient= secclient))
+                    setattr(
+                        self,attr_name + '_tuple',
+                        SECoP_Tuple_Device(
+                            path = struct_member_path, 
+                            secclient= secclient
+                            )
+                        )
                 case 'struct':
-                    setattr(self,attr_name + '_struct',SECoP_Struct_Device(path = struct_member_path, secclient= secclient))
+                    setattr(
+                        self,attr_name + '_struct',
+                        SECoP_Struct_Device(
+                            path = struct_member_path, 
+                            secclient= secclient
+                            )
+                        )
 
                 # atomic datatypes & arrays
                 case _:
@@ -379,12 +421,13 @@ class SECoP_Struct_Device(StandardReadable):
 
                                
                     
-                    if readonly == True:
+                    if readonly is True:
                         setattr(self,attr_name,SignalR(struct_param_backend))
-                    elif readonly == False:
+                    elif readonly is False:
                         setattr(self,attr_name,SignalRW(struct_param_backend))
                     else:
-                        raise Exception('Invalid SECoP Parameter, readonly property is mandatory, but was not found, or is not bool')
+                        raise Exception('Invalid SECoP Parameter, readonly property '+
+                                    'is mandatory, but was not found, or is not bool')
 
                     read.append(getattr(self,member_name))
         
@@ -410,7 +453,7 @@ class SECoP_CMD_Device(StandardReadable):
         self._secclient:AsyncFrappyClient = secclient
 
 
-        cmd_props = secclient.modules[path._module_name]['commands'][path._accessible_name]
+        cmd_props = secclient.modules[path._module_name]['commands'][path._accessible_name]  # noqa: E501
         cmd_datatype:CommandType = cmd_props['datatype']
         datainfo = cmd_props[DATAINFO]
 
@@ -572,13 +615,15 @@ class SECoP_Node_Device(StandardReadable):
              
     
     async def disconnect(self):
-        if self._secclient.loop._thread_id == threading.current_thread().ident and self._secclient.loop.is_running():
+        if (self._secclient.loop._thread_id == threading.current_thread().ident and 
+            self._secclient.loop.is_running()):
             await self._secclient.disconnect(True)
         else:
             raise Exception
     
     def disconnect_external(self):
-        if self._secclient.loop._thread_id == threading.current_thread().ident and self._secclient.loop.is_running():
+        if (self._secclient.loop._thread_id == threading.current_thread().ident and 
+            self._secclient.loop.is_running()):
             raise Exception
         else:    
             future = asyncio.run_coroutine_threadsafe(
