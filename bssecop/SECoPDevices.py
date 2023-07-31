@@ -331,6 +331,8 @@ class SECoPMoveableDevice(SECoPWritableDevice,Movable,Stoppable):
     def __init__(self, secclient: AsyncFrappyClient, module_name: str):
         super().__init__(secclient, module_name)
         self._success = True
+        self._stopped = False
+        
         
     def set(self,new_target,timeout: Optional[float] = None) -> AsyncStatus:
         
@@ -339,10 +341,13 @@ class SECoPMoveableDevice(SECoPWritableDevice,Movable,Stoppable):
     
     async def _move(self,new_target):
         self._success = True
+        self._stopped  = False
         await self.target.set(new_target,wait=False)
         async for current_stat in observe_value(self.status_code):
             v = current_stat[0].value
 
+            if self._stopped is True:
+                break
            
             #Error State or DISABLED
             if v >= ERROR or v < IDLE:
@@ -360,8 +365,10 @@ class SECoPMoveableDevice(SECoPWritableDevice,Movable,Stoppable):
         
     async def stop(self, success=True) -> SyncOrAsync[None]:
         self._success = success
+
         await self._secclient.execCommand(self._module,'stop')
-        
+        self._stopped = True
+
 class SECoP_Struct_Device(StandardReadable):
     def __init__(self,
         path:Path,
