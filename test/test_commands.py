@@ -1,7 +1,8 @@
-from bssecop.SECoPDevices import SECoP_Node_Device,SECoPMoveableDevice,SECoP_Struct_Device, SECoP_Tuple_Device
+from bssecop.SECoPDevices import SECoP_Node_Device,SECoPMoveableDevice,SECoP_Struct_Device, SECoP_Tuple_Device,SECoP_CMD_Device
 import numpy as np
 import asyncio
 import pytest
+from ophyd.v2.core import SignalRW, SignalX,SignalR
 from bssecop.util import Path
 from frappy.lib.enum import EnumMember
 from bssecop.AsyncSecopClient import AsyncFrappyClient
@@ -42,5 +43,23 @@ async def test_stop_no_sucess_cmd(cryo_sim,cryo_node_internal_loop:SECoP_Node_De
 
 
 async def test_nested_connect(nested_struct_sim,nested_node:SECoP_Node_Device):
-    assert isinstance(nested_node,SECoP_Node_Device)
+    test_cmd:SECoP_CMD_Device = nested_node.ophy_struct.test_cmd_dev
+
+    
+    await test_cmd.name_arg.set("test_name")
+    await test_cmd.id_arg.set(1233)
+    await test_cmd.sort_arg.set(False)
+
+    res:SignalR = test_cmd.test_cmd_res
+
+
+
+    run_obj:SignalX = test_cmd.test_cmd_x
+    
+    await run_obj.execute()
+
+    reading_res = await res.read()
+    assert reading_res.get(res.name).value is not None
+
+
     await nested_node.disconnect()

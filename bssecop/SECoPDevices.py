@@ -209,39 +209,7 @@ class SECoPReadableDevice(StandardReadable):
                 attr.parent = self
 
     
-    async def configure(self, d: Dict[str, Any]) -> tuple[Dict[str, Any], Dict[str, Any]]:  # noqa: E501
-        """Configure the device for something during a run
 
-        This default implementation allows the user to change any of the
-        `configuration_attrs`. Subclasses might override this to perform
-        additional input validation, cleanup, etc.
-
-        Parameters
-        ----------
-        d : dict
-            The configuration dictionary. To specify the order that
-            the changes should be made, use an OrderedDict.
-
-        Returns
-        -------
-        (old, new) tuple of dictionaries
-        Where old and new are pre- and post-configure configuration states.
-        """
-        old = await self.read_configuration()
-        stat = []
-        for key, val in d.items():
-            if key not in self._configuration_signals:
-                # a little extra checking for a more specific error msg
-                raise ValueError(
-                    "%s is not one of the "
-                    "configuration_fields, so it cannot be "
-                    "changed using configure" % key
-                )
-            stat.append(getattr(self,key).set(val))
-            
-        await asyncio.gather(*stat)
-        new = self.read_configuration()
-        return old, new
 
 
 class SECoP_Tuple_Device(StandardReadable):
@@ -521,7 +489,7 @@ class SECoP_CMD_Device(StandardReadable):
                 result[signame] = res_backend
                 
                 signame = signame + '_res'
-                setattr(self,signame,SignalRW(res_backend))
+                setattr(self,signame,SignalR(res_backend))
                 read.append(getattr(self,signame))
                 
         
@@ -535,7 +503,7 @@ class SECoP_CMD_Device(StandardReadable):
                 sig_datainfo= datainfo['result']
             )
             signame = path._accessible_name+'_res'
-            setattr(self,signame,SignalRW(res_backend))
+            setattr(self,signame,SignalR(res_backend))
             read.append(getattr(self,signame))
             result[signame] = res_backend
 
@@ -640,7 +608,7 @@ class SECoP_Node_Device(StandardReadable):
             future.result(2)    
 
 
-  
+
 
 
     
