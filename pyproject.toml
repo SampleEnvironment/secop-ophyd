@@ -14,3 +14,7 @@ minversion = "6.0"
 addopts = "-v"
 asyncio_mode="auto"
 norecursedirs="frappy"
+
+[tool.isort]
+skip = [".gitignore"]
+skip_glob = ["frappy/*"]

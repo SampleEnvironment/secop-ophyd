@@ -1,13 +1,11 @@
-from frappy.client import SecopClient, CacheItem
-
-from frappy.client import Logger
 import asyncio
-from bluesky.protocols import Reading
-from frappy.datatypes import TupleOf,ArrayOf,EnumType,StructOf
-
+import time
 from typing import TypeVar
 
-import time
+from bluesky.protocols import Reading
+
+from frappy.client import CacheItem, Logger, SecopClient
+from frappy.datatypes import ArrayOf, EnumType, StructOf, TupleOf
 
 T = TypeVar("T")
 
