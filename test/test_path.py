@@ -1,4 +1,4 @@
-from bssecop.util        import Path,deep_get
+from secop_ophyd.util        import Path,deep_get
 
 
 def test_path_nested_tuples():

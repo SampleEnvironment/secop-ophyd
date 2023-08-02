@@ -8,7 +8,7 @@
             "name": "Python: Aktuelle Datei",
             "type": "python",
             "request": "launch",
-            "program": "${workspaceFolder}/bssecop/bssecclient.py",
+            "program": "${workspaceFolder}/secop_ophyd/bssecclient.py",
             "console": "integratedTerminal",
             "justMyCode": false,
             //"postDebugTask": "stop server"

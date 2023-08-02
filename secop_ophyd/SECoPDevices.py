@@ -24,10 +24,10 @@ from typing import (
 
 import time
  
-from bssecop.AsyncFrappyClient import AsyncFrappyClient
+from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient
 
 
-from bssecop.SECoPSignal import (
+from secop_ophyd.SECoPSignal import (
     SECoP_CMD_IO_Backend,
     SECoP_CMD_X_Backend,
     PropertyBackend,
@@ -35,13 +35,13 @@ from bssecop.SECoPSignal import (
     atomic_dtypes
     )
 
-from bssecop.propertykeys import (
+from secop_ophyd.propertykeys import (
     INTERFACE_CLASSES,
     DATAINFO,
     EQUIPMENT_ID
     )
 
-from bssecop.util import deep_get, Path
+from secop_ophyd.util import deep_get, Path
 
 import re
 

@@ -14,7 +14,7 @@ from collections import defaultdict
 
 
 
-from bssecop.util import deep_get, Path
+from secop_ophyd.util import deep_get, Path
 from frappy.datatypes import TupleOf,ArrayOf,EnumType,StructOf
 from bluesky.protocols import Reading
 

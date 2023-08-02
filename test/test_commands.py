@@ -1,11 +1,11 @@
-from bssecop.SECoPDevices import SECoP_Node_Device,SECoPMoveableDevice,SECoP_Struct_Device, SECoP_Tuple_Device,SECoP_CMD_Device
+from secop_ophyd.SECoPDevices import SECoP_Node_Device,SECoPMoveableDevice,SECoP_Struct_Device, SECoP_Tuple_Device,SECoP_CMD_Device
 import numpy as np
 import asyncio
 import pytest
 from ophyd.v2.core import SignalRW, SignalX,SignalR
-from bssecop.util import Path
+from secop_ophyd.util import Path
 from frappy.lib.enum import EnumMember
-from bssecop.AsyncSecopClient import AsyncFrappyClient
+from secop_ophyd.AsyncSecopClient import AsyncFrappyClient
 
 async def test_stop_cmd(cryo_sim,cryo_node_internal_loop:SECoP_Node_Device):
     cryo:SECoPMoveableDevice = cryo_node_internal_loop.cryo

@@ -1,6 +1,6 @@
 
-from bssecop.AsyncFrappyClient import AsyncFrappyClient, SECoPReading
-from bssecop.util import deep_get, Path
+from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient, SECoPReading
+from secop_ophyd.util import deep_get, Path
 from typing import Any, Dict, Optional
 
 from ophyd.v2.core import   T,SignalBackend

@@ -1,8 +1,8 @@
 import pytest
 from xprocess import ProcessStarter
-from bssecop.AsyncSecopClient import AsyncFrappyClient
-from bssecop.SECoPDevices import SECoP_Node_Device
-from bssecop.AsyncFrappyClient import AsyncFrappyClient
+from secop_ophyd.AsyncSecopClient import AsyncFrappyClient
+from secop_ophyd.SECoPDevices import SECoP_Node_Device
+from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient
 
 # Import bluesky and ophyd
 import matplotlib.pyplot as plt

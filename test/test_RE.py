@@ -1,4 +1,4 @@
-from bssecop.SECoPDevices import SECoP_Node_Device,SECoPMoveableDevice
+from secop_ophyd.SECoPDevices import SECoP_Node_Device,SECoPMoveableDevice
 # Import bluesky and ophyd
 import matplotlib.pyplot as plt
 from bluesky import RunEngine

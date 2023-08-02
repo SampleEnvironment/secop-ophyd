@@ -2,4 +2,4 @@
 *.pyc
 *.egg-info
 .pytest_cache
-bssecop/asyncclient.log
+secop_ophyd/asyncclient.log

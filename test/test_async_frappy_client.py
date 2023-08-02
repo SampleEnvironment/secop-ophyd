@@ -2,7 +2,7 @@
 
 
 #import xprocess
-from bssecop.AsyncFrappyClient import AsyncFrappyClient, SECoPReading
+from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient, SECoPReading
 
 
 

@@ -1,4 +1,4 @@
-from bssecop.SECoPDevices import SECoP_Node_Device,SECoPMoveableDevice
+from secop_ophyd.SECoPDevices import SECoP_Node_Device,SECoPMoveableDevice
 import numpy as np
 import asyncio
 

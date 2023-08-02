@@ -9,7 +9,7 @@ from bluesky.plans import *
 
 
 from bluesky.utils import ProgressBarManager
-from bssecop.SECoPDevices import SECoP_Node_Device
+from secop_ophyd.SECoPDevices import SECoP_Node_Device
 
 
 ## bluesky runengine setup

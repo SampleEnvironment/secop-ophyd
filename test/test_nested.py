@@ -1,10 +1,10 @@
-from bssecop.SECoPDevices import SECoP_Node_Device,SECoPMoveableDevice,SECoP_Struct_Device, SECoP_Tuple_Device
+from secop_ophyd.SECoPDevices import SECoP_Node_Device,SECoPMoveableDevice,SECoP_Struct_Device, SECoP_Tuple_Device
 import numpy as np
 import asyncio
 import pytest
-from bssecop.util import Path
+from secop_ophyd.util import Path
 from frappy.lib.enum import EnumMember
-from bssecop.AsyncSecopClient import AsyncFrappyClient
+from secop_ophyd.AsyncSecopClient import AsyncFrappyClient
 
 async def test_nested_connect(nested_struct_sim,nested_node:SECoP_Node_Device):
     assert isinstance(nested_node,SECoP_Node_Device)
