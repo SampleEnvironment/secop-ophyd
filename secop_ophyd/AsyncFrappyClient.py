@@ -100,7 +100,7 @@ class AsyncFrappyClient():
         paramerter_reading =  await asyncio.to_thread(self.client.setParameter,module,parameter,value)
         return SECoPReading(paramerter_reading)
 
-    async def execCommand(self, module, command, argument=None):
+    async def execCommand(self, module, command, argument=None) -> tuple[T,dict]:
         return await asyncio.to_thread(self.client.execCommand,module,command,argument)
     
     def register_callback(self, key, *args, **kwds):

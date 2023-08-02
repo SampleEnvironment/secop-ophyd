@@ -215,7 +215,7 @@ class SECoP_CMD_X_Backend(SignalBackend):
 
 
         # Run SECoP Command
-        res = await self._secclient.execCommand(
+        res , qualifiers = await self._secclient.execCommand(
             module=self.path._module_name,
             command=self.path._accessible_name,
             argument=argument)      
