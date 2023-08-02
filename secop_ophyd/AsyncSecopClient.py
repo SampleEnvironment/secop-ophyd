@@ -1,26 +1,16 @@
-from frappy.client import SecopClient, CacheItem
-from frappy.logging import logger
 import asyncio
-import time
-
-
-import re
 import json
-
+import re
 import time
 from collections import defaultdict
+from typing import TypeVar
 
-
-from secop_ophyd.util import deep_get, Path
-from frappy.datatypes import TupleOf, ArrayOf, EnumType, StructOf
 from bluesky.protocols import Reading
-
 
 import frappy.errors
 import frappy.params
-from frappy.datatypes import get_datatype
-
-
+from frappy.client import CacheItem, Logger
+from frappy.datatypes import EnumType, get_datatype
 from frappy.protocol.interface import decode_msg, encode_msg_frame
 from frappy.protocol.messages import (
     COMMANDREQUEST,
@@ -49,10 +39,6 @@ UPDATE_MESSAGES = {
     ERRORPREFIX + EVENTREPLY,
 }
 
-
-from frappy.client import Logger
-
-from typing import TypeVar
 
 T = TypeVar("T")
 
@@ -94,7 +80,7 @@ class AsyncFrappyClient:
         "unhandledMessage",
     )
     online = False  # connected or reconnecting since a short time
-    state = "disconnected"  # further possible values: 'connecting', 'reconnecting', 'connected'
+    state = "disconnected"  # further possible values: 'connecting', 'reconnecting'
     log = None
 
     reconnect_timeout = 10
@@ -107,8 +93,8 @@ class AsyncFrappyClient:
     _last_error = None
 
     def __init__(self, host, port, loop, log=Logger):
-        # maps expected replies to [request, Event, is_error, result] until a response came
-        # there can only be one entry per thread calling 'request'
+        # maps expected replies to [request, Event, is_error, result] until a response
+        # came. There can only be one entry per thread calling 'request'
         self.callbacks = {cbname: defaultdict(list) for cbname in self.CALLBACK_NAMES}
         # caches (module, parameter) = value, timestamp, readerror (internal names!)
         self.cache = {}
@@ -171,7 +157,7 @@ class AsyncFrappyClient:
                         self._host, self._port
                     )
                     self.log.debug("establishing connection")
-                except:
+                except Exception:
                     # print('conn refused')
 
                     raise Exception
@@ -380,7 +366,7 @@ class AsyncFrappyClient:
                     if connected_callback:
                         connected_callback()
                     self.log.debug("reconnect success")
-                except:
+                except Exception:
                     self.log.debug("reconnect failed")
 
             if time.time() > self.disconnect_time + self.reconnect_timeout:
@@ -585,8 +571,10 @@ class AsyncFrappyClient:
 
         - key might be either:
             1) None: general callback (all callbacks)
-            2) <module name>: callbacks related to a module (not called for 'unhandledMessage')
-            3) (<module name>, <parameter name>): callback for specified parameter (only called for 'updateEvent')
+            2) <module name>: callbacks related to a module
+                (not called for 'unhandledMessage')
+            3) (<module name>, <parameter name>): callback for specified parameter
+                (only called for 'updateEvent')
         - all the following arguments are callback functions. The callback name may be
           given by the keyword, or, for non-keyworded arguments it is taken from the
           __name__ attribute of the function
