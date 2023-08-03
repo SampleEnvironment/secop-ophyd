@@ -1,0 +1,5 @@
+# Run Docker container passing all necessary interface ports to the host (enables controlling from localhost)
+sudo docker run --rm -it -p 5900:5900 -p 6080:6080 -p 29999:29999 -p 30001:30001 -p 30002:30002 -p 30003:30003 -p 30004:30004 ursim:v1 
+
+# Build Docker container
+sudo docker build -t ursim:v1 ./myursim                         
