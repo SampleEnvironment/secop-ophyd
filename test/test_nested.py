@@ -107,3 +107,44 @@ async def test_nested_dtype_set_str_struct(
     assert isinstance(val, str)
 
     await nested_node.disconnect()
+
+
+async def test_nested_dtype_set_str_tuple(
+    nested_struct_sim, nested_node: SECoP_Node_Device
+):
+    struct_mod = nested_node.ophy_struct
+
+    tuple_param: SignalRW = struct_mod.tuple_param
+
+    target_dtype: DataType = tuple_param._backend.SECoPdtype_obj
+
+    reading = await tuple_param.read()
+
+    val = reading.get(tuple_param.name)["value"]
+
+    tuple_val = target_dtype.from_string(val)
+
+    assert tuple_val[0] == 5
+    assert tuple_val[1] == 5
+    assert tuple_val[2] == 5
+    assert tuple_val[3] == "green"
+
+    tuple_val = (50, 20, 30, "blue")
+
+    stat = tuple_param.set(str(tuple_val))
+
+    await stat
+
+    reading = await tuple_param.read()
+
+    val = reading.get(tuple_param.name)["value"]
+
+    tuple_val_read = target_dtype.from_string(val)
+
+    assert tuple_val_read[0] == 50
+    assert tuple_val_read[1] == 20
+    assert tuple_val_read[2] == 30
+    assert tuple_val_read[3] == "blue"
+    assert isinstance(val, str)
+
+    await nested_node.disconnect()
