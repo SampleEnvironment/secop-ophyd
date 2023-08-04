@@ -129,6 +129,8 @@ class SECoPReadableDevice(StandardReadable):
                         parameter + "_struct",
                         SECoP_Struct_Device(path=param_path, secclient=secclient),
                     )
+                case "array":
+                    pass
 
             ## Normal types + (struct and tuple as JSON object Strings)
             paramb = SECoP_Param_Backend(path=param_path, secclient=secclient)
@@ -185,6 +187,14 @@ class SECoPReadableDevice(StandardReadable):
             if isinstance(attr, Device):
                 attr.set_name(f"{name}-{attr_name.rstrip('_')}")
                 attr.parent = self
+
+    async def wait_for_IDLE(self):
+        async for current_stat in observe_value(self.status_code):
+            stat_code = current_stat[0].value
+
+            # Module is in IDLE/WARN state
+            if IDLE <= stat_code < BUSY:
+                break
 
 
 class SECoP_Tuple_Device(StandardReadable):
@@ -271,18 +281,18 @@ class SECoPMoveableDevice(SECoPWritableDevice, Movable, Stoppable):
         self._stopped = False
         await self.target.set(new_target, wait=False)
         async for current_stat in observe_value(self.status_code):
-            v = current_stat[0].value
+            stat_code = current_stat[0].value
 
             if self._stopped is True:
                 break
 
             # Error State or DISABLED
-            if v >= ERROR or v < IDLE:
+            if stat_code >= ERROR or stat_code < IDLE:
                 self._success = False
                 break
 
             # Module is in IDLE/WARN state
-            if IDLE <= v < BUSY:
+            if IDLE <= stat_code < BUSY:
                 break
 
             # TODO other status transitions
@@ -542,6 +552,7 @@ IF_CLASSES = {
     "Writable": SECoPWritableDevice,
     "Readable": SECoPReadableDevice,
     "Module": SECoPReadableDevice,
+    "Communicator": SECoPReadableDevice,
 }
 
 
