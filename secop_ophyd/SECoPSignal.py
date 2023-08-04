@@ -272,6 +272,7 @@ class SECoP_Param_Backend(SignalBackend):
 
         self.datatype: str
         self.SECoPdtype: str
+        self.SECoPdtype_obj: DataType
 
         self._set_dtype()
 
@@ -289,13 +290,15 @@ class SECoP_Param_Backend(SignalBackend):
         pass
 
     async def put(self, value: Any | None, wait=True, timeout=None):
-        # TODO wait + timeoutxIjDLUmkQwX4er
+        # TODO wait + timeout
+
+        # top level nested datatypes (handled as sting Signals)
         if self.path._dev_path == []:
             if self.SECoPdtype == "tuple":
-                value = TupleOf.from_string(value)
+                value = self.SECoPdtype_obj.from_string(value)
 
             if self.SECoPdtype == "struct":
-                value = StructOf.from_string(value)
+                value = self.SECoPdtype_obj.from_string(value)
 
             await self._secclient.setParameter(**self.get_param_path(), value=value)
             return
@@ -408,6 +411,7 @@ class SECoP_Param_Backend(SignalBackend):
     def _set_dtype(self) -> None:
         self.SECoPdtype = self.datainfo["type"]
         self.datatype = SECOP2DTYPE.get(self.SECoPdtype, None)
+        self.SECoPdtype_obj = self._param_description["datatype"]
 
 
 class PropertyBackend(SignalBackend):
