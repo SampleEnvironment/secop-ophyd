@@ -3,3 +3,7 @@ sudo docker run --rm -it -p 5900:5900 -p 6080:6080 -p 29999:29999 -p 30001:30001
 
 # Build Docker container
 sudo docker build -t ursim:v1 ./myursim                         
+
+
+# Run with docker compose
+docker-compose run --rm ursim

@@ -24,7 +24,7 @@ import time
 from frappy.client import CacheItem
 import collections.abc
 import asyncio
-
+import copy
 
 from functools import wraps
 
@@ -359,6 +359,12 @@ class SECoP_Param_Backend(SignalBackend):
             dataset.value = dataset.value.value
         if self.SECoPdtype in ["tuple", "struct"]:
             dataset.value = str(dataset.value)
+        if (isinstance(self.SECoPdtype_obj,ArrayOf) and 
+            isinstance(self.SECoPdtype_obj.members,(StructOf,TupleOf))):
+            
+            dataset = copy.deepcopy(dataset)
+            dataset.value = list(map(str,dataset.value))
+            
 
         return dataset.get_reading()
 
@@ -372,6 +378,12 @@ class SECoP_Param_Backend(SignalBackend):
 
         if self.SECoPdtype in ["tuple", "struct"]:
             dataset.value = str(dataset.value)
+            
+        if (isinstance(self.SECoPdtype_obj,ArrayOf) and 
+            isinstance(self.SECoPdtype_obj.members,(StructOf,TupleOf))):
+            
+            dataset = copy.deepcopy(dataset)
+            dataset.value = list(map(str,dataset.value))
 
         return dataset.get_value()
 

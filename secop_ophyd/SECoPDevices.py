@@ -19,7 +19,7 @@ from ophyd.v2.core import (
     observe_value,
 )
 
-from frappy.datatypes import CommandType, StructOf, TupleOf
+from frappy.datatypes import CommandType, StructOf, TupleOf, ArrayOf, DataType
 from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient
 from secop_ophyd.propertykeys import DATAINFO, EQUIPMENT_ID, INTERFACE_CLASSES
 from secop_ophyd.SECoPSignal import (
@@ -113,24 +113,26 @@ class SECoPReadableDevice(StandardReadable):
             # generate new root path
             param_path = Path(parameter_name=parameter, module_name=module_name)
 
-            dtype = properties["datainfo"]["type"]
+            dtype:DataType = properties["datatype"]
 
             # sub devices for nested datatypes
             match dtype:
-                case "tuple":
+                case TupleOf():
                     setattr(
-                        self,
+                        self, 
                         parameter + "_tuple",
                         SECoP_Tuple_Device(path=param_path, secclient=secclient),
                     )
-                case "struct":
+                case StructOf():
                     setattr(
                         self,
                         parameter + "_struct",
                         SECoP_Struct_Device(path=param_path, secclient=secclient),
                     )
-                case "array":
-                    pass
+                case ArrayOf():
+                    if isinstance(dtype.members,(StructOf,TupleOf)):
+                        #TODO instanciate transposed array Device 
+                        pass
 
             ## Normal types + (struct and tuple as JSON object Strings)
             paramb = SECoP_Param_Backend(path=param_path, secclient=secclient)
@@ -471,6 +473,9 @@ class SECoP_CMD_Device(StandardReadable):
         self.set_readable_signals(read=read, config=config)
 
         super().__init__(name=dev_name)
+
+class SECoP_ArrayOf_XDevice(StandardReadable):
+    pass
 
 
 class SECoP_Node_Device(StandardReadable):

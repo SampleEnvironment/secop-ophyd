@@ -1,0 +1,13 @@
+services:
+  ursim:
+    build: .
+    ports:
+      - '5900:5900'
+      - '6080:6080'
+      - '29999:29999'
+      - '30001:30001' 
+      - '30002:30002'
+      - '30003:30003'
+      - '30004:30004'
+    stdin_open: true # docker run -i
+    tty: true        # docker run -t
