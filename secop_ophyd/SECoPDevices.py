@@ -404,7 +404,7 @@ class SECoP_CMD_Device(StandardReadable):
             for signame, sig_desc in datainfo["argument"]["members"].items():
                 arg_backend = SECoP_CMD_IO_Backend(
                     path=arg_path.append(signame),
-                    frappy_datatype=arg_dtype.members.get(signame),
+                    SECoPdtype_obj=arg_dtype.members.get(signame),
                     sig_datainfo=sig_desc,
                 )
 
@@ -420,7 +420,7 @@ class SECoP_CMD_Device(StandardReadable):
         elif isinstance(arg_dtype, atomic_dtypes):
             arg_backend = SECoP_CMD_IO_Backend(
                 path=arg_path,
-                frappy_datatype=arg_dtype,
+                SECoPdtype_obj=arg_dtype,
                 sig_datainfo=datainfo["argument"],
             )
             signame = path._accessible_name + "_arg"
@@ -435,7 +435,7 @@ class SECoP_CMD_Device(StandardReadable):
             for signame, sig_desc in datainfo["result"]["members"].items():
                 res_backend = SECoP_CMD_IO_Backend(
                     path=res_path.append(signame),
-                    frappy_datatype=res_dtype.members.get(signame),
+                    SECoPdtype_obj=res_dtype.members.get(signame),
                     sig_datainfo=sig_desc,
                 )
                 result[signame] = res_backend
@@ -450,7 +450,7 @@ class SECoP_CMD_Device(StandardReadable):
         elif isinstance(res_dtype, atomic_dtypes):
             res_backend = SECoP_CMD_IO_Backend(
                 path=res_path,
-                frappy_datatype=res_dtype,
+                SECoPdtype_obj=res_dtype,
                 sig_datainfo=datainfo["result"],
             )
             signame = path._accessible_name + "_res"

@@ -17,6 +17,7 @@ from frappy.datatypes import (
     BoolType,
     ScaledInteger,
     ArrayOf,
+    EnumType,
 )
 
 
@@ -61,22 +62,23 @@ def get_shape(datainfo):
 
 class SECoP_CMD_IO_Backend(SignalBackend):
     def __init__(
-        self, path: Path, frappy_datatype: DataType, sig_datainfo: dict
+        self, path: Path, SECoPdtype_obj: DataType, sig_datainfo: dict
     ) -> None:
         self.reading: SECoPReading = SECoPReading(None)
         self.value = None
 
         # module:acessible Path for reading/writing (module,accessible)
         self.path: Path = path
-
+        
         # Root datainfo or memberinfo for nested datatypes
         self.datainfo: dict = sig_datainfo
 
         self.callback: Callable = None
 
-        self.frappy_datatype: DataType = frappy_datatype
+        self.SECoPdtype_obj: DataType = SECoPdtype_obj
         self.datatype: str
         self.SECoPdtype: str
+        self.SECoPdtype_obj:DataType 
 
         self._set_dtype()
 
@@ -86,10 +88,10 @@ class SECoP_CMD_IO_Backend(SignalBackend):
         pass
 
     async def put(self, value: Any | None, wait=True, timeout=None):
-        if isinstance(self.frappy_datatype, (StructOf, TupleOf)):
-            self.value = self.frappy_datatype.from_string(value)
+        if isinstance(self.SECoPdtype_obj, (StructOf, TupleOf)):
+            self.value = self.SECoPdtype_obj.from_string(value)
         else:
-            self.value = self.frappy_datatype.import_value(value)
+            self.value = self.SECoPdtype_obj.import_value(value)
 
         self.reading.set_reading(value)
 
@@ -130,7 +132,18 @@ class SECoP_CMD_IO_Backend(SignalBackend):
 
     def _set_dtype(self) -> None:
         self.SECoPdtype = self.datainfo["type"]
-        self.datatype = SECOP2DTYPE.get(self.SECoPdtype, None)
+       
+        if self.SECoPdtype == "array":
+            dtype_obj = self.SECoPdtype_obj
+        
+            # Get first non array dtype
+            while isinstance(dtype_obj,ArrayOf):
+                dtype_obj = dtype_obj.members
+                self.datatype = SECOP2DTYPE.get(dtype_obj.__class__, None)
+        else:
+            self.datatype = SECOP2DTYPE.get(self.SECoPdtype_obj.__class__, None)
+        
+
 
 
 class SECoP_CMD_X_Backend(SignalBackend):
@@ -421,10 +434,21 @@ class SECoP_Param_Backend(SignalBackend):
         return self.path.get_path_tuple()
 
     def _set_dtype(self) -> None:
-        self.SECoPdtype = self.datainfo["type"]
-        self.datatype = SECOP2DTYPE.get(self.SECoPdtype, None)
+        self.SECoPdtype = self.datainfo["type"]        
         self.SECoPdtype_obj = self._param_description["datatype"]
+        
 
+        
+        if self.SECoPdtype == "array":
+            dtype_obj = self.SECoPdtype_obj
+        
+            # Get first non array dtype
+            while isinstance(dtype_obj,ArrayOf):
+                dtype_obj = dtype_obj.members
+                self.datatype = SECOP2DTYPE.get(dtype_obj.__class__, None)
+        else:
+            self.datatype = SECOP2DTYPE.get(self.SECoPdtype_obj.__class__, None)
+            
 
 class PropertyBackend(SignalBackend):
     """A read/write/monitor backend for a Signals"""
@@ -507,15 +531,15 @@ class ReadonlyError(Exception):
 # Tuple and struct are handled in a special way. They are unfolded into subdevices
 
 SECOP2DTYPE = {
-    "double": "number",
-    "int": "number",
-    "scaled": "number",
-    "bool": "boolean",
-    "enum": "number",
-    "string": "string",
-    "blob": "string",
-    "array": "array",
-    "tuple": "string",  # but variing types of array elements
-    "struct": "string",
-    "command": "string",
+    FloatRange: "number",
+    IntRange: "number",
+    ScaledInteger: "number",
+    BoolType: "boolean",
+    EnumType: "number",
+    StringType: "string",
+    BLOBType: "string",
+    ArrayOf: "array",
+    TupleOf: "string",  # but variing types of array elements
+    StructOf: "string",
+    CommandType: "string",
 }
