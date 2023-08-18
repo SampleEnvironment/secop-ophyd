@@ -69,7 +69,7 @@ class SECoP_CMD_IO_Backend(SignalBackend):
 
         # module:acessible Path for reading/writing (module,accessible)
         self.path: Path = path
-        
+
         # Root datainfo or memberinfo for nested datatypes
         self.datainfo: dict = sig_datainfo
 
@@ -78,7 +78,7 @@ class SECoP_CMD_IO_Backend(SignalBackend):
         self.SECoPdtype_obj: DataType = SECoPdtype_obj
         self.datatype: str
         self.SECoPdtype: str
-        self.SECoPdtype_obj:DataType 
+        self.SECoPdtype_obj: DataType
 
         self._set_dtype()
 
@@ -132,18 +132,16 @@ class SECoP_CMD_IO_Backend(SignalBackend):
 
     def _set_dtype(self) -> None:
         self.SECoPdtype = self.datainfo["type"]
-       
+
         if self.SECoPdtype == "array":
             dtype_obj = self.SECoPdtype_obj
-        
+
             # Get first non array dtype
-            while isinstance(dtype_obj,ArrayOf):
+            while isinstance(dtype_obj, ArrayOf):
                 dtype_obj = dtype_obj.members
                 self.datatype = SECOP2DTYPE.get(dtype_obj.__class__, None)
         else:
             self.datatype = SECOP2DTYPE.get(self.SECoPdtype_obj.__class__, None)
-        
-
 
 
 class SECoP_CMD_X_Backend(SignalBackend):
@@ -372,12 +370,12 @@ class SECoP_Param_Backend(SignalBackend):
             dataset.value = dataset.value.value
         if self.SECoPdtype in ["tuple", "struct"]:
             dataset.value = str(dataset.value)
-        if (isinstance(self.SECoPdtype_obj,ArrayOf) and 
-            isinstance(self.SECoPdtype_obj.members,(StructOf,TupleOf))):
-            
+        # TODO handle multidimensional arrays
+        if isinstance(self.SECoPdtype_obj, ArrayOf) and isinstance(
+            self.SECoPdtype_obj.members, (StructOf, TupleOf)
+        ):
             dataset = copy.deepcopy(dataset)
-            dataset.value = list(map(str,dataset.value))
-            
+            dataset.value = list(map(str, dataset.value))
 
         return dataset.get_reading()
 
@@ -391,12 +389,12 @@ class SECoP_Param_Backend(SignalBackend):
 
         if self.SECoPdtype in ["tuple", "struct"]:
             dataset.value = str(dataset.value)
-            
-        if (isinstance(self.SECoPdtype_obj,ArrayOf) and 
-            isinstance(self.SECoPdtype_obj.members,(StructOf,TupleOf))):
-            
+
+        if isinstance(self.SECoPdtype_obj, ArrayOf) and isinstance(
+            self.SECoPdtype_obj.members, (StructOf, TupleOf)
+        ):
             dataset = copy.deepcopy(dataset)
-            dataset.value = list(map(str,dataset.value))
+            dataset.value = list(map(str, dataset.value))
 
         return dataset.get_value()
 
@@ -434,21 +432,19 @@ class SECoP_Param_Backend(SignalBackend):
         return self.path.get_path_tuple()
 
     def _set_dtype(self) -> None:
-        self.SECoPdtype = self.datainfo["type"]        
+        self.SECoPdtype = self.datainfo["type"]
         self.SECoPdtype_obj = self._param_description["datatype"]
-        
 
-        
         if self.SECoPdtype == "array":
             dtype_obj = self.SECoPdtype_obj
-        
+
             # Get first non array dtype
-            while isinstance(dtype_obj,ArrayOf):
+            while isinstance(dtype_obj, ArrayOf):
                 dtype_obj = dtype_obj.members
                 self.datatype = SECOP2DTYPE.get(dtype_obj.__class__, None)
         else:
             self.datatype = SECOP2DTYPE.get(self.SECoPdtype_obj.__class__, None)
-            
+
 
 class PropertyBackend(SignalBackend):
     """A read/write/monitor backend for a Signals"""

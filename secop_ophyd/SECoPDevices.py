@@ -20,6 +20,7 @@ from ophyd.v2.core import (
 )
 
 from frappy.datatypes import CommandType, StructOf, TupleOf, ArrayOf, DataType
+from frappy.client import Logger
 from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient
 from secop_ophyd.propertykeys import DATAINFO, EQUIPMENT_ID, INTERFACE_CLASSES
 from secop_ophyd.SECoPSignal import (
@@ -113,13 +114,13 @@ class SECoPReadableDevice(StandardReadable):
             # generate new root path
             param_path = Path(parameter_name=parameter, module_name=module_name)
 
-            dtype:DataType = properties["datatype"]
+            dtype: DataType = properties["datatype"]
 
             # sub devices for nested datatypes
             match dtype:
                 case TupleOf():
                     setattr(
-                        self, 
+                        self,
                         parameter + "_tuple",
                         SECoP_Tuple_Device(path=param_path, secclient=secclient),
                     )
@@ -130,8 +131,8 @@ class SECoPReadableDevice(StandardReadable):
                         SECoP_Struct_Device(path=param_path, secclient=secclient),
                     )
                 case ArrayOf():
-                    if isinstance(dtype.members,(StructOf,TupleOf)):
-                        #TODO instanciate transposed array Device 
+                    if isinstance(dtype.members, (StructOf, TupleOf)):
+                        # TODO instanciate transposed array Device
                         pass
 
             ## Normal types + (struct and tuple as JSON object Strings)
@@ -474,6 +475,7 @@ class SECoP_CMD_Device(StandardReadable):
 
         super().__init__(name=dev_name)
 
+
 class SECoP_ArrayOf_XDevice(StandardReadable):
     pass
 
@@ -505,22 +507,24 @@ class SECoP_Node_Device(StandardReadable):
         super().__init__(name=name)
 
     @classmethod
-    async def create(cls, host: str, port: str, loop):
+    async def create(cls, host: str, port: str, loop, log=Logger):
         # check if asyncio eventloop is running in the same thread
         if loop._thread_id == threading.current_thread().ident and loop.is_running():
-            secclient = await AsyncFrappyClient.create(host=host, port=port, loop=loop)
+            secclient = await AsyncFrappyClient.create(
+                host=host, port=port, loop=loop, log=log
+            )
             return SECoP_Node_Device(secclient=secclient)
         else:
             raise Exception
 
     @classmethod
-    def create_external_loop(cls, host: str, port: str, loop):
+    def create_external_loop(cls, host: str, port: str, loop, log=Logger):
         if loop._thread_id == threading.current_thread().ident and loop.is_running():
             raise Exception
         else:
             # Event loop is running in a different thread
             future = asyncio.run_coroutine_threadsafe(
-                AsyncFrappyClient.create(host=host, port=port, loop=loop), loop
+                AsyncFrappyClient.create(host=host, port=port, loop=loop, log=log), loop
             )
 
             # TODO checking if connect fails
