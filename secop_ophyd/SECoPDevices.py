@@ -177,19 +177,9 @@ class SECoPReadableDevice(StandardReadable):
                 SECoP_CMD_Device(path=cmd_path, secclient=secclient),
             )
 
-        # TODO Commands!!!
         self.set_readable_signals(read=read, config=config)
 
         super().__init__(name=module_name)
-
-    def set_name(self, name: str = ""):
-        # if name and not self._name:
-        self._name = name
-        for attr_name, attr in self.__dict__.items():
-            # TODO: support lists and dicts of devices
-            if isinstance(attr, Device):
-                attr.set_name(f"{name}-{attr_name.rstrip('_')}")
-                attr.parent = self
 
     async def wait_for_IDLE(self):
         async for current_stat in observe_value(self.status_code):
