@@ -48,6 +48,8 @@ class AsyncFrappyClient:
 
         self.loop = loop
 
+        self.external = False
+
     @property
     def state(self):
         return self.client.state

@@ -5,12 +5,13 @@ from secop_ophyd.SECoPDevices import SECoP_Node_Device
 from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient
 
 # Import bluesky and ophyd
-import matplotlib.pyplot as plt
+
 from bluesky import RunEngine
-from bluesky.callbacks.best_effort import BestEffortCallback
 from bluesky.plan_stubs import mov, movr, rd  # noqa
 from bluesky.plans import grid_scan  # noqa
 from bluesky.utils import ProgressBarManager
+
+from databroker.v2 import temp
 
 import logging
 
@@ -114,12 +115,14 @@ async def nested_client(cryo_sim, logger, port="10771"):
 
 
 @pytest.fixture
-def RE():
-    RE = RunEngine({}, call_returns_result=True)
-    bec = BestEffortCallback()
-    RE.subscribe(bec)
-    RE.waiting_hook = ProgressBarManager()
-    plt.ion()
+def db():
+    return temp()
+
+
+@pytest.fixture
+def RE(db):
+    RE = RunEngine({})
+    RE.subscribe(db.v1.insert)
     return RE
 
 

@@ -13,8 +13,8 @@ exclude = ["frappy*"]
 minversion = "6.0"
 addopts = "-v"
 asyncio_mode="auto"
-norecursedirs="frappy"
+norecursedirs=["frappy","epics-testing"]
 
 [tool.isort]
 skip = [".gitignore"]
-skip_glob = ["frappy/*"]
+skip_glob = ["frappy/*","epics-testing/*"]
