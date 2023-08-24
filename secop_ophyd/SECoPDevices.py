@@ -196,7 +196,7 @@ class SECoPReadableDevice(StandardReadable):
             fut = asyncio.run_coroutine_threadsafe(
                 wait_for_idle(), self._secclient.loop
             )
-            await fut
+            await asyncio.wrap_future(future=fut)
 
 
 class SECoP_Tuple_Device(StandardReadable):
