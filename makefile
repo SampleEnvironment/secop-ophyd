@@ -15,7 +15,7 @@ venv: .venv/touchfile
 
 .venv/touchfile: requirements.txt 
 	python3 -m venv .venv
-	. .venv/bin/activate; pip install -Ur requirements.txt; pip install -Ue .
+	. .venv/bin/activate; pip install --upgrade pip; pip install -Ur requirements.txt; pip install -Ue .
 	touch .venv/touchfile
 
 
