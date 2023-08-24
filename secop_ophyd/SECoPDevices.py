@@ -182,12 +182,21 @@ class SECoPReadableDevice(StandardReadable):
         super().__init__(name=module_name)
 
     async def wait_for_IDLE(self):
-        async for current_stat in observe_value(self.status_code):
-            stat_code = current_stat[0].value
+        async def wait_for_idle():
+            async for current_stat in observe_value(self.status_code):
+                stat_code = current_stat[0].value
 
-            # Module is in IDLE/WARN state
-            if IDLE <= stat_code < BUSY:
-                break
+                # Module is in IDLE/WARN state
+                if IDLE <= stat_code < BUSY:
+                    break
+
+        if not self._secclient.external:
+            await wait_for_idle()
+        else:
+            fut = asyncio.run_coroutine_threadsafe(
+                wait_for_idle(), self._secclient.loop
+            )
+            fut.result()
 
 
 class SECoP_Tuple_Device(StandardReadable):
@@ -509,6 +518,7 @@ class SECoP_Node_Device(StandardReadable):
 
     @classmethod
     def create_external_loop(cls, host: str, port: str, loop, log=Logger):
+        # check if eventloop is running in another thread
         if loop._thread_id == threading.current_thread().ident and loop.is_running():
             raise Exception
         else:
@@ -520,8 +530,11 @@ class SECoP_Node_Device(StandardReadable):
             # TODO checking if connect fails
 
             # TODO find better solution than sleep
+            # while not future.done():
             time.sleep(2)
-            return SECoP_Node_Device(future.result(10))
+
+            future.result().external = True
+            return SECoP_Node_Device(future.result())
 
     async def disconnect(self):
         if (
