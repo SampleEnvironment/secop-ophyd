@@ -90,7 +90,7 @@ def get_config_attrs(parameters):
 
 class SECoPReadableDevice(StandardReadable):
     """
-    Standard reaadable SECoP device, corresponding to a SECoP module with the
+    Standard readable SECoP device, corresponding to a SECoP module with the
     interface class "Readable"
     """
 
@@ -102,10 +102,8 @@ class SECoPReadableDevice(StandardReadable):
         Args:
             secclient (AsyncFrappyClient): async frappy client that is connected to
             the sec-node
-            module_name (str): _description_
+            module_name (str): modulename that the readable device corresponds to
 
-        Raises:
-            Exception: _description_
         """
         self._secclient = secclient
         self._module = module_name
@@ -198,6 +196,10 @@ class SECoPReadableDevice(StandardReadable):
         super().__init__(name=module_name)
 
     async def wait_for_IDLE(self):
+        """asynchronously waits until module is IDLE again. this is helpful,
+        for running commands that are not done immediately
+        """
+
         async def wait_for_idle():
             async for current_stat in observe_value(self.status_code):
                 stat_code = current_stat[0].value
@@ -216,7 +218,18 @@ class SECoPReadableDevice(StandardReadable):
 
 
 class SECoP_Tuple_Device(StandardReadable):
+    """
+    used to recursively deconstruct the nonatomic "tuple"-SECoP-datatype into subdevices/Signals
+    """
+
     def __init__(self, path: Path, secclient: AsyncFrappyClient):
+        """constructs tuple device from the SECoP tuple that "path" points to.
+
+        Args:
+            path (Path): path to the SECoP tuple within the secclient modules dict
+            secclient (AsyncFrappyClient): connected seccop client
+
+        """
         self._path = path
         self._secclient: AsyncFrappyClient = secclient
 
@@ -285,6 +298,11 @@ class SECoPWritableDevice(SECoPReadableDevice, Movable):
 
 
 class SECoPMoveableDevice(SECoPWritableDevice, Movable, Stoppable):
+    """
+    Standard movable SECoP device, corresponding to a SECoP module with the
+    interface class "Drivable"
+    """
+
     def __init__(self, secclient: AsyncFrappyClient, module_name: str):
         super().__init__(secclient, module_name)
         self._success = True
@@ -326,7 +344,18 @@ class SECoPMoveableDevice(SECoPWritableDevice, Movable, Stoppable):
 
 
 class SECoP_Struct_Device(StandardReadable):
+    """
+    used to recursively deconstruct the non atomic "struct"-SECoP-datatype into subdevices/Signals
+    """
+
     def __init__(self, path: Path, secclient: AsyncFrappyClient):
+        """constructs struct device from the SECoP struct that "path" points to.
+
+        Args:
+            path (Path): path to the SECoP struct within the secclient modules dict
+            secclient (AsyncFrappyClient): connected seccop client
+
+        """
         dev_name: str = path.get_signal_name() + "_struct"
 
         self._secclient: AsyncFrappyClient = secclient
@@ -392,6 +421,11 @@ class SECoP_Struct_Device(StandardReadable):
 
 
 class SECoP_CMD_Device(StandardReadable):
+    """
+    Command devices that have Signals for command args, return values and a signal
+    for triggering command execution
+    """
+
     def __init__(self, path: Path, secclient: AsyncFrappyClient):
         dev_name: str = path.get_signal_name() + "_cmd"
 
