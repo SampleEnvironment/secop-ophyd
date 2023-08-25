@@ -16,5 +16,6 @@ jobs:
       - run: git submodule update 
       - run: echo "🖥️ The workflow is now ready to test your code on the runner."
 
-      - run: sudo make test 
+      - run: make venv
+      - run: make test 
       - run: echo "🍏 This job's status is ${{ job.status }}."

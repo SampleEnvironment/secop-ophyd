@@ -95,6 +95,18 @@ class SECoPReadableDevice(StandardReadable):
     """
 
     def __init__(self, secclient: AsyncFrappyClient, module_name: str):
+        """Initializes readable device corresponding to a SECoP module that is part of
+        the parent sec-node. Only the "value" parameter is set as readable signal. all
+        other signals and properties are configuration signals
+
+        Args:
+            secclient (AsyncFrappyClient): async frappy client that is connected to
+            the sec-node
+            module_name (str): _description_
+
+        Raises:
+            Exception: _description_
+        """
         self._secclient = secclient
         self._module = module_name
         module_desc = secclient.modules[module_name]
