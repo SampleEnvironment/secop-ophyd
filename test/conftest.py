@@ -127,17 +127,13 @@ def RE(db):
 
 
 @pytest.fixture
-def cryo_node(RE):
-    return SECoP_Node_Device.create_external_loop(
-        host="localhost", port="10769", loop=RE.loop
-    )
+async def cryo_node(RE):
+    return await SECoP_Node_Device.create(host="localhost", port="10769", loop=RE.loop)
 
 
 @pytest.fixture
 async def nested_node_RE(RE):
-    return SECoP_Node_Device.create_external_loop(
-        host="localhost", port="10771", loop=RE.loop
-    )
+    return await SECoP_Node_Device.create(host="localhost", port="10771", loop=RE.loop)
 
 
 @pytest.fixture

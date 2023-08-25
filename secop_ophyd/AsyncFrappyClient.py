@@ -85,6 +85,8 @@ class AsyncFrappyClient:
 
     async def connect(self, try_period=0):
         await asyncio.to_thread(self.client.connect, try_period)
+        # TODO find better solution than sleep,somehow it is needed
+        await asyncio.sleep(1)
 
     async def disconnect(self, shutdown=True):
         await asyncio.to_thread(self.client.disconnect, shutdown)

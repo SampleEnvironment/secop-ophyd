@@ -10,7 +10,6 @@ from typing import (
 from bluesky.protocols import Movable, Stoppable, SyncOrAsync
 from ophyd.v2.core import (
     AsyncStatus,
-    Device,
     SignalR,
     SignalRW,
     SignalX,
@@ -90,6 +89,11 @@ def get_config_attrs(parameters):
 
 
 class SECoPReadableDevice(StandardReadable):
+    """
+    Standard reaadable SECoP device, corresponding to a SECoP module with the
+    interface class "Readable"
+    """
+
     def __init__(self, secclient: AsyncFrappyClient, module_name: str):
         self._secclient = secclient
         self._module = module_name
@@ -480,7 +484,19 @@ class SECoP_ArrayOf_XDevice(StandardReadable):
 
 
 class SECoP_Node_Device(StandardReadable):
+    """
+    Generates the root ophyd device from a Sec-node. Signals of this Device correspond
+    to the Sec-node properties
+    """
+
     def __init__(self, secclient: AsyncFrappyClient):
+        """initializes the node device and generates all node signals and subdevices
+        corresponding to the SECoP-modules of the secnode
+
+        Args:
+            secclient (AsyncFrappyClient): running Frappy client that is connected
+            to a Sec-node
+        """
         self._secclient: AsyncFrappyClient = secclient
 
         self.modules: Dict[str, T] = self._secclient.modules
@@ -507,6 +523,21 @@ class SECoP_Node_Device(StandardReadable):
 
     @classmethod
     async def create(cls, host: str, port: str, loop, log=Logger):
+        """async factory pattern to be able to have an async io constructor,
+        since __init__ isnt allowed to be async.
+
+        Args:
+            host (str): hostname of Sec-node
+            port (str): Sec-node port
+            loop (_type_): asyncio eventloop, can either run in same thread or external
+            thread. In conjunction with bluesky RE.loop should be used
+            log (_type_, optional): Logging of AsyncFrappyClient. Defaults to Logger.
+
+
+        Returns:
+            SECoP_Node_Device: fully initializedand connected Sec-node device including
+            all subdevices
+        """
         # check if asyncio eventloop is running in the same thread
         if loop._thread_id == threading.current_thread().ident and loop.is_running():
             secclient = await AsyncFrappyClient.create(
@@ -514,10 +545,37 @@ class SECoP_Node_Device(StandardReadable):
             )
             return SECoP_Node_Device(secclient=secclient)
         else:
-            raise Exception
+            # Event loop is running in a different thread
+            client_future = asyncio.run_coroutine_threadsafe(
+                AsyncFrappyClient.create(host=host, port=port, loop=loop, log=log), loop
+            )
+
+            secclient = await asyncio.wrap_future(future=client_future)
+
+            # TODO checking if connect fails
+
+            secclient.external = True
+
+            return SECoP_Node_Device(secclient=secclient)
 
     @classmethod
     def create_external_loop(cls, host: str, port: str, loop, log=Logger):
+        """
+        non async version of .create factory pattern, only works when eventloop is
+        running in another thread
+
+        Args:
+            host (str): hostname of Sec-node
+            port (str): Sec-node port
+            loop (_type_): asyncio eventloop, can either run in same thread or external
+            thread. In conjunction with bluesky RE.loop should be used
+            log (_type_, optional): Logging of AsyncFrappyClient. Defaults to Logger.
+
+
+        Returns:
+            SECoP_Node_Device: fully initializedand connected Sec-node device including
+            all subdevices
+        """
         # check if eventloop is running in another thread
         if loop._thread_id == threading.current_thread().ident and loop.is_running():
             raise Exception
@@ -537,15 +595,22 @@ class SECoP_Node_Device(StandardReadable):
             return SECoP_Node_Device(future.result())
 
     async def disconnect(self):
+        """shuts down secclient using asyncio, eventloop can be running in same or
+        external thread
+        """
         if (
             self._secclient.loop._thread_id == threading.current_thread().ident
             and self._secclient.loop.is_running()
         ):
             await self._secclient.disconnect(True)
         else:
-            raise Exception
+            disconn_future = asyncio.run_coroutine_threadsafe(
+                self._secclient.disconnect(True), self._secclient.loop
+            )
+            await asyncio.wrap_future(future=disconn_future)
 
     def disconnect_external(self):
+        """shuts down secclient, eventloop mus be running in external thread"""
         if (
             self._secclient.loop._thread_id == threading.current_thread().ident
             and self._secclient.loop.is_running()
