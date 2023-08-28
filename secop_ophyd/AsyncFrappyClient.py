@@ -50,6 +50,8 @@ class AsyncFrappyClient:
 
         self.external = False
 
+        self.conn_timestamp: float = None
+
     @property
     def state(self):
         return self.client.state
@@ -80,6 +82,7 @@ class AsyncFrappyClient:
         self.client = SecopClient(uri=host + ":" + port, log=log)
 
         await self.connect(3)
+        self.conn_timestamp = time.time()
 
         return self
 

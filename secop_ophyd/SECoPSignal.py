@@ -231,34 +231,26 @@ class SECoP_CMD_X_Backend(SignalBackend):
         res["source"] = self.source
 
         # ophyd datatype (some SECoP datatypeshaveto be converted)
-        res["dtype"] = "string"  # TODO or None??? signalx is never read
+        # signalx has no datatype and is never read
+        res["dtype"] = "None"
 
         # get shape from datainfo and SECoPtype
 
-        # TODO if array is ragged only first dimension is used otherwise parse the array
-        if self.datainfo["type"] == "array":
-            res["shape"] = [1, self.datainfo.get("maxlen", None)]
-        else:
-            res["shape"] = []
-
-        for property_name, prop_val in self._cmd_desc.items():
-            # skip datainfo (treated seperately)
-            if property_name == "datainfo" or property_name == "datatype":
-                continue
-            res[property_name] = prop_val
-
-        for property_name, prop_val in self.datainfo.items():
-            if property_name == "type":
-                property_name = "SECoPtype"
-            res[property_name] = prop_val
+        res["shape"] = []
 
         return res
 
     async def get_reading(self) -> Reading:
-        return None
+        raise Exception(
+            "Cannot read _x Signal, it has no value and is only"
+            + " used to trigger Command execution"
+        )
 
     async def get_value(self) -> T:
-        return None
+        raise Exception(
+            "Cannot read _x Signal, it has no value and is only"
+            + " used to trigger Command execution"
+        )
 
     def set_callback(self, callback: Callable[[Reading, Any], None] | None) -> None:
         pass
