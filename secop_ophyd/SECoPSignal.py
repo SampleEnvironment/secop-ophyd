@@ -441,13 +441,15 @@ class SECoP_Param_Backend(SignalBackend):
 class PropertyBackend(SignalBackend):
     """A read/write/monitor backend for a Signals"""
 
-    def __init__(self, prop_key: str, propertyDict: Dict[str, T]) -> None:
+    def __init__(
+        self, prop_key: str, propertyDict: Dict[str, T], secclient: AsyncFrappyClient
+    ) -> None:
         # secclient
 
         self._property_dict = propertyDict
         self._prop_key = prop_key
         self._datatype = self._get_datatype()
-
+        self._secclient: AsyncFrappyClient = secclient
         # TODO full property path
         self.source = prop_key
 
@@ -488,12 +490,13 @@ class PropertyBackend(SignalBackend):
 
     async def get_reading(self) -> Reading:
         """The current value, timestamp and severity"""
-        # TODO correct timestamp
-        return get_read_str(self._property_dict[self._prop_key], timestamp=time.time())
+        return get_read_str(
+            self._property_dict[self._prop_key],
+            timestamp=self._secclient.conn_timestamp,
+        )
 
     async def get_value(self) -> T:
         """The current value"""
-        # TODO correct timestamp
         return self._property_dict[self._prop_key]
 
     def set_callback(self, callback: Callable[[Reading, Any], None] | None) -> None:

@@ -119,7 +119,8 @@ class SECoPReadableDevice(StandardReadable):
 
         # generate Signals from Module Properties
         for property in module_desc["properties"]:
-            propb = PropertyBackend(property, module_desc["properties"])
+            propb = PropertyBackend(property, module_desc["properties"], secclient)
+
             setattr(self, property, SignalR(backend=propb))
             config.append(getattr(self, property))
 
@@ -554,7 +555,7 @@ class SECoP_Node_Device(StandardReadable):
         config = []
 
         for property in self._secclient.properties:
-            propb = PropertyBackend(property, self._secclient.properties)
+            propb = PropertyBackend(property, self._secclient.properties, secclient)
             setattr(self, property, SignalR(backend=propb))
             config.append(getattr(self, property))
 
@@ -564,6 +565,12 @@ class SECoP_Node_Device(StandardReadable):
             setattr(self, module, SECoPDeviceClass(self._secclient, module))
 
         self.set_readable_signals(config=config)
+
+        # register secclient callbacks (these are useful if sec node description
+        # changes after a reconnect)
+        secclient.client.register_callback(
+            None, self.descriptiveDataChange, self.nodeStateChange
+        )
 
         super().__init__(name=name)
 
@@ -589,56 +596,16 @@ class SECoP_Node_Device(StandardReadable):
             secclient = await AsyncFrappyClient.create(
                 host=host, port=port, loop=loop, log=log
             )
-            return SECoP_Node_Device(secclient=secclient)
+
         else:
             # Event loop is running in a different thread
             client_future = asyncio.run_coroutine_threadsafe(
                 AsyncFrappyClient.create(host=host, port=port, loop=loop, log=log), loop
             )
-
             secclient = await asyncio.wrap_future(future=client_future)
-
-            # TODO checking if connect fails
-
             secclient.external = True
 
-            return SECoP_Node_Device(secclient=secclient)
-
-    @classmethod
-    def create_external_loop(cls, host: str, port: str, loop, log=Logger):
-        """
-        non async version of .create factory pattern, only works when eventloop is
-        running in another thread
-
-        Args:
-            host (str): hostname of Sec-node
-            port (str): Sec-node port
-            loop (_type_): asyncio eventloop, can either run in same thread or external
-            thread. In conjunction with bluesky RE.loop should be used
-            log (_type_, optional): Logging of AsyncFrappyClient. Defaults to Logger.
-
-
-        Returns:
-            SECoP_Node_Device: fully initializedand connected Sec-node device including
-            all subdevices
-        """
-        # check if eventloop is running in another thread
-        if loop._thread_id == threading.current_thread().ident and loop.is_running():
-            raise Exception
-        else:
-            # Event loop is running in a different thread
-            future = asyncio.run_coroutine_threadsafe(
-                AsyncFrappyClient.create(host=host, port=port, loop=loop, log=log), loop
-            )
-
-            # TODO checking if connect fails
-
-            # TODO find better solution than sleep
-            # while not future.done():
-            time.sleep(2)
-
-            future.result().external = True
-            return SECoP_Node_Device(future.result())
+        return SECoP_Node_Device(secclient=secclient)
 
     async def disconnect(self):
         """shuts down secclient using asyncio, eventloop can be running in same or
@@ -668,6 +635,45 @@ class SECoP_Node_Device(StandardReadable):
             )
 
             future.result(2)
+
+    def descriptiveDataChange(self, module, description):
+        """called when the description has changed
+
+        this callback is called on the node with module=None
+        and on every changed module with module==<module name>
+        """
+
+        self._secclient.conn_timestamp = time.time()
+
+        if module is None:
+            # Refresh signals that correspond to Node Properties
+            config = []
+            for property in self._secclient.properties:
+                propb = PropertyBackend(
+                    property, self._secclient.properties, self._secclient
+                )
+
+                setattr(self, property, SignalR(backend=propb))
+                config.append(getattr(self, property))
+
+            self.set_readable_signals(config=config)
+        else:
+            # Refresh changed modules
+            module_desc = self._secclient.modules[module]
+            SECoPDeviceClass = class_from_interface(module_desc["properties"])
+
+            setattr(self, module, SECoPDeviceClass(self._secclient, module))
+
+            # TODO what about removing Modules during disconn
+
+    def nodeStateChange(self, online, state):
+        """called when the state of the connection changes
+
+        'online' is True when connected or reconnecting, False when disconnected
+        or connecting 'state' is the connection state as a string
+        """
+        if state == "connected" and online is True:
+            self._secclient.conn_timestamp = time.time()
 
 
 IF_CLASSES = {
