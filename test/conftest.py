@@ -1,5 +1,6 @@
 import pytest
-from xprocess import ProcessStarter
+from xprocess import ProcessStarter, XProcessInfo
+
 
 from secop_ophyd.SECoPDevices import SECoP_Node_Device
 from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient
@@ -37,7 +38,7 @@ def cryo_sim(xprocess):
     # ensure process is running and return its logfile
     xprocess.ensure("cryo_sim", Starter)
 
-    yield
+    yield xprocess
 
     # clean up whole process tree afterwards
     xprocess.getinfo("cryo_sim").terminate()

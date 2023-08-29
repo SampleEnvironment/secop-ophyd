@@ -1,5 +1,10 @@
+import pytest
 from secop_ophyd.SECoPDevices import SECoP_Node_Device, SECoPMoveableDevice
 import numpy as np
+from xprocess import ProcessStarter, XProcessInfo
+import xprocess
+
+import asyncio
 
 
 async def test_node_structure(cryo_sim, cryo_node_internal_loop: SECoP_Node_Device):
@@ -60,3 +65,45 @@ async def test_node_drive(cryo_sim, cryo_node_internal_loop: SECoP_Node_Device):
     )
 
     await cryo_node_internal_loop.disconnect()
+
+
+async def test_node_reconn(
+    cryo_sim: xprocess,
+    cryo_node_internal_loop: SECoP_Node_Device,
+):
+    class Starter(ProcessStarter):
+        # startup pattern
+        pattern = ".*: startup done, handling transport messages"
+        timeout = 10
+        # command to start process
+        args = [
+            "python3",
+            "../../../../frappy/bin/frappy-server",
+            "-c",
+            "../../../../frappy/cfg/cryo_cfg.py",
+            "cryo",
+        ]
+
+    cryo_dev: SECoPMoveableDevice = cryo_node_internal_loop.cryo
+
+    old_conf = await cryo_node_internal_loop.read_configuration()
+
+    # disconnect sec-node
+    # clean up whole process tree afterwards
+
+    cryo_info: XProcessInfo = cryo_sim.getinfo("cryo_sim")
+
+    cryo_info.terminate(timeout=3)
+
+    await asyncio.sleep(1)
+
+    cryo_sim.ensure("cryo_sim", Starter)
+
+    await asyncio.sleep(2)
+
+    new_conf = await cryo_node_internal_loop.read_configuration()
+
+    fw_old = old_conf[cryo_node_internal_loop.firmware.name]
+    fw_new = new_conf[cryo_node_internal_loop.firmware.name]
+
+    assert fw_new["timestamp"] > fw_old["timestamp"]
