@@ -44,7 +44,7 @@ async def test_async_secopclient_reconn(
 
     assert async_frappy_client.state == "reconnecting"
 
-    await asyncio.sleep(2)
+    await asyncio.sleep(1)
 
     assert async_frappy_client.state == "connected"
 
