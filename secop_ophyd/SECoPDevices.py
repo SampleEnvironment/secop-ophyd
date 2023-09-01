@@ -4,10 +4,19 @@ import threading
 import time
 from typing import (
     Dict,
+    Iterator,
     Optional,
 )
 
-from bluesky.protocols import Movable, Stoppable, SyncOrAsync
+from bluesky.protocols import (
+    Descriptor,
+    Movable,
+    PartialEvent,
+    Status,
+    Stoppable,
+    SyncOrAsync,
+    Flyable,
+)
 from ophyd.v2.core import (
     AsyncStatus,
     SignalR,
@@ -421,7 +430,7 @@ class SECoP_Struct_Device(StandardReadable):
         super().__init__(name=dev_name)
 
 
-class SECoP_CMD_Device(StandardReadable):
+class SECoP_CMD_Device(StandardReadable, Flyable):
     """
     Command devices that have Signals for command args, return values and a signal
     for triggering command execution
@@ -450,6 +459,8 @@ class SECoP_CMD_Device(StandardReadable):
         read = []
         # argument signals
         config = []
+
+        self.sigx: SignalX = None
 
         if isinstance(arg_dtype, StructOf):
             for signame, sig_desc in datainfo["argument"]["members"].items():
@@ -519,11 +530,36 @@ class SECoP_CMD_Device(StandardReadable):
             result=result,
         )
 
-        setattr(self, path._accessible_name + "_x", SignalX(exec_backend))
+        self.sigx = SignalX(exec_backend)
+        setattr(self, path._accessible_name + "_x", self.sigx)
 
         self.set_readable_signals(read=read, config=config)
 
         super().__init__(name=dev_name)
+
+    def kickoff(self) -> Status:
+        # trigger execution of secop command, wait until Device is Busy
+        pass
+
+    def complete(self) -> AsyncStatus:
+        coro = asyncio.wait_for(self._exec_cmd())
+        return AsyncStatus(awaitable=coro, watchers=None)
+
+    async def _exec_cmd(self):
+        await self.sigx.execute()
+
+        async for current_stat in observe_value(self.parent.status_code):
+            stat_code = current_stat[0].value
+
+            # Module not Busy anymore
+            if stat_code < BUSY or stat_code >= ERROR:
+                break
+
+    def collect(self) -> Iterator[PartialEvent]:
+        pass
+
+    def describe_collect(self) -> SyncOrAsync[Dict[str, Dict[str, Descriptor]]]:
+        pass
 
 
 class SECoP_ArrayOf_XDevice(StandardReadable):
