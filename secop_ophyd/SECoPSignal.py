@@ -143,7 +143,7 @@ class SECoP_CMD_IO_Backend(SignalBackend):
         else:
             self.datatype = SECOP2DTYPE.get(self.SECoPdtype_obj.__class__, None)
 
-
+#TODO add return of Asyncstatus
 class SECoP_CMD_X_Backend(SignalBackend):
     def __init__(
         self,
