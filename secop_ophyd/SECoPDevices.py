@@ -1,7 +1,7 @@
 import asyncio
 import re
 import threading
-import time
+import time as ttime
 from typing import (
     Dict,
     Iterator,
@@ -26,6 +26,8 @@ from ophyd.v2.core import (
     T,
     observe_value,
 )
+
+from collections import OrderedDict
 
 from frappy.datatypes import CommandType, StructOf, TupleOf, ArrayOf, DataType
 from frappy.client import Logger
@@ -460,6 +462,7 @@ class SECoP_CMD_Device(StandardReadable, Flyable):
         # argument signals
         config = []
 
+        self._start_time = None
         self.sigx: SignalX = None
 
         if isinstance(arg_dtype, StructOf):
@@ -539,11 +542,10 @@ class SECoP_CMD_Device(StandardReadable, Flyable):
 
     def kickoff(self) -> Status:
         # trigger execution of secop command, wait until Device is Busy
-        pass
 
-    def complete(self) -> AsyncStatus:
-        coro = asyncio.wait_for(self._exec_cmd())
-        return AsyncStatus(awaitable=coro, watchers=None)
+        self._start_time = ttime.time()
+        coro = asyncio.wait_for(fut=asyncio.sleep(1), timeout=None)
+        return AsyncStatus(coro, watchers=None)
 
     async def _exec_cmd(self):
         await self.sigx.execute()
@@ -555,11 +557,17 @@ class SECoP_CMD_Device(StandardReadable, Flyable):
             if stat_code < BUSY or stat_code >= ERROR:
                 break
 
-    def collect(self) -> Iterator[PartialEvent]:
-        pass
+    def complete(self) -> AsyncStatus:
+        coro = asyncio.wait_for(fut=self._exec_cmd(), timeout=None)
+        return AsyncStatus(awaitable=coro, watchers=None)
 
-    def describe_collect(self) -> SyncOrAsync[Dict[str, Dict[str, Descriptor]]]:
-        pass
+    def collect(self) -> Iterator[PartialEvent]:
+        yield dict(
+            time=self._start_time, timestamps={self.name: []}, data={self.name: []}
+        )
+
+    async def describe_collect(self) -> SyncOrAsync[Dict[str, Dict[str, Descriptor]]]:
+        return await self.describe()
 
 
 class SECoP_ArrayOf_XDevice(StandardReadable):
@@ -679,7 +687,7 @@ class SECoP_Node_Device(StandardReadable):
         and on every changed module with module==<module name>
         """
 
-        self._secclient.conn_timestamp = time.time()
+        self._secclient.conn_timestamp = ttime.time()
 
         if module is None:
             # Refresh signals that correspond to Node Properties
@@ -709,7 +717,7 @@ class SECoP_Node_Device(StandardReadable):
         or connecting 'state' is the connection state as a string
         """
         if state == "connected" and online is True:
-            self._secclient.conn_timestamp = time.time()
+            self._secclient.conn_timestamp = ttime.time()
 
 
 IF_CLASSES = {
