@@ -1,5 +1,6 @@
 import asyncio
 import re
+import traceback
 import threading
 import time as ttime
 from typing import (
@@ -212,6 +213,9 @@ class SECoPReadableDevice(StandardReadable):
         for running commands that are not done immediately
         """
 
+        # force reading of fresh status from device
+        await self.status_code.read(False)
+
         async def wait_for_idle():
             async for current_stat in observe_value(self.status_code):
                 stat_code = current_stat[0].value
@@ -328,6 +332,11 @@ class SECoPMoveableDevice(SECoPWritableDevice, Movable, Stoppable):
         self._success = True
         self._stopped = False
         await self.target.set(new_target, wait=False)
+
+        # force reading of status from device
+        await self.status_code.read(False)
+
+        # observe status and wait until dvice is IDLE again
         async for current_stat in observe_value(self.status_code):
             stat_code = current_stat[0].value
 
@@ -351,6 +360,7 @@ class SECoPMoveableDevice(SECoPWritableDevice, Movable, Stoppable):
     async def stop(self, success=True) -> SyncOrAsync[None]:
         self._success = success
 
+        traceback.print_stack()
         await self._secclient.execCommand(self._module, "stop")
         self._stopped = True
 
@@ -549,6 +559,8 @@ class SECoP_CMD_Device(StandardReadable, Flyable):
 
     async def _exec_cmd(self):
         await self.sigx.execute()
+
+        await self.parent.status_code.read()
 
         async for current_stat in observe_value(self.parent.status_code):
             stat_code = current_stat[0].value
