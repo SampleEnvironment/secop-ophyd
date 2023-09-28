@@ -76,7 +76,7 @@ async def test_async_secopclient_shutdown_and_reconn(
     assert async_frappy_client.state == "shutdown"
 
     # manual reconn
-    async_frappy_client.client._shutdown = False
+    async_frappy_client.client._shutdown.clear()
     await async_frappy_client.connect(3)
 
     assert async_frappy_client.state == "connected"
