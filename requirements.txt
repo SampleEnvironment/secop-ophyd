@@ -1,8 +1,8 @@
-bluesky @ git+https://github.com/bluesky/bluesky@v1.11.0
+bluesky 
 pytest
 wheel
 cycler
-ophyd @ git+https://github.com/bluesky/ophyd@v1.9.0
+ophyd-async @ git+https://github.com/bluesky/ophyd-async.git@9600d0c0d90d8f533d0e46a6eecdcd50a7c271ed 
 frappy-core @ git+https://github.com/SampleEnvironment/frappy
 mlzlog
 matplotlib

@@ -18,15 +18,12 @@ from bluesky.protocols import (
     SyncOrAsync,
     Flyable,
 )
-from ophyd.v2.core import (
-    AsyncStatus,
-    SignalR,
-    SignalRW,
-    SignalX,
-    StandardReadable,
-    T,
-    observe_value,
-)
+
+from ophyd_async.core.standard_readable import StandardReadable
+from ophyd_async.core.utils import T
+from ophyd_async.core.signal import SignalR, SignalRW, SignalX, observe_value
+from ophyd_async.core.async_status import AsyncStatus
+
 
 from collections import OrderedDict
 

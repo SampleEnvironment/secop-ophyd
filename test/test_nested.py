@@ -8,7 +8,7 @@ from secop_ophyd.SECoPDevices import (
 from secop_ophyd.util import Path
 
 from secop_ophyd.AsyncSecopClient import AsyncFrappyClient
-from ophyd.v2.core import SignalRW
+from ophyd_async.core.signal import SignalRW
 
 from frappy.datatypes import StructOf, DataType
 

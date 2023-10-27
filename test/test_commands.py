@@ -4,7 +4,7 @@ from secop_ophyd.SECoPDevices import (
     SECoP_CMD_Device,
 )
 import asyncio
-from ophyd.v2.core import SignalX, SignalR
+from ophyd_async.core.signal import SignalX, SignalR
 
 
 from frappy.errors import ImpossibleError
