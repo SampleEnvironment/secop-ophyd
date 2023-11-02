@@ -17,6 +17,7 @@ from bluesky.protocols import (
     Stoppable,
     SyncOrAsync,
     Flyable,
+    Triggerable,
 )
 
 from ophyd_async.core.standard_readable import StandardReadable
@@ -357,7 +358,6 @@ class SECoPMoveableDevice(SECoPWritableDevice, Movable, Stoppable):
     async def stop(self, success=True) -> SyncOrAsync[None]:
         self._success = success
 
-        traceback.print_stack()
         await self._secclient.execCommand(self._module, "stop")
         self._stopped = True
 
@@ -439,7 +439,7 @@ class SECoP_Struct_Device(StandardReadable):
         super().__init__(name=dev_name)
 
 
-class SECoP_CMD_Device(StandardReadable, Flyable):
+class SECoP_CMD_Device(StandardReadable, Flyable, Triggerable):
     """
     Command devices that have Signals for command args, return values and a signal
     for triggering command execution
@@ -578,9 +578,9 @@ class SECoP_CMD_Device(StandardReadable, Flyable):
     async def describe_collect(self) -> SyncOrAsync[Dict[str, Dict[str, Descriptor]]]:
         return await self.describe()
 
-
-class SECoP_ArrayOf_XDevice(StandardReadable):
-    pass
+    def trigger(self) -> Status:
+        coro = asyncio.wait_for(fut=self._exec_cmd(), timeout=None)
+        return AsyncStatus(awaitable=coro, watchers=None)
 
 
 class SECoP_Node_Device(StandardReadable):
