@@ -298,7 +298,7 @@ class SECoP_Param_Backend(SignalBackend):
         pass
 
     async def put(self, value: Any | None, wait=True, timeout=None):
-        # top level nested datatypes (handled as sting Signals)
+        # top level nested datatypes (handled as srting Signals)
 
         if self.path._dev_path == []:
             if self.SECoPdtype == "tuple":

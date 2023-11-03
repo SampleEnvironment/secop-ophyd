@@ -1,6 +1,7 @@
 import asyncio
 import re
 import traceback
+import warnings
 import threading
 import time as ttime
 from typing import (
@@ -28,7 +29,13 @@ from ophyd_async.core.async_status import AsyncStatus
 
 from collections import OrderedDict
 
-from frappy.datatypes import CommandType, StructOf, TupleOf, ArrayOf, DataType
+from frappy.datatypes import (
+    CommandType,
+    StructOf,
+    TupleOf,
+    ArrayOf,
+    DataType,
+)
 from frappy.client import Logger
 from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient
 from secop_ophyd.propertykeys import DATAINFO, EQUIPMENT_ID, INTERFACE_CLASSES
@@ -39,7 +46,7 @@ from secop_ophyd.SECoPSignal import (
     SECoP_Param_Backend,
     atomic_dtypes,
 )
-from secop_ophyd.util import Path, deep_get
+from secop_ophyd.util import Path, deep_get, parseStructOf
 
 """_summary_
     
@@ -123,16 +130,16 @@ class SECoPReadableDevice(StandardReadable):
         self.status_code: SignalR
 
         # list for config signals
-        config = []
+        self._config = []
         # list for read signals
-        read = []
+        self._read = []
 
         # generate Signals from Module Properties
         for property in module_desc["properties"]:
             propb = PropertyBackend(property, module_desc["properties"], secclient)
 
             setattr(self, property, SignalR(backend=propb))
-            config.append(getattr(self, property))
+            self._config.append(getattr(self, property))
 
         # generate Signals from Module parameters eiter r or rw
         for parameter, properties in module_desc["parameters"].items():
@@ -141,24 +148,46 @@ class SECoPReadableDevice(StandardReadable):
 
             dtype: DataType = properties["datatype"]
 
+            # readonly property
+            readonly = properties.get("readonly", None)
+
             # sub devices for nested datatypes
             match dtype:
+                # Tuple sub-device
                 case TupleOf():
                     setattr(
                         self,
                         parameter + "_tuple",
                         SECoP_Tuple_Device(path=param_path, secclient=secclient),
                     )
+
+                # Struct sub-device
                 case StructOf():
-                    setattr(
-                        self,
-                        parameter + "_struct",
-                        SECoP_Struct_Device(path=param_path, secclient=secclient),
-                    )
+                    # struct only contains scalars or arrays of scalars
+                    if all(parseStructOf(dtype)):
+                        for member_name, sigtype in dtype.members.items():
+                            sub_sig_path = param_path.append(member_name)
+
+                            # add signal for every structmember
+                            self._intit_signal(
+                                path=sub_sig_path,
+                                sig_name=sub_sig_path.get_signal_name(),
+                                readonly=readonly,
+                            )
+
+                    else:
+                        # Struct contains nested datatypes, and gets its own subdevice
+                        setattr(
+                            self,
+                            parameter + "_struct",
+                            SECoP_Struct_Device(path=param_path, secclient=secclient),
+                        )
                 case ArrayOf():
                     if isinstance(dtype.members, (StructOf, TupleOf)):
-                        # TODO instanciate transposed array Device
-                        pass
+                        warnings.warn(
+                            "Arrays of composed datatypes are not supported. Array of tuples/structs is turned to Array of Strings"
+                        )
+                        # TODO write test for arrays of tuple/struct to check correct behaviour
 
             ## Normal types + (struct and tuple as JSON object Strings)
             paramb = SECoP_Param_Backend(path=param_path, secclient=secclient)
@@ -185,12 +214,12 @@ class SECoPReadableDevice(StandardReadable):
             # if the value is a SECoP-tuple all elements belonging to the tuple are
             # appended to the read list
             if parameter == "value":
-                read.append(getattr(self, parameter))
+                self._read.append(getattr(self, parameter))
 
             # target should only be set through the set method. And is not part of
             # config
             elif parameter != "target":
-                config.append(getattr(self, parameter))
+                self._config.append(getattr(self, parameter))
 
         # Initialize Command Devices
         for command, properties in module_desc["commands"].items():
@@ -202,9 +231,40 @@ class SECoPReadableDevice(StandardReadable):
                 SECoP_CMD_Device(path=cmd_path, secclient=secclient),
             )
 
-        self.set_readable_signals(read=read, config=config)
+        self.set_readable_signals(read=self._read, config=self._config)
 
         super().__init__(name=module_name)
+
+    def _intit_signal(self, path: Path, sig_name: str, readonly: str):
+        ## Normal types + (struct and tuple as JSON object Strings)
+        paramb = SECoP_Param_Backend(path=path, secclient=self._secclient)
+
+        if readonly is True:
+            setattr(self, sig_name, SignalR(paramb))
+        elif readonly is False:
+            setattr(self, sig_name, SignalRW(paramb))
+        else:
+            raise Exception(
+                "Invalid SECoP Parameter, readonly property "
+                + "is mandatory, but was not found, or is not bool"
+            )
+
+        # add status code signal to root device
+        if path._accessible_name == "status":
+            self.status_code = SignalR(
+                SECoP_Param_Backend(path=path.append(0), secclient=self._secclient)
+            )
+
+        # In SECoP only the 'value' parameter is the primary read prameter, but
+        # if the value is a SECoP-tuple all elements belonging to the tuple are
+        # appended to the read list
+        if path._accessible_name == "value":
+            self._read.append(getattr(self, sig_name))
+
+        # target should only be set through the set method. And is not part of
+        # config
+        elif path._accessible_name != "target":
+            self._config.append(getattr(self, sig_name))
 
     async def wait_for_IDLE(self):
         """asynchronously waits until module is IDLE again. this is helpful,

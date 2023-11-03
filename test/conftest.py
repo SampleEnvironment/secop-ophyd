@@ -8,9 +8,7 @@ from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient
 # Import bluesky and ophyd
 
 from bluesky import RunEngine
-from bluesky.plan_stubs import mov, movr, rd  # noqa
-from bluesky.plans import grid_scan  # noqa
-from bluesky.utils import ProgressBarManager
+
 
 from databroker.v2 import temp
 

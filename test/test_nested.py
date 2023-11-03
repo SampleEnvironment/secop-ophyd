@@ -10,7 +10,7 @@ from secop_ophyd.util import Path
 from secop_ophyd.AsyncSecopClient import AsyncFrappyClient
 from ophyd_async.core.signal import SignalRW
 
-from frappy.datatypes import StructOf, DataType
+from frappy.datatypes import DataType
 
 
 async def test_nested_connect(nested_struct_sim, nested_node: SECoP_Node_Device):

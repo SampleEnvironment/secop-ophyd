@@ -25,6 +25,8 @@ async def test_stop_cmd(cryo_sim, cryo_node_internal_loop: SECoP_Node_Device):
 
     assert cryo._stopped is True
 
+    await cryo_node_internal_loop.disconnect()
+
 
 async def test_stop_no_sucess_cmd(cryo_sim, cryo_node_internal_loop: SECoP_Node_Device):
     cryo: SECoPMoveableDevice = cryo_node_internal_loop.cryo
@@ -44,6 +46,8 @@ async def test_stop_no_sucess_cmd(cryo_sim, cryo_node_internal_loop: SECoP_Node_
 
     assert cryo._stopped is True
     assert rt_error is True
+
+    await cryo_node_internal_loop.disconnect()
 
 
 async def test_struct_inp_cmd(nested_struct_sim, nested_node: SECoP_Node_Device):
