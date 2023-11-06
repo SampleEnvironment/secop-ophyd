@@ -1,6 +1,5 @@
 import asyncio
 import re
-import traceback
 import warnings
 import threading
 import time as ttime
@@ -9,6 +8,7 @@ from typing import (
     Iterator,
     Optional,
 )
+
 
 from bluesky.protocols import (
     Descriptor,
@@ -26,8 +26,6 @@ from ophyd_async.core.utils import T
 from ophyd_async.core.signal import SignalR, SignalRW, SignalX, observe_value
 from ophyd_async.core.async_status import AsyncStatus
 
-
-from collections import OrderedDict
 
 from frappy.datatypes import (
     CommandType,
@@ -105,140 +103,26 @@ def get_config_attrs(parameters):
     return parameters_cfg
 
 
-class SECoPReadableDevice(StandardReadable):
-    """
-    Standard readable SECoP device, corresponding to a SECoP module with the
-    interface class "Readable"
-    """
+class SECoPBaseDevice(StandardReadable):
+    def __init__(self, secclient: AsyncFrappyClient) -> None:
+        if type(self) == SECoPBaseDevice:
+            raise Exception("<SECoPBaseDevice> must be subclassed.")
 
-    def __init__(self, secclient: AsyncFrappyClient, module_name: str):
-        """Initializes readable device corresponding to a SECoP module that is part of
-        the parent sec-node. Only the "value" parameter is set as readable signal. all
-        other signals and properties are configuration signals
-
-        Args:
-            secclient (AsyncFrappyClient): async frappy client that is connected to
-            the sec-node
-            module_name (str): modulename that the readable device corresponds to
-
-        """
-        self._secclient = secclient
-        self._module = module_name
-        module_desc = secclient.modules[module_name]
-
-        self.value: SignalR
-        self.status_code: SignalR
+        self._secclient: AsyncFrappyClient = secclient
 
         # list for config signals
-        self._config = []
+        self._config: list = []
+
         # list for read signals
-        self._read = []
+        self._read: list = []
 
-        # generate Signals from Module Properties
-        for property in module_desc["properties"]:
-            propb = PropertyBackend(property, module_desc["properties"], secclient)
+        self.status_code: SignalR = None
 
-            setattr(self, property, SignalR(backend=propb))
-            self._config.append(getattr(self, property))
-
-        # generate Signals from Module parameters eiter r or rw
-        for parameter, properties in module_desc["parameters"].items():
-            # generate new root path
-            param_path = Path(parameter_name=parameter, module_name=module_name)
-
-            dtype: DataType = properties["datatype"]
-
-            # readonly property
-            readonly = properties.get("readonly", None)
-
-            # sub devices for nested datatypes
-            match dtype:
-                # Tuple sub-device
-                case TupleOf():
-                    setattr(
-                        self,
-                        parameter + "_tuple",
-                        SECoP_Tuple_Device(path=param_path, secclient=secclient),
-                    )
-
-                # Struct sub-device
-                case StructOf():
-                    # struct only contains scalars or arrays of scalars
-                    if all(parseStructOf(dtype)):
-                        for member_name, sigtype in dtype.members.items():
-                            sub_sig_path = param_path.append(member_name)
-
-                            # add signal for every structmember
-                            self._intit_signal(
-                                path=sub_sig_path,
-                                sig_name=sub_sig_path.get_signal_name(),
-                                readonly=readonly,
-                            )
-
-                    else:
-                        # Struct contains nested datatypes, and gets its own subdevice
-                        setattr(
-                            self,
-                            parameter + "_struct",
-                            SECoP_Struct_Device(path=param_path, secclient=secclient),
-                        )
-                case ArrayOf():
-                    if isinstance(dtype.members, (StructOf, TupleOf)):
-                        warnings.warn(
-                            "Arrays of composed datatypes are not supported. Array of tuples/structs is turned to Array of Strings"
-                        )
-                        # TODO write test for arrays of tuple/struct to check correct behaviour
-
-            ## Normal types + (struct and tuple as JSON object Strings)
-            paramb = SECoP_Param_Backend(path=param_path, secclient=secclient)
-
-            # construct signal
-            readonly = properties.get("readonly", None)
-            if readonly is True:
-                setattr(self, parameter, SignalR(paramb))
-            elif readonly is False:
-                setattr(self, parameter, SignalRW(paramb))
-            else:
-                raise Exception(
-                    "Invalid SECoP Parameter, readonly property "
-                    + "is mandatory, but was not found, or is not bool"
-                )
-
-            # add status code signal to root device
-            if parameter == "status":
-                self.status_code = SignalR(
-                    SECoP_Param_Backend(path=param_path.append(0), secclient=secclient)
-                )
-
-            # In SECoP only the 'value' parameter is the primary read prameter, but
-            # if the value is a SECoP-tuple all elements belonging to the tuple are
-            # appended to the read list
-            if parameter == "value":
-                self._read.append(getattr(self, parameter))
-
-            # target should only be set through the set method. And is not part of
-            # config
-            elif parameter != "target":
-                self._config.append(getattr(self, parameter))
-
-        # Initialize Command Devices
-        for command, properties in module_desc["commands"].items():
-            # generate new root path
-            cmd_path = Path(parameter_name=command, module_name=module_name)
-            setattr(
-                self,
-                command + "_dev",
-                SECoP_CMD_Device(path=cmd_path, secclient=secclient),
-            )
-
-        self.set_readable_signals(read=self._read, config=self._config)
-
-        super().__init__(name=module_name)
-
-    def _intit_signal(self, path: Path, sig_name: str, readonly: str):
+    def _signal_from_parameter(self, path: Path, sig_name: str, readonly: str):
         ## Normal types + (struct and tuple as JSON object Strings)
         paramb = SECoP_Param_Backend(path=path, secclient=self._secclient)
 
+        # construct signal
         if readonly is True:
             setattr(self, sig_name, SignalR(paramb))
         elif readonly is False:
@@ -249,27 +133,12 @@ class SECoPReadableDevice(StandardReadable):
                 + "is mandatory, but was not found, or is not bool"
             )
 
-        # add status code signal to root device
-        if path._accessible_name == "status":
-            self.status_code = SignalR(
-                SECoP_Param_Backend(path=path.append(0), secclient=self._secclient)
-            )
-
-        # In SECoP only the 'value' parameter is the primary read prameter, but
-        # if the value is a SECoP-tuple all elements belonging to the tuple are
-        # appended to the read list
-        if path._accessible_name == "value":
-            self._read.append(getattr(self, sig_name))
-
-        # target should only be set through the set method. And is not part of
-        # config
-        elif path._accessible_name != "target":
-            self._config.append(getattr(self, sig_name))
-
     async def wait_for_IDLE(self):
         """asynchronously waits until module is IDLE again. this is helpful,
         for running commands that are not done immediately
         """
+        if self.status_code is None:
+            raise Exception("status Signal not initialized")
 
         # force reading of fresh status from device
         await self.status_code.read(False)
@@ -291,12 +160,136 @@ class SECoPReadableDevice(StandardReadable):
             await asyncio.wrap_future(future=fut)
 
 
-class SECoP_Tuple_Device(StandardReadable):
+class SECoPReadableDevice(SECoPBaseDevice):
+    """
+    Standard readable SECoP device, corresponding to a SECoP module with the
+    interface class "Readable"
+    """
+
+    def __init__(self, secclient: AsyncFrappyClient, module_name: str):
+        """Initializes readable dev                    self.read.append(getattr(self, attr_name))"""
+        super().__init__(secclient=secclient)
+
+        self._module = module_name
+        module_desc = secclient.modules[module_name]
+
+        # generate Signals from Module Properties
+        for property in module_desc["properties"]:
+            propb = PropertyBackend(property, module_desc["properties"], secclient)
+
+            setattr(self, property, SignalR(backend=propb))
+            self._config.append(getattr(self, property))
+
+        # add status code signal to root device
+        # Path to status Parameter
+        stat_path = Path(parameter_name="status", module_name=module_name)
+
+        self.status_code = SignalR(
+            SECoP_Param_Backend(stat_path.append(0), secclient=self._secclient)
+        )
+
+        # generate Signals from Module parameters eiter r or rw
+        for parameter, properties in module_desc["parameters"].items():
+            # generate new root path
+            param_path = Path(parameter_name=parameter, module_name=module_name)
+
+            dtype: DataType = properties["datatype"]
+
+            # readonly property
+            readonly = properties.get("readonly", None)
+
+            # sub devices for nested datatypes
+            match dtype:
+                # Tuple sub-device
+                case TupleOf():
+                    setattr(
+                        self,
+                        parameter + "_tuple",
+                        SECoP_Tuple_Device(
+                            path=param_path,
+                            secclient=secclient,
+                            status_sig=self.status_code,
+                        ),
+                    )
+
+                # Struct sub-device
+                case StructOf():
+                    if all(parseStructOf(dtype)):
+                        # struct only contains scalars or arrays of scalars
+                        for member_name, sigtype in dtype.members.items():
+                            sub_sig_path = param_path.append(member_name)
+
+                            # add signal for every structmember
+                            self._signal_from_parameter(
+                                path=sub_sig_path,
+                                sig_name=sub_sig_path.get_signal_name(),
+                                readonly=readonly,
+                            )
+
+                    else:
+                        # Struct contains nested datatypes, and gets its own subdevice
+                        setattr(
+                            self,
+                            parameter + "_struct",
+                            SECoP_Struct_Device(
+                                path=param_path,
+                                secclient=secclient,
+                                status_sig=self.status_code,
+                            ),
+                        )
+                case ArrayOf():
+                    if isinstance(dtype.members, (StructOf, TupleOf)):
+                        warnings.warn(
+                            "Arrays of composed datatypes are not supported. Array of tuples/structs is turned to Array of Strings"
+                        )
+                        # TODO write test for arrays of tuple/struct to check correct behaviour
+
+            ## Normal types + (struct and tuple as JSON object Strings)
+            self._signal_from_parameter(
+                path=param_path,
+                sig_name=parameter,
+                readonly=properties.get("readonly", None),
+            )
+
+        # Initialize Command Devices
+        for command, properties in module_desc["commands"].items():
+            # generate new root path
+            cmd_path = Path(parameter_name=command, module_name=module_name)
+            setattr(
+                self,
+                command + "_dev",
+                SECoP_CMD_Device(path=cmd_path, secclient=secclient),
+            )
+
+        self.set_readable_signals(read=self._read, config=self._config)
+
+        self.set_name(module_name)
+
+    def _signal_from_parameter(self, path: Path, sig_name: str, readonly: str):
+        super(SECoPReadableDevice, self)._signal_from_parameter(
+            path=path, sig_name=sig_name, readonly=readonly
+        )
+
+        # In SECoP only the 'value' parameter is the primary read prameter, but
+        # if the value is a SECoP-tuple all elements belonging to the tuple are
+        # appended to the read list
+        if path._accessible_name == "value":
+            self._read.append(getattr(self, sig_name))
+
+        # target should only be set through the set method. And is not part of
+        # config
+        elif path._accessible_name != "target":
+            self._config.append(getattr(self, sig_name))
+
+
+class SECoP_Tuple_Device(SECoPBaseDevice):
     """
     used to recursively deconstruct the nonatomic "tuple"-SECoP-datatype into subdevices/Signals
     """
 
-    def __init__(self, path: Path, secclient: AsyncFrappyClient):
+    def __init__(
+        self, path: Path, secclient: AsyncFrappyClient, status_sig: SignalR = None
+    ):
         """constructs tuple device from the SECoP tuple that "path" points to.
 
         Args:
@@ -304,8 +297,7 @@ class SECoP_Tuple_Device(StandardReadable):
             secclient (AsyncFrappyClient): connected seccop client
 
         """
-        self._path = path
-        self._secclient: AsyncFrappyClient = secclient
+        super().__init__(secclient=secclient)
 
         dev_name: str = path.get_signal_name() + "_tuple"
 
@@ -315,8 +307,7 @@ class SECoP_Tuple_Device(StandardReadable):
 
         datainfo = props[DATAINFO]
 
-        # list for read signals
-        read = []
+        self.status_code = status_sig
 
         for ix, member_info in enumerate(
             deep_get(datainfo, path.get_memberinfo_path() + ["members"])
@@ -330,42 +321,44 @@ class SECoP_Tuple_Device(StandardReadable):
                     setattr(
                         self,
                         attr_name + "_tuple",
-                        SECoP_Tuple_Device(path=tuplemember_path, secclient=secclient),
+                        SECoP_Tuple_Device(
+                            path=tuplemember_path,
+                            secclient=secclient,
+                            status_sig=status_sig,
+                        ),
                     )
                 case "struct":
                     setattr(
                         self,
                         attr_name + "_struct",
-                        SECoP_Struct_Device(path=tuplemember_path, secclient=secclient),
+                        SECoP_Struct_Device(
+                            path=tuplemember_path,
+                            secclient=secclient,
+                            status_sig=status_sig,
+                        ),
                     )
 
                 # atomic datatypes & arrays
                 case _:
-                    tparamb = SECoP_Param_Backend(
-                        path=tuplemember_path, secclient=secclient
+                    self._signal_from_parameter(
+                        path=tuplemember_path,
+                        sig_name=attr_name,
+                        readonly=props.get("readonly", None),
                     )
 
-                    # construct signal
-                    readonly = props.get("readonly", None)
+        self.set_readable_signals(read=self._read)
+        self.set_name(dev_name)
 
-                    if readonly is True:
-                        setattr(self, attr_name, SignalR(tparamb))
-                    elif readonly is False:
-                        setattr(self, attr_name, SignalRW(tparamb))
-                    else:
-                        raise Exception(
-                            "Invalid SECoP Parameter, readonly property"
-                            + " is mandatory, but was not found, or is not bool"
-                        )
+    def _signal_from_parameter(self, path: Path, sig_name: str, readonly: str):
+        super(SECoP_Tuple_Device, self)._signal_from_parameter(
+            path=path, sig_name=sig_name, readonly=readonly
+        )
 
-                    read.append(getattr(self, attr_name))
-
-            self.set_readable_signals(read=read)
-
-        super().__init__(dev_name)
+        # set all Signals Read signals
+        self._read.append(getattr(self, sig_name))
 
 
-class SECoPWritableDevice(SECoPReadableDevice, Movable):
+class SECoPWritableDevice(SECoPReadableDevice):
     """Fast settable device target"""
 
     pass
@@ -422,12 +415,14 @@ class SECoPMoveableDevice(SECoPWritableDevice, Movable, Stoppable):
         self._stopped = True
 
 
-class SECoP_Struct_Device(StandardReadable):
+class SECoP_Struct_Device(SECoPBaseDevice):
     """
     used to recursively deconstruct the non atomic "struct"-SECoP-datatype into subdevices/Signals
     """
 
-    def __init__(self, path: Path, secclient: AsyncFrappyClient):
+    def __init__(
+        self, path: Path, secclient: AsyncFrappyClient, status_sig: SignalR = None
+    ):
         """constructs struct device from the SECoP struct that "path" points to.
 
         Args:
@@ -435,9 +430,10 @@ class SECoP_Struct_Device(StandardReadable):
             secclient (AsyncFrappyClient): connected seccop client
 
         """
-        dev_name: str = path.get_signal_name() + "_struct"
 
-        self._secclient: AsyncFrappyClient = secclient
+        super().__init__(secclient=secclient)
+
+        dev_name: str = path.get_signal_name() + "_struct"
 
         props = secclient.modules[path._module_name]["parameters"][
             path._accessible_name
@@ -445,8 +441,7 @@ class SECoP_Struct_Device(StandardReadable):
 
         datainfo = props[DATAINFO]
 
-        # list for read signals
-        read = []
+        self.status_code = status_sig
 
         for member_name, member_info in deep_get(
             datainfo, path.get_memberinfo_path() + ["members"]
@@ -461,7 +456,9 @@ class SECoP_Struct_Device(StandardReadable):
                         self,
                         attr_name + "_tuple",
                         SECoP_Tuple_Device(
-                            path=struct_member_path, secclient=secclient
+                            path=struct_member_path,
+                            secclient=secclient,
+                            status_sig=status_sig,
                         ),
                     )
                 case "struct":
@@ -469,34 +466,30 @@ class SECoP_Struct_Device(StandardReadable):
                         self,
                         attr_name + "_struct",
                         SECoP_Struct_Device(
-                            path=struct_member_path, secclient=secclient
+                            path=struct_member_path,
+                            secclient=secclient,
+                            status_sig=status_sig,
                         ),
                     )
 
                 # atomic datatypes & arrays
                 case _:
-                    struct_param_backend = SECoP_Param_Backend(
-                        path=struct_member_path, secclient=secclient
+                    self._signal_from_parameter(
+                        path=struct_member_path,
+                        sig_name=attr_name,
+                        readonly=props.get("readonly", None),
                     )
 
-                    # construct signal
-                    readonly = props.get("readonly", None)
+        self.set_readable_signals(read=self._read)
+        self.set_name(dev_name)
 
-                    if readonly is True:
-                        setattr(self, attr_name, SignalR(struct_param_backend))
-                    elif readonly is False:
-                        setattr(self, attr_name, SignalRW(struct_param_backend))
-                    else:
-                        raise Exception(
-                            "Invalid SECoP Parameter, readonly property "
-                            + "is mandatory, but was not found, or is not bool"
-                        )
+    def _signal_from_parameter(self, path: Path, sig_name: str, readonly: str):
+        super(SECoP_Struct_Device, self)._signal_from_parameter(
+            path=path, sig_name=sig_name, readonly=readonly
+        )
 
-                    read.append(getattr(self, member_name))
-
-            self.set_readable_signals(read=read)
-
-        super().__init__(name=dev_name)
+        # set all Signals Read signals
+        self._read.append(getattr(self, sig_name))
 
 
 class SECoP_CMD_Device(StandardReadable, Flyable, Triggerable):
