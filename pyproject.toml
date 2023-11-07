@@ -12,6 +12,10 @@ dependencies = [
 
 ]
 
+license.file = "LICENSE"
+readme = "README.md"
+requires-python = ">=3.9"
+
 [project.optional-dependencies]
 dev = [
     'pytest == 7.4.2',
@@ -28,6 +32,9 @@ dev = [
 ]
 
 
+
+
+
 [tool.setuptools.packages.find]
 exclude = ["frappy*"]
 
@@ -35,8 +42,13 @@ exclude = ["frappy*"]
 minversion = "6.0"
 addopts = "-v"
 asyncio_mode="auto"
-norecursedirs=["frappy","epics-testing"]
+norecursedirs=["frappy","epics-testing","build"]
 
 [tool.isort]
 skip = [".gitignore"]
 skip_glob = ["frappy/*","epics-testing/*"]
+
+
+[[project.authors]] # Further authors may be added by duplicating this section
+email = "peter.wegmann@helmholtz-berlin.de"
+name = "Peter Wegmann"

@@ -652,8 +652,7 @@ class SECoP_Node_Device(StandardReadable):
         """
         self._secclient: AsyncFrappyClient = secclient
 
-        self.modules: Dict[str, T] = self._secclient.modules
-        self.Devices: Dict[str, T] = {}
+        self.mod_devices: Dict[str, T] = {}
 
         # Name is set to sec-node equipment_id
         name = self._secclient.properties[EQUIPMENT_ID].replace(".", "-")
@@ -669,6 +668,7 @@ class SECoP_Node_Device(StandardReadable):
             SECoPDeviceClass = class_from_interface(module_desc["properties"])
 
             setattr(self, module, SECoPDeviceClass(self._secclient, module))
+            self.mod_devices[module] = getattr(module)
 
         self.set_readable_signals(config=config)
 
