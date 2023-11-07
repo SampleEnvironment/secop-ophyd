@@ -668,7 +668,7 @@ class SECoP_Node_Device(StandardReadable):
             SECoPDeviceClass = class_from_interface(module_desc["properties"])
 
             setattr(self, module, SECoPDeviceClass(self._secclient, module))
-            self.mod_devices[module] = getattr(module)
+            self.mod_devices[module] = getattr(self, module)
 
         self.set_readable_signals(config=config)
 
