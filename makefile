@@ -30,3 +30,4 @@ clean:  ## 🧹 Clean up project
 	rm -rf pids.txt
 	rm -rf *_log.txt
 	rm -rf *egg-info
+	rm -rf build
