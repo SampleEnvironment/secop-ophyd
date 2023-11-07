@@ -6,6 +6,28 @@ build-backend = "setuptools.build_meta"
 name = "secop-ophyd"
 version = "0.0.1"
 description = "An Interface between bluesky and SECoP, using ophyd and frappy-client"
+
+dependencies = [
+    'ophyd-async@git+https://github.com/bluesky/ophyd-async.git@d6c72cfcd3d0af9ad1694cc8826c96058ea92f16',
+
+]
+
+[project.optional-dependencies]
+dev = [
+    'pytest == 7.4.2',
+    'wheel',
+    'cycler',
+    'frappy-core@git+https://github.com/SampleEnvironment/frappy',
+    'mlzlog == 0.3.5',
+    'matplotlib',
+    'pytest-asyncio',
+    'pytest-xprocess',
+    'ipykernel',
+    'databroker',
+    'ophyd',
+]
+
+
 [tool.setuptools.packages.find]
 exclude = ["frappy*"]
 
