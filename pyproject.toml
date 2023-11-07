@@ -18,7 +18,7 @@ dev = [
     'wheel',
     'cycler',
     'frappy-core@git+https://github.com/SampleEnvironment/frappy',
-    'mlzlog == 0.3.5',
+    'mlzlog',
     'matplotlib',
     'pytest-asyncio',
     'pytest-xprocess',

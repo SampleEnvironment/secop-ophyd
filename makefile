@@ -13,9 +13,9 @@ test: venv  ## 🎯 Unit tests for Bluesky SECoP Integration
 
 venv: .venv/touchfile
 
-.venv/touchfile: requirements.txt 
+.venv/touchfile: pyproject.toml 
 	python3 -m venv .venv
-	. .venv/bin/activate; pip install --upgrade pip git ;pip install .[dev]
+	. .venv/bin/activate; pip install --upgrade pip; pip install .[dev]
 	touch .venv/touchfile
 
 
