@@ -1,5 +1,5 @@
 import pytest
-from xprocess import ProcessStarter, XProcessInfo
+from xprocess import ProcessStarter
 
 
 from secop_ophyd.SECoPDevices import SECoP_Node_Device

@@ -4,3 +4,4 @@
 .pytest_cache
 secop_ophyd/asyncclient.log
 build
+dist
