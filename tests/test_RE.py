@@ -5,6 +5,13 @@ from bluesky.plans import count
 from bluesky.plan_stubs import read
 import time
 
+import warnings
+
+warnings.filterwarnings(
+    "ignore",
+    message="The method Broker.insert may be removed in a future release of databroker.",
+)
+
 
 async def test_RE_count(cryo_sim, RE, cryo_node: SECoP_Node_Device, db):
     p = RE(count([cryo_node.cryo], num=5, delay=1))

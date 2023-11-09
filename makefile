@@ -31,3 +31,4 @@ clean:  ## 🧹 Clean up project
 	rm -rf *_log.txt
 	rm -rf *egg-info
 	rm -rf build
+	rm -rf dist
