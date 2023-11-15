@@ -5,8 +5,15 @@ from bluesky.plans import count
 from bluesky.plan_stubs import read
 import time
 
+import warnings
 
-def test_RE_count(cryo_sim, RE, cryo_node: SECoP_Node_Device, db):
+warnings.filterwarnings(
+    "ignore",
+    message="The method Broker.insert may be removed in a future release of databroker.",
+)
+
+
+async def test_RE_count(cryo_sim, RE, cryo_node: SECoP_Node_Device, db):
     p = RE(count([cryo_node.cryo], num=5, delay=1))
 
     run = db[p]
@@ -18,9 +25,11 @@ def test_RE_count(cryo_sim, RE, cryo_node: SECoP_Node_Device, db):
     assert len(cryo_dat) == 5
     assert max(cryo_dat.data) < 11 and min(cryo_dat.data) > 8
 
-    cryo_node.disconnect()
+    await cryo_node.disconnect()
 
 
-def test_RE_String_value(nested_struct_sim, RE, nested_node_RE: SECoP_Node_Device, db):
+async def test_RE_String_value(
+    nested_struct_sim, RE, nested_node_RE: SECoP_Node_Device, db
+):
     p = RE(read(nested_node_RE.str_test))
-    nested_node_RE.disconnect()
+    await nested_node_RE.disconnect()

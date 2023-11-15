@@ -42,17 +42,20 @@ async def test_async_secopclient_reconn(
 
     await async_frappy_client.disconnect(False)
 
-    assert async_frappy_client.state == "reconnecting"
+    # for a short period the status is still "connected" (the disconn task finishes and the state is only set to a new value once the reconnect thread starts)
+    while async_frappy_client.state == "connected":
+        await asyncio.sleep(0.001)
 
-    await asyncio.sleep(1)
+    while async_frappy_client.state == "reconnecting":
+        await asyncio.sleep(0.001)
 
     assert async_frappy_client.state == "connected"
 
     # ensures we are connected and getting fresh data again
-    reading1 = await async_frappy_client.getParameter("cryo", "value", False)
-    reading2 = await async_frappy_client.getParameter("cryo", "value", False)
+    reading3 = await async_frappy_client.getParameter("cryo", "value", False)
+    reading4 = await async_frappy_client.getParameter("cryo", "value", False)
 
-    assert reading1.get_value() != reading2.get_value()
+    assert reading3.get_value() != reading4.get_value()
 
     await async_frappy_client.disconnect(True)
 

@@ -3,6 +3,27 @@ from functools import reduce
 import copy
 from itertools import chain
 
+from frappy.datatypes import (
+    StructOf,
+    ArrayOf,
+    DataType,
+    IntRange,
+    ScaledInteger,
+    EnumType,
+    StringType,
+    FloatRange,
+    BoolType,
+)
+
+SCALAR_DATATYPES = (
+    IntRange,
+    BoolType,
+    FloatRange,
+    ScaledInteger,
+    StringType,
+    EnumType,
+)
+
 
 def deep_get(dictionary, keys, default=None) -> dict:
     def get_val(obj, key, default):
@@ -110,3 +131,16 @@ class Path:
             # wrong path
             raise Exception("path is incorrect " + key + " is not in dict: " + str(dic))
         return dic
+
+
+def parseStructOf(dtype: StructOf) -> list[bool]:
+    return [is_Scalar_or_ArrayOf_scalar(val) for val in dtype.members.values()]
+
+
+def is_Scalar_or_ArrayOf_scalar(type: DataType):
+    if isinstance(type, SCALAR_DATATYPES):
+        return True
+    elif isinstance(type, ArrayOf):
+        return isinstance(type.members, SCALAR_DATATYPES)
+    else:
+        return False

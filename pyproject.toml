@@ -1,11 +1,45 @@
 [build-system]
-requires = ["setuptools", "setuptools-scm"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+
+#[build-system]
+#requires = ["setuptools", "setuptools-scm"]
+#build-backend = "setuptools.build_meta"
 
 [project]
 name = "secop-ophyd"
 version = "0.0.1"
 description = "An Interface between bluesky and SECoP, using ophyd and frappy-client"
+
+dependencies = [
+    'ophyd-async@git+https://github.com/bluesky/ophyd-async.git@d6c72cfcd3d0af9ad1694cc8826c96058ea92f16',
+
+]
+
+license.file = "LICENSE"
+readme = "README.md"
+requires-python = ">=3.9"
+
+[project.optional-dependencies]
+dev = [
+    'pytest == 7.4.2',
+    'wheel',
+    'cycler',
+    'frappy-core@git+https://github.com/SampleEnvironment/frappy',
+    'mlzlog',
+    'matplotlib',
+    'pytest-asyncio',
+    'pytest-xprocess',
+    'ipykernel',
+    'databroker',
+    'ophyd',
+]
+
+
+
+
+
 [tool.setuptools.packages.find]
 exclude = ["frappy*"]
 
@@ -13,8 +47,17 @@ exclude = ["frappy*"]
 minversion = "6.0"
 addopts = "-v"
 asyncio_mode="auto"
-norecursedirs=["frappy","epics-testing"]
+filterwarnings = "ignore::PendingDeprecationWarning"
+norecursedirs=["frappy","epics-testing","build"]
 
 [tool.isort]
 skip = [".gitignore"]
 skip_glob = ["frappy/*","epics-testing/*"]
+
+
+[[project.authors]] # Further authors may be added by duplicating this section
+email = "peter.wegmann@helmholtz-berlin.de"
+name = "Peter Wegmann"
+
+[tool.hatch.metadata]
+allow-direct-references = true

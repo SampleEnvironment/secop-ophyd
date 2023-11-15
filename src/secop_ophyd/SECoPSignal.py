@@ -2,7 +2,8 @@ from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient, SECoPReading
 from secop_ophyd.util import deep_get, Path
 from typing import Any, Dict, Optional
 
-from ophyd.v2.core import T, SignalBackend
+from ophyd_async.core.signal_backend import SignalBackend
+from ophyd_async.core.utils import T
 from bluesky.protocols import Reading, Descriptor
 
 from frappy.datatypes import (
@@ -21,7 +22,6 @@ from frappy.datatypes import (
 )
 
 
-import time
 from frappy.client import CacheItem
 import collections.abc
 import asyncio
@@ -143,7 +143,8 @@ class SECoP_CMD_IO_Backend(SignalBackend):
         else:
             self.datatype = SECOP2DTYPE.get(self.SECoPdtype_obj.__class__, None)
 
-#TODO add return of Asyncstatus
+
+# TODO add return of Asyncstatus
 class SECoP_CMD_X_Backend(SignalBackend):
     def __init__(
         self,
@@ -200,10 +201,14 @@ class SECoP_CMD_X_Backend(SignalBackend):
             argument = arg_datatype.export_datatype(await sig.get_value())
 
         # Run SECoP Command
-        res, qualifiers = await self._secclient.execCommand(
-            module=self.path._module_name,
-            command=self.path._accessible_name,
-            argument=argument,
+
+        res, qualifiers = await asyncio.wait_for(
+            fut=self._secclient.execCommand(
+                module=self.path._module_name,
+                command=self.path._accessible_name,
+                argument=argument,
+            ),
+            timeout=timeout,
         )
 
         # write return Value to corresponding Backends
@@ -293,9 +298,8 @@ class SECoP_Param_Backend(SignalBackend):
         pass
 
     async def put(self, value: Any | None, wait=True, timeout=None):
-        # TODO wait + timeout
+        # top level nested datatypes (handled as srting Signals)
 
-        # top level nested datatypes (handled as sting Signals)
         if self.path._dev_path == []:
             if self.SECoPdtype == "tuple":
                 value = self.SECoPdtype_obj.from_string(value)
@@ -303,7 +307,11 @@ class SECoP_Param_Backend(SignalBackend):
             if self.SECoPdtype == "struct":
                 value = self.SECoPdtype_obj.from_string(value)
 
-            await self._secclient.setParameter(**self.get_param_path(), value=value)
+            await asyncio.wait_for(
+                self._secclient.setParameter(**self.get_param_path(), value=value),
+                timeout=timeout,
+            )
+
             return
 
         # signal sub element of SECoP parameter (tuple or struct member)
@@ -319,7 +327,10 @@ class SECoP_Param_Backend(SignalBackend):
         new_val = self.path.insert_val(curr_val, value)
 
         # set new value
-        await self._secclient.setParameter(**self.get_param_path(), value=new_val)
+        await asyncio.wait_for(
+            fut=self._secclient.setParameter(**self.get_param_path(), value=new_val),
+            timeout=timeout,
+        )
 
     async def get_descriptor(self) -> Descriptor:
         res = {}
@@ -439,7 +450,7 @@ class SECoP_Param_Backend(SignalBackend):
 
 
 class PropertyBackend(SignalBackend):
-    """A read/write/monitor backend for a Signals"""
+    """read backend for a SECoP Properties"""
 
     def __init__(
         self, prop_key: str, propertyDict: Dict[str, T], secclient: AsyncFrappyClient
@@ -515,8 +526,6 @@ class ReadonlyError(Exception):
 
 
 # TODO: Array: shape for now only for the first Dim, later maybe recursive??
-
-# TODO: status tuple
 
 
 # Tuple and struct are handled in a special way. They are unfolded into subdevices
