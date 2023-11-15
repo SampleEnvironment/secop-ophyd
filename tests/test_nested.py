@@ -2,6 +2,7 @@ from secop_ophyd.SECoPDevices import (
     SECoP_Node_Device,
     SECoP_Struct_Device,
     SECoP_Tuple_Device,
+    SECoPReadableDevice,
 )
 
 
@@ -147,4 +148,15 @@ async def test_nested_dtype_set_str_tuple(
     assert tuple_val_read[3] == "blue"
     assert isinstance(val, str)
 
+    await nested_node.disconnect()
+
+
+async def test_nested_struct_of_arrays(
+    nested_struct_sim, nested_node: SECoP_Node_Device
+):
+    str_of_arr_mod: SECoPReadableDevice = nested_node.struct_of_arrays
+
+    reading = await str_of_arr_mod.floats.read()
+
+    print(reading)
     await nested_node.disconnect()
