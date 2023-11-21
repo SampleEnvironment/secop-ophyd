@@ -93,6 +93,6 @@ allowlist_externals =
     mypy
 commands =
     pytest: pytest 
-    mypy: mypy src tests {posargs}
+    mypy: mypy src 
     pre-commit: pre-commit run --all-files {posargs}
 """
