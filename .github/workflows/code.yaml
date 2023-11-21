@@ -22,7 +22,7 @@ jobs:
           python -m pip install .[dev]
 
       - name: Lint
-        run: tox -e pre-commit
+        run: tox -e pre-commit,mypy
 
 
 
