@@ -24,6 +24,11 @@ requires-python = ">=3.9"
 [project.optional-dependencies]
 dev = [
     'pytest == 7.4.2',
+    'black',
+    'flake8',
+    "flake8-isort",
+    "Flake8-pyproject",
+    'mypy',
     'wheel',
     'cycler',
     'frappy-core@git+https://github.com/SampleEnvironment/frappy',
