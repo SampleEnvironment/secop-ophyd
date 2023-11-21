@@ -71,6 +71,10 @@ allow-direct-references = true
 [tool.flake8]
 exclude = "frappy"
 
+[tool.mypy]
+ignore_missing_imports = true          # Ignore missing stubs in imported modules
+plugins = ["numpy.typing.mypy_plugin"]
+
 
 # tox must currently be configured via an embedded ini string
 # See: https://github.com/tox-dev/tox/issues/999
@@ -79,7 +83,7 @@ legacy_tox_ini = """
 [tox]
 skipsdist=True
 
-[testenv:{pre-commit,mypy,pytest,docs}]
+[testenv:{pre-commit,mypy,pytest}]
 # Don't create a virtualenv for the command, requires tox-direct plugin
 direct = True
 passenv = *
