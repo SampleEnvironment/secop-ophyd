@@ -70,3 +70,25 @@ allow-direct-references = true
 
 [tool.flake8]
 exclude = "frappy"
+
+
+# tox must currently be configured via an embedded ini string
+# See: https://github.com/tox-dev/tox/issues/999
+[tool.tox]
+legacy_tox_ini = """
+[tox]
+skipsdist=True
+
+[testenv:{pre-commit,mypy,pytest,docs}]
+# Don't create a virtualenv for the command, requires tox-direct plugin
+direct = True
+passenv = *
+allowlist_externals = 
+    pytest 
+    pre-commit
+    mypy
+commands =
+    pytest: pytest 
+    mypy: mypy src tests {posargs}
+    pre-commit: pre-commit run --all-files {posargs}
+"""
