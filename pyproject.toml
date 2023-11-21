@@ -39,6 +39,7 @@ dev = [
     'ipykernel',
     'databroker',
     'ophyd',
+    'tox'
 ]
 
 
