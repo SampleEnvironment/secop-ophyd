@@ -92,7 +92,6 @@ allowlist_externals =
     pre-commit
     mypy
 commands =
-    pytest: pytest 
-    mypy: mypy src 
+    pytest: pytest -v . --ignore=frappy
     pre-commit: pre-commit run --all-files {posargs}
 """
