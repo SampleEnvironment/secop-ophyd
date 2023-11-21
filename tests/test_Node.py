@@ -1,10 +1,10 @@
-import pytest
-from secop_ophyd.SECoPDevices import SECoP_Node_Device, SECoPMoveableDevice
-import numpy as np
-from xprocess import ProcessStarter, XProcessInfo
-import xprocess
-
 import asyncio
+
+import numpy as np
+import xprocess
+from xprocess import ProcessStarter, XProcessInfo
+
+from secop_ophyd.SECoPDevices import SECoP_Node_Device, SECoPMoveableDevice
 
 
 async def test_node_structure(cryo_sim, cryo_node_internal_loop: SECoP_Node_Device):
@@ -68,23 +68,25 @@ async def test_node_drive(cryo_sim, cryo_node_internal_loop: SECoP_Node_Device):
 
 
 async def test_node_reconn(
-    cryo_sim: xprocess,
-    cryo_node_internal_loop: SECoP_Node_Device,
+    cryo_sim: xprocess, cryo_node_internal_loop: SECoP_Node_Device, env_vars
 ):
+    frappy_dir, env_dict = env_vars
+
     class Starter(ProcessStarter):
         # startup pattern
         pattern = ".*: startup done, handling transport messages"
-        timeout = 10
+        timeout = 5
         # command to start process
+        env = env_dict
         args = [
             "python3",
-            "../../../../frappy/bin/frappy-server",
+            frappy_dir + "/bin/frappy-server",
             "-c",
-            "../../../../frappy/cfg/cryo_cfg.py",
+            frappy_dir + "/cfg/cryo_cfg.py",
             "cryo",
         ]
 
-    cryo_dev: SECoPMoveableDevice = cryo_node_internal_loop.cryo
+    # cryo_dev: SECoPMoveableDevice = cryo_node_internal_loop.cryo
 
     old_conf = await cryo_node_internal_loop.read_configuration()
 

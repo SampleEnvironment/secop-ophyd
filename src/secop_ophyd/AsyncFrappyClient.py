@@ -1,11 +1,9 @@
 import asyncio
 import time
-from typing import TypeVar
+from typing import Any, TypeVar
 
 from bluesky.protocols import Reading
-
 from frappy.client import CacheItem, Logger, SecopClient
-from frappy.datatypes import EnumType
 
 T = TypeVar("T")
 
@@ -13,16 +11,12 @@ T = TypeVar("T")
 class SECoPReading:
     def __init__(self, entry: CacheItem = None) -> None:
         if entry is None:
-            self.timestamp = None
+            self.timestamp: float = time.time()
             self.value = None
             self.readerror = None
             return
 
-        if isinstance(entry.value, EnumType):
-            self.value = entry.value.value
-
-        else:
-            self.value = entry.value
+        self.value = entry.value
 
         self.timestamp = entry.timestamp
 
@@ -31,7 +25,7 @@ class SECoPReading:
     def get_reading(self) -> Reading:
         return {"value": self.value, "timestamp": self.timestamp}
 
-    def get_value(self) -> T:
+    def get_value(self):
         return self.value
 
     def set_reading(self, value) -> None:
@@ -48,9 +42,9 @@ class AsyncFrappyClient:
 
         self.loop = loop
 
-        self.external = False
+        self.external: bool = False
 
-        self.conn_timestamp: float = None
+        self.conn_timestamp: float
 
     @property
     def state(self):
@@ -104,7 +98,7 @@ class AsyncFrappyClient:
         )
         return SECoPReading(paramerter_reading)
 
-    async def execCommand(self, module, command, argument=None) -> tuple[T, dict]:
+    async def execCommand(self, module, command, argument=None) -> tuple[Any, dict]:
         return await asyncio.to_thread(
             self.client.execCommand, module, command, argument
         )

@@ -1,40 +1,26 @@
 import asyncio
 import re
-import warnings
 import threading
 import time as ttime
-from typing import (
-    Dict,
-    Iterator,
-    Optional,
-)
-
+import warnings
+from typing import Dict, Iterator, Optional
 
 from bluesky.protocols import (
     Descriptor,
+    Flyable,
     Movable,
     PartialEvent,
-    Status,
     Stoppable,
     SyncOrAsync,
-    Flyable,
     Triggerable,
 )
-
+from frappy.client import Logger
+from frappy.datatypes import ArrayOf, CommandType, DataType, StructOf, TupleOf
+from ophyd_async.core.async_status import AsyncStatus
+from ophyd_async.core.signal import SignalR, SignalRW, SignalX, observe_value
 from ophyd_async.core.standard_readable import StandardReadable
 from ophyd_async.core.utils import T
-from ophyd_async.core.signal import SignalR, SignalRW, SignalX, observe_value
-from ophyd_async.core.async_status import AsyncStatus
 
-
-from frappy.datatypes import (
-    CommandType,
-    StructOf,
-    TupleOf,
-    ArrayOf,
-    DataType,
-)
-from frappy.client import Logger
 from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient
 from secop_ophyd.propertykeys import DATAINFO, EQUIPMENT_ID, INTERFACE_CLASSES
 from secop_ophyd.SECoPSignal import (
@@ -46,18 +32,7 @@ from secop_ophyd.SECoPSignal import (
 )
 from secop_ophyd.util import Path, deep_get, parseStructOf
 
-"""_summary_
-    
-    SECNode
-    ||
-    ||
-    ||---dev1(readable)
-    ||---dev2(drivable)
-    ||---dev3(writable)
-    ||---dev4(readable)
-"""
-
-## Predefined Status Codes
+# Predefined Status Codes
 DISABLED = 0
 IDLE = 100
 STANDBY = 130
@@ -84,8 +59,9 @@ def clean_identifier(anystring):
     return str(re.sub(r"\W+|^(?=\d)", "_", anystring))
 
 
-def class_from_interface(mod_properties: dict):
-    for interface_class in mod_properties.get(INTERFACE_CLASSES):
+def class_from_interface(mod_properties: Dict[str, Dict[str, str]]):
+    interface_classes: dict = mod_properties[INTERFACE_CLASSES]
+    for interface_class in interface_classes:
         try:
             return IF_CLASSES[interface_class]
         except KeyError:
@@ -105,7 +81,7 @@ def get_config_attrs(parameters):
 
 class SECoPBaseDevice(StandardReadable):
     def __init__(self, secclient: AsyncFrappyClient) -> None:
-        if type(self) == SECoPBaseDevice:
+        if type(self) is SECoPBaseDevice:
             raise Exception("<SECoPBaseDevice> must be subclassed.")
 
         self._secclient: AsyncFrappyClient = secclient
@@ -119,7 +95,7 @@ class SECoPBaseDevice(StandardReadable):
         self.status_code: SignalR = None
 
     def _signal_from_parameter(self, path: Path, sig_name: str, readonly: str):
-        ## Normal types + (struct and tuple as JSON object Strings)
+        # Normal types + (struct and tuple as JSON object Strings)
         paramb = SECoP_Param_Backend(path=path, secclient=self._secclient)
 
         # construct signal
@@ -167,7 +143,7 @@ class SECoPReadableDevice(SECoPBaseDevice):
     """
 
     def __init__(self, secclient: AsyncFrappyClient, module_name: str):
-        """Initializes readable dev                    self.read.append(getattr(self, attr_name))"""
+        """Initializes readable dev"""
         super().__init__(secclient=secclient)
 
         self._module = module_name
@@ -240,11 +216,12 @@ class SECoPReadableDevice(SECoPBaseDevice):
                 case ArrayOf():
                     if isinstance(dtype.members, (StructOf, TupleOf)):
                         warnings.warn(
-                            "Arrays of composed datatypes are not supported. Array of tuples/structs is turned to Array of Strings"
+                            """Arrays of composed datatypes are not supported.
+                            Array of tuples/structs is turned to Array of Strings"""
                         )
-                        # TODO write test for arrays of tuple/struct to check correct behaviour
+                # TODO write test for arrays of tuple/struct to check correct behaviour
 
-            ## Normal types + (struct and tuple as JSON object Strings)
+            # Normal types + (struct and tuple as JSON object Strings)
             self._signal_from_parameter(
                 path=param_path,
                 sig_name=parameter,
@@ -284,7 +261,8 @@ class SECoPReadableDevice(SECoPBaseDevice):
 
 class SECoP_Tuple_Device(SECoPBaseDevice):
     """
-    used to recursively deconstruct the nonatomic "tuple"-SECoP-datatype into subdevices/Signals
+    used to recursively deconstruct the nonatomic "tuple"-SECoP-datatype
+    into subdevices/Signals
     """
 
     def __init__(
@@ -408,7 +386,7 @@ class SECoPMoveableDevice(SECoPWritableDevice, Movable, Stoppable):
         if not self._success:
             raise RuntimeError("Module was stopped")
 
-    async def stop(self, success=True) -> SyncOrAsync[None]:
+    async def stop(self, success=True):
         self._success = success
 
         await self._secclient.execCommand(self._module, "stop")
@@ -417,7 +395,8 @@ class SECoPMoveableDevice(SECoPWritableDevice, Movable, Stoppable):
 
 class SECoP_Struct_Device(SECoPBaseDevice):
     """
-    used to recursively deconstruct the non atomic "struct"-SECoP-datatype into subdevices/Signals
+    used to recursively deconstruct the non atomic "struct"-SECoP-datatype
+    into subdevices/Signals
     """
 
     def __init__(
@@ -522,8 +501,8 @@ class SECoP_CMD_Device(StandardReadable, Flyable, Triggerable):
         # argument signals
         config = []
 
-        self._start_time = None
-        self.sigx: SignalX = None
+        self._start_time: float
+        self.sigx: SignalX
 
         if isinstance(arg_dtype, StructOf):
             for signame, sig_desc in datainfo["argument"]["members"].items():
@@ -600,7 +579,7 @@ class SECoP_CMD_Device(StandardReadable, Flyable, Triggerable):
 
         super().__init__(name=dev_name)
 
-    def kickoff(self) -> Status:
+    def kickoff(self) -> AsyncStatus:
         # trigger execution of secop command, wait until Device is Busy
 
         self._start_time = ttime.time()
@@ -608,7 +587,9 @@ class SECoP_CMD_Device(StandardReadable, Flyable, Triggerable):
         return AsyncStatus(coro, watchers=None)
 
     async def _exec_cmd(self):
-        await self.sigx.execute()
+        stat = self.sigx.trigger()
+
+        await stat
 
         await self.parent.status_code.read()
 
@@ -631,7 +612,7 @@ class SECoP_CMD_Device(StandardReadable, Flyable, Triggerable):
     async def describe_collect(self) -> SyncOrAsync[Dict[str, Dict[str, Descriptor]]]:
         return await self.describe()
 
-    def trigger(self) -> Status:
+    def trigger(self) -> AsyncStatus:
         coro = asyncio.wait_for(fut=self._exec_cmd(), timeout=None)
         return AsyncStatus(awaitable=coro, watchers=None)
 
