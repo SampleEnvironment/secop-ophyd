@@ -1,40 +1,27 @@
 import asyncio
 import re
-import warnings
 import threading
 import time as ttime
-from typing import (
-    Dict,
-    Iterator,
-    Optional,
-)
-
+import warnings
+from typing import Dict, Iterator, Optional
 
 from bluesky.protocols import (
     Descriptor,
+    Flyable,
     Movable,
     PartialEvent,
     Status,
     Stoppable,
     SyncOrAsync,
-    Flyable,
     Triggerable,
 )
-
+from ophyd_async.core.async_status import AsyncStatus
+from ophyd_async.core.signal import SignalR, SignalRW, SignalX, observe_value
 from ophyd_async.core.standard_readable import StandardReadable
 from ophyd_async.core.utils import T
-from ophyd_async.core.signal import SignalR, SignalRW, SignalX, observe_value
-from ophyd_async.core.async_status import AsyncStatus
 
-
-from frappy.datatypes import (
-    CommandType,
-    StructOf,
-    TupleOf,
-    ArrayOf,
-    DataType,
-)
 from frappy.client import Logger
+from frappy.datatypes import ArrayOf, CommandType, DataType, StructOf, TupleOf
 from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient
 from secop_ophyd.propertykeys import DATAINFO, EQUIPMENT_ID, INTERFACE_CLASSES
 from secop_ophyd.SECoPSignal import (

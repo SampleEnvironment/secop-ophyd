@@ -1,18 +1,19 @@
 from __future__ import annotations
-from functools import reduce
+
 import copy
+from functools import reduce
 from itertools import chain
 
 from frappy.datatypes import (
-    StructOf,
     ArrayOf,
+    BoolType,
     DataType,
+    EnumType,
+    FloatRange,
     IntRange,
     ScaledInteger,
-    EnumType,
     StringType,
-    FloatRange,
-    BoolType,
+    StructOf,
 )
 
 SCALAR_DATATYPES = (

@@ -3,13 +3,13 @@ from secop_ophyd.SECoPDevices import SECoP_Node_Device
 
 from bluesky.plans import count
 from bluesky.plan_stubs import read
-import time
 
 import warnings
 
 warnings.filterwarnings(
     "ignore",
-    message="The method Broker.insert may be removed in a future release of databroker.",
+    message="""The method Broker.insert may be removed
+    in a future release of databroker.""",
 )
 
 

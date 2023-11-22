@@ -47,6 +47,7 @@ dev = [
 
 
 
+
 [tool.setuptools.packages.find]
 exclude = ["frappy*"]
 
@@ -58,6 +59,8 @@ filterwarnings = "ignore::PendingDeprecationWarning"
 norecursedirs=["frappy","epics-testing","build"]
 
 [tool.isort]
+float_to_top = true
+profile = "black"
 skip = [".gitignore"]
 skip_glob = ["frappy/*","epics-testing/*"]
 

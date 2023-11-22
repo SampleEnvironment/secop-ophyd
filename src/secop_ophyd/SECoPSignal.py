@@ -1,36 +1,30 @@
-from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient, SECoPReading
-from secop_ophyd.util import deep_get, Path
-from typing import Any, Dict, Optional
+import asyncio
+import collections.abc
+import copy
+from functools import wraps
+from typing import Any, Callable, Dict, Optional
 
+from bluesky.protocols import Descriptor, Reading
 from ophyd_async.core.signal_backend import SignalBackend
 from ophyd_async.core.utils import T
-from bluesky.protocols import Reading, Descriptor
-
-from frappy.datatypes import (
-    StructOf,
-    TupleOf,
-    CommandType,
-    DataType,
-    IntRange,
-    FloatRange,
-    StringType,
-    BLOBType,
-    BoolType,
-    ScaledInteger,
-    ArrayOf,
-    EnumType,
-)
-
 
 from frappy.client import CacheItem
-import collections.abc
-import asyncio
-import copy
-
-from functools import wraps
-
-
-from typing import Callable
+from frappy.datatypes import (
+    ArrayOf,
+    BLOBType,
+    BoolType,
+    CommandType,
+    DataType,
+    EnumType,
+    FloatRange,
+    IntRange,
+    ScaledInteger,
+    StringType,
+    StructOf,
+    TupleOf,
+)
+from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient, SECoPReading
+from secop_ophyd.util import Path, deep_get
 
 atomic_dtypes = (
     StringType,

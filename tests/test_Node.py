@@ -1,9 +1,7 @@
-import pytest
 from secop_ophyd.SECoPDevices import SECoP_Node_Device, SECoPMoveableDevice
 import numpy as np
 from xprocess import ProcessStarter, XProcessInfo
 import xprocess
-
 import asyncio
 
 
@@ -84,7 +82,7 @@ async def test_node_reconn(
             "cryo",
         ]
 
-    cryo_dev: SECoPMoveableDevice = cryo_node_internal_loop.cryo
+    # cryo_dev: SECoPMoveableDevice = cryo_node_internal_loop.cryo
 
     old_conf = await cryo_node_internal_loop.read_configuration()
 
