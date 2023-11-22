@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 from functools import reduce
 from itertools import chain
+from typing import List, Union
 
 from frappy.datatypes import (
     ArrayOf,
@@ -43,12 +44,12 @@ class Path:
     def __init__(self, parameter_name: str, module_name: str) -> None:
         self._accessible_name = parameter_name
         self._module_name = module_name
-        self._last_named_param = None
+        self._last_named_param: int
 
-        self._dev_path = []
+        self._dev_path: List[Union[str, int]] = []
 
     # Path is extended
-    def append(self, elem: str or int) -> Path:
+    def append(self, elem: Union[str, int]) -> Path:
         new_path = copy.deepcopy(self)
 
         if isinstance(elem, str):
@@ -64,7 +65,8 @@ class Path:
     def get_path_tuple(self):
         return (self._module_name, self._accessible_name)
 
-    def get_memberinfo_path(self) -> list:
+    # TODO typing of return value
+    def get_memberinfo_path(self):
         # inserting K after every Nth number
         # using itertool.chain()
 
@@ -123,14 +125,16 @@ class Path:
             else:
                 # wrong path
                 raise Exception(
-                    "path is incorrect " + key + " is not in dict: " + str(dic)
+                    "path is incorrect " + str(key) + " is not in dict: " + str(dic)
                 )
         # insert new value
         if self._dev_path[-1] in d:
             d[self._dev_path[-1]] = new_val
         else:
             # wrong path
-            raise Exception("path is incorrect " + key + " is not in dict: " + str(dic))
+            raise Exception(
+                "path is incorrect " + str(key) + " is not in dict: " + str(dic)
+            )
         return dic
 
 

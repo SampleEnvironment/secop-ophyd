@@ -67,12 +67,11 @@ class SECoP_CMD_IO_Backend(SignalBackend):
         # Root datainfo or memberinfo for nested datatypes
         self.datainfo: dict = sig_datainfo
 
-        self.callback: Callable = None
+        self.callback: Callable[[Reading, Any], None] | None
 
         self.SECoPdtype_obj: DataType = SECoPdtype_obj
         self.datatype: str
         self.SECoPdtype: str
-        self.SECoPdtype_obj: DataType
 
         self._set_dtype()
 
@@ -133,9 +132,9 @@ class SECoP_CMD_IO_Backend(SignalBackend):
             # Get first non array dtype
             while isinstance(dtype_obj, ArrayOf):
                 dtype_obj = dtype_obj.members
-                self.datatype = SECOP2DTYPE.get(dtype_obj.__class__, None)
+                self.datatype = SECOP2DTYPE.get(dtype_obj.__class__)
         else:
-            self.datatype = SECOP2DTYPE.get(self.SECoPdtype_obj.__class__, None)
+            self.datatype = SECOP2DTYPE.get(self.SECoPdtype_obj.__class__)
 
 
 # TODO add return of Asyncstatus
@@ -146,8 +145,8 @@ class SECoP_CMD_X_Backend(SignalBackend):
         secclient: AsyncFrappyClient,
         frappy_datatype: CommandType,
         cmd_desc: dict,
-        arguments: dict[SECoP_CMD_IO_Backend],
-        result: dict[SECoP_CMD_IO_Backend],
+        arguments: dict[str, SECoP_CMD_IO_Backend],
+        result: dict[str, SECoP_CMD_IO_Backend],
     ) -> None:
         self._secclient: AsyncFrappyClient = secclient
 
@@ -156,8 +155,7 @@ class SECoP_CMD_X_Backend(SignalBackend):
 
         self._cmd_desc: dict = cmd_desc
 
-        self.callback: Callable = None
-
+        self.callback: Callable
         self.arguments: dict = arguments
         self.result: dict = result
 
@@ -438,9 +436,9 @@ class SECoP_Param_Backend(SignalBackend):
             # Get first non array dtype
             while isinstance(dtype_obj, ArrayOf):
                 dtype_obj = dtype_obj.members
-                self.datatype = SECOP2DTYPE.get(dtype_obj.__class__, None)
+                self.datatype = SECOP2DTYPE.get(dtype_obj.__class__)
         else:
-            self.datatype = SECOP2DTYPE.get(self.SECoPdtype_obj.__class__, None)
+            self.datatype = SECOP2DTYPE.get(self.SECoPdtype_obj.__class__)
 
 
 class PropertyBackend(SignalBackend):

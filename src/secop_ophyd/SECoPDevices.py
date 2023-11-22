@@ -501,8 +501,8 @@ class SECoP_CMD_Device(StandardReadable, Flyable, Triggerable):
         # argument signals
         config = []
 
-        self._start_time = None
-        self.sigx: SignalX = None
+        self._start_time: float
+        self.sigx: SignalX
 
         if isinstance(arg_dtype, StructOf):
             for signame, sig_desc in datainfo["argument"]["members"].items():
