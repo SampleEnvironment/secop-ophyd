@@ -1,21 +1,15 @@
-import pytest
-from xprocess import ProcessStarter
-
-
-from secop_ophyd.SECoPDevices import SECoP_Node_Device
-from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient
-
-# Import bluesky and ophyd
-
-from bluesky import RunEngine
-
-
-from databroker.v2 import temp
-
+import asyncio
 import logging
 
+import pytest
+from bluesky import RunEngine
+from databroker.v2 import temp
+from xprocess import ProcessStarter
 
-import asyncio
+from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient
+from secop_ophyd.SECoPDevices import SECoP_Node_Device
+
+# Import bluesky and ophyd
 
 
 @pytest.fixture

@@ -1,8 +1,10 @@
-from secop_ophyd.SECoPDevices import SECoP_Node_Device, SECoPMoveableDevice
-import numpy as np
-from xprocess import ProcessStarter, XProcessInfo
-import xprocess
 import asyncio
+
+import numpy as np
+import xprocess
+from xprocess import ProcessStarter, XProcessInfo
+
+from secop_ophyd.SECoPDevices import SECoP_Node_Device, SECoPMoveableDevice
 
 
 async def test_node_structure(cryo_sim, cryo_node_internal_loop: SECoP_Node_Device):

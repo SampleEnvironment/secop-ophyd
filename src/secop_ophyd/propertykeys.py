@@ -1,4 +1,4 @@
-## SEC_Node Properties
+# SEC_Node Properties
 
 MANDATORY = "mandatory"
 OPTIONAL = "optional"
@@ -14,7 +14,7 @@ IMPLEMENTOR = "implementor"
 TIMEOUT = "timeout"
 
 
-## Module Properties
+# Module Properties
 
 # mandatory
 ACCESSIBLES = "accessibles"
@@ -30,7 +30,7 @@ IMPLEMENTATION = "implementation"
 FEATURES = "features"
 
 
-## Accessible Properties
+# Accessible Properties
 
 # mandatory
 # DESCRIPTION = "description"
@@ -43,7 +43,7 @@ DATAINFO = "datainfo"
 CONSTANT = "constant"
 
 
-## Property Dicionaries
+# Property Dicionaries
 
 NODE_PROPERTIES = {
     MANDATORY: [MODULES, EQUIPMENT_ID, DESCRIPTION],

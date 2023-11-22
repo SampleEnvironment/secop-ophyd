@@ -33,18 +33,7 @@ from secop_ophyd.SECoPSignal import (
 )
 from secop_ophyd.util import Path, deep_get, parseStructOf
 
-"""_summary_
-    
-    SECNode
-    ||
-    ||
-    ||---dev1(readable)
-    ||---dev2(drivable)
-    ||---dev3(writable)
-    ||---dev4(readable)
-"""
-
-## Predefined Status Codes
+# Predefined Status Codes
 DISABLED = 0
 IDLE = 100
 STANDBY = 130
@@ -92,7 +81,7 @@ def get_config_attrs(parameters):
 
 class SECoPBaseDevice(StandardReadable):
     def __init__(self, secclient: AsyncFrappyClient) -> None:
-        if type(self) == SECoPBaseDevice:
+        if type(self) is SECoPBaseDevice:
             raise Exception("<SECoPBaseDevice> must be subclassed.")
 
         self._secclient: AsyncFrappyClient = secclient
@@ -106,7 +95,7 @@ class SECoPBaseDevice(StandardReadable):
         self.status_code: SignalR = None
 
     def _signal_from_parameter(self, path: Path, sig_name: str, readonly: str):
-        ## Normal types + (struct and tuple as JSON object Strings)
+        # Normal types + (struct and tuple as JSON object Strings)
         paramb = SECoP_Param_Backend(path=path, secclient=self._secclient)
 
         # construct signal
@@ -154,7 +143,7 @@ class SECoPReadableDevice(SECoPBaseDevice):
     """
 
     def __init__(self, secclient: AsyncFrappyClient, module_name: str):
-        """Initializes readable dev                    self.read.append(getattr(self, attr_name))"""
+        """Initializes readable dev"""
         super().__init__(secclient=secclient)
 
         self._module = module_name
@@ -227,11 +216,12 @@ class SECoPReadableDevice(SECoPBaseDevice):
                 case ArrayOf():
                     if isinstance(dtype.members, (StructOf, TupleOf)):
                         warnings.warn(
-                            "Arrays of composed datatypes are not supported. Array of tuples/structs is turned to Array of Strings"
+                            """Arrays of composed datatypes are not supported.
+                            Array of tuples/structs is turned to Array of Strings"""
                         )
-                        # TODO write test for arrays of tuple/struct to check correct behaviour
+                # TODO write test for arrays of tuple/struct to check correct behaviour
 
-            ## Normal types + (struct and tuple as JSON object Strings)
+            # Normal types + (struct and tuple as JSON object Strings)
             self._signal_from_parameter(
                 path=param_path,
                 sig_name=parameter,
@@ -271,7 +261,8 @@ class SECoPReadableDevice(SECoPBaseDevice):
 
 class SECoP_Tuple_Device(SECoPBaseDevice):
     """
-    used to recursively deconstruct the nonatomic "tuple"-SECoP-datatype into subdevices/Signals
+    used to recursively deconstruct the nonatomic "tuple"-SECoP-datatype
+    into subdevices/Signals
     """
 
     def __init__(
@@ -404,7 +395,8 @@ class SECoPMoveableDevice(SECoPWritableDevice, Movable, Stoppable):
 
 class SECoP_Struct_Device(SECoPBaseDevice):
     """
-    used to recursively deconstruct the non atomic "struct"-SECoP-datatype into subdevices/Signals
+    used to recursively deconstruct the non atomic "struct"-SECoP-datatype
+    into subdevices/Signals
     """
 
     def __init__(

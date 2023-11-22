@@ -1,8 +1,7 @@
+import asyncio
+
 # import xprocess
 from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient, SECoPReading
-
-
-import asyncio
 
 
 async def test_asycnc_secopclient_conn(
@@ -42,7 +41,9 @@ async def test_async_secopclient_reconn(
 
     await async_frappy_client.disconnect(False)
 
-    # for a short period the status is still "connected" (the disconn task finishes and the state is only set to a new value once the reconnect thread starts)
+    # for a short period the status is still "connected"
+    # (the disconn task finishes and the state is only set to a new value
+    # once the reconnect thread starts)
     while async_frappy_client.state == "connected":
         await asyncio.sleep(0.001)
 

@@ -1,15 +1,14 @@
-from secop_ophyd.SECoPDevices import (
-    SECoP_Node_Device,
-    SECoPMoveableDevice,
-    SECoP_CMD_Device,
-)
 import asyncio
-from ophyd_async.core.signal import SignalX, SignalR
-
-
-from frappy.errors import ImpossibleError
 
 from bluesky.protocols import Triggerable
+from ophyd_async.core.signal import SignalR, SignalX
+
+from frappy.errors import ImpossibleError
+from secop_ophyd.SECoPDevices import (
+    SECoP_CMD_Device,
+    SECoP_Node_Device,
+    SECoPMoveableDevice,
+)
 
 
 async def test_stop_cmd(cryo_sim, cryo_node_internal_loop: SECoP_Node_Device):
