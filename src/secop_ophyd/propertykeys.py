@@ -1,18 +1,14 @@
-
-
-
-
 ## SEC_Node Properties
 
 MANDATORY = "mandatory"
-OPTIONAL  = "optional"
+OPTIONAL = "optional"
 
 # mandatory
 MODULES = "modules"
 EQUIPMENT_ID = "equipment_id"
 DESCRIPTION = "description"
 
-#optional
+# optional
 FIRMWARE = "firmware"
 IMPLEMENTOR = "implementor"
 TIMEOUT = "timeout"
@@ -22,48 +18,44 @@ TIMEOUT = "timeout"
 
 # mandatory
 ACCESSIBLES = "accessibles"
-#DESCRIPTION = "description"
+# DESCRIPTION = "description"
 INTERFACE_CLASSES = "interface_classes"
 
 # optional
 VISIBILITY = "visibility"
 GROUP = "group"
 MEANING = "meaning"
-#IMPLEMENTOR = "implementor"
+# IMPLEMENTOR = "implementor"
 IMPLEMENTATION = "implementation"
 FEATURES = "features"
-
-
-
 
 
 ## Accessible Properties
 
 # mandatory
-#DESCRIPTION = "description"
+# DESCRIPTION = "description"
 READONLY = "readonly"
 DATAINFO = "datainfo"
 
 # optional
-#GROUP = "group"
-#VISIBILITY = "visibility"
+# GROUP = "group"
+# VISIBILITY = "visibility"
 CONSTANT = "constant"
-
 
 
 ## Property Dicionaries
 
 NODE_PROPERTIES = {
-    MANDATORY : [MODULES,EQUIPMENT_ID,DESCRIPTION],
-    OPTIONAL  : [FIRMWARE,IMPLEMENTOR,TIMEOUT]
+    MANDATORY: [MODULES, EQUIPMENT_ID, DESCRIPTION],
+    OPTIONAL: [FIRMWARE, IMPLEMENTOR, TIMEOUT],
 }
 
 MODULE_PROPERTIES = {
-    MANDATORY : [ACCESSIBLES,DESCRIPTION,INTERFACE_CLASSES],
-    OPTIONAL  : [VISIBILITY,GROUP,MEANING,IMPLEMENTOR,IMPLEMENTATION,FEATURES]
+    MANDATORY: [ACCESSIBLES, DESCRIPTION, INTERFACE_CLASSES],
+    OPTIONAL: [VISIBILITY, GROUP, MEANING, IMPLEMENTOR, IMPLEMENTATION, FEATURES],
 }
 
 ACESSIBLE_PROPERTIES = {
-    MANDATORY : [DESCRIPTION,READONLY,DATAINFO],
-    OPTIONAL  : [GROUP,VISIBILITY,CONSTANT]
+    MANDATORY: [DESCRIPTION, READONLY, DATAINFO],
+    OPTIONAL: [GROUP, VISIBILITY, CONSTANT],
 }
