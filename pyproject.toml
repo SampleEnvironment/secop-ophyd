@@ -69,8 +69,18 @@ name = "Peter Wegmann"
 [tool.hatch.metadata]
 allow-direct-references = true
 
+
 [tool.flake8]
-exclude = "frappy"
+extend-ignore = [
+    "E203", # See https://github.com/PyCQA/pycodestyle/issues/373
+    "F811", # support typing.overload decorator
+    "F722", # allow Annotated[typ, some_func("some string")]
+    "W504",
+    "W503",
+]
+max-line-length = 88 # Respect black's line length (default 88),
+exclude = [".tox", "venv","frappy"]
+
 
 [tool.mypy]
 ignore_missing_imports = true          # Ignore missing stubs in imported modules
