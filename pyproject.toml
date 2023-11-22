@@ -76,6 +76,7 @@ ignore_missing_imports = true          # Ignore missing stubs in imported module
 plugins = ["numpy.typing.mypy_plugin"]
 
 
+
 # tox must currently be configured via an embedded ini string
 # See: https://github.com/tox-dev/tox/issues/999
 [tool.tox]
