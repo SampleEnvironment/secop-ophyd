@@ -91,7 +91,7 @@ class Path:
 
     def get_signal_name(self):
         # top level: signal name == Parameter name
-        
+
         if self._dev_path == []:
             return self._accessible_name
 
