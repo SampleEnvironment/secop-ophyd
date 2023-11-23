@@ -5,7 +5,7 @@ from typing import TypeVar, Any
 from bluesky.protocols import Reading
 
 from frappy.client import CacheItem, Logger, SecopClient
-from frappy.datatypes import EnumType
+
 
 T = TypeVar("T")
 
@@ -18,11 +18,7 @@ class SECoPReading:
             self.readerror = None
             return
 
-        if isinstance(entry.value, EnumType):
-            self.value = entry.value.value
-
-        else:
-            self.value = entry.value
+        self.value = entry.value
 
         self.timestamp = entry.timestamp
 

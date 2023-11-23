@@ -1,7 +1,7 @@
 from ophyd_async.core.signal import SignalRW
 
 from frappy.datatypes import DataType
-from secop_ophyd.AsyncSecopClient import AsyncFrappyClient
+from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient
 from secop_ophyd.SECoPDevices import (
     SECoP_Node_Device,
     SECoP_Struct_Device,
@@ -16,7 +16,7 @@ async def test_nested_connect(nested_struct_sim, nested_node: SECoP_Node_Device)
     await nested_node.disconnect()
 
 
-async def test_tuple_dev(nested_struct_sim, nested_client: AsyncFrappyClient):
+async def test_tuple_dev(nested_client: AsyncFrappyClient):
     path = Path(module_name="ophy_struct", parameter_name="status")
 
     status_dev = SECoP_Tuple_Device(path=path, secclient=nested_client)
@@ -38,7 +38,7 @@ async def test_tuple_dev(nested_struct_sim, nested_client: AsyncFrappyClient):
     await nested_client.disconnect(True)
 
 
-async def test_struct_dev(nested_struct_sim, nested_client: AsyncFrappyClient):
+async def test_struct_dev(nested_client: AsyncFrappyClient):
     path = Path(module_name="ophy_struct", parameter_name="nested_struct")
     nested_dev = SECoP_Struct_Device(secclient=nested_client, path=path)
 
@@ -47,9 +47,7 @@ async def test_struct_dev(nested_struct_sim, nested_client: AsyncFrappyClient):
     await nested_client.disconnect(True)
 
 
-async def test_nested_dtype_str_signal_generation(
-    nested_struct_sim, nested_node: SECoP_Node_Device
-):
+async def test_nested_dtype_str_signal_generation(nested_node: SECoP_Node_Device):
     struct_mod = nested_node.ophy_struct
 
     target: SignalRW = struct_mod.target
@@ -155,5 +153,5 @@ async def test_nested_struct_of_arrays(
 
     reading = await str_of_arr_mod.floats.read()
 
-    print(reading)
+    # print(reading)
     await nested_node.disconnect()

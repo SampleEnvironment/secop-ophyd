@@ -60,8 +60,9 @@ def clean_identifier(anystring):
     return str(re.sub(r"\W+|^(?=\d)", "_", anystring))
 
 
-def class_from_interface(mod_properties: dict):
-    for interface_class in mod_properties.get(INTERFACE_CLASSES):
+def class_from_interface(mod_properties: Dict[str, Dict[str, str]]):
+    interface_classes: dict = mod_properties[INTERFACE_CLASSES]
+    for interface_class in interface_classes:
         try:
             return IF_CLASSES[interface_class]
         except KeyError:
@@ -386,7 +387,8 @@ class SECoPMoveableDevice(SECoPWritableDevice, Movable, Stoppable):
         if not self._success:
             raise RuntimeError("Module was stopped")
 
-    async def stop(self, success=True) -> SyncOrAsync[None]:
+    @AsyncStatus.wrap
+    async def stop(self, success=True):
         self._success = success
 
         await self._secclient.execCommand(self._module, "stop")

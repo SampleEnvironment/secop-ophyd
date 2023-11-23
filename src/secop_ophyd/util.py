@@ -44,7 +44,7 @@ class Path:
     def __init__(self, parameter_name: str, module_name: str) -> None:
         self._accessible_name = parameter_name
         self._module_name = module_name
-        self._last_named_param: int
+        self._last_named_param: int | None = None
 
         self._dev_path: List[Union[str, int]] = []
 
@@ -91,6 +91,7 @@ class Path:
 
     def get_signal_name(self):
         # top level: signal name == Parameter name
+        
         if self._dev_path == []:
             return self._accessible_name
 

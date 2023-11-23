@@ -99,7 +99,7 @@ async def async_frappy_client(cryo_sim, logger, port="10769"):
 
 
 @pytest.fixture
-async def nested_client(cryo_sim, logger, port="10771"):
+async def nested_client(nested_struct_sim, logger, port="10771"):
     loop = asyncio.get_running_loop()
 
     return await AsyncFrappyClient.create(

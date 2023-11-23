@@ -9,6 +9,7 @@ from ophyd_async.core.signal_backend import SignalBackend
 from ophyd_async.core.utils import T
 
 from frappy.client import CacheItem
+from frappy.lib.enum import EnumMember
 from frappy.datatypes import (
     ArrayOf,
     BLOBType,
@@ -103,9 +104,9 @@ class SECoP_CMD_IO_Backend(SignalBackend):
 
         # TODO if array is ragged only first dimension is used otherwise parse the array
         if self.datainfo["type"] == "array":
-            res["shape"] = [1, self.datainfo.get("maxlen", None)]
+            res["shape"] = [1, self.datainfo.get("maxlen", None)]  # type: ignore
         else:
-            res["shape"] = []
+            res["shape"] = []  # type: ignore
 
         for property_name, prop_val in self.datainfo.items():
             if property_name == "type":
@@ -126,15 +127,24 @@ class SECoP_CMD_IO_Backend(SignalBackend):
     def _set_dtype(self) -> None:
         self.SECoPdtype = self.datainfo["type"]
 
+        # what type is contained in the array
         if self.SECoPdtype == "array":
             dtype_obj = self.SECoPdtype_obj
 
             # Get first non array dtype
             while isinstance(dtype_obj, ArrayOf):
                 dtype_obj = dtype_obj.members
-                self.datatype = SECOP2DTYPE.get(dtype_obj.__class__)
+                dtype_class = dtype_obj.__class__
+
+        # scalar or composite type
         else:
-            self.datatype = SECOP2DTYPE.get(self.SECoPdtype_obj.__class__)
+            dtype_class = self.SECoPdtype_obj.__class__
+
+        dtype = SECOP2DTYPE.get(dtype_class)
+        if dtype is None:
+            raise Exception("Datatype " + dtype_class + " not supported")
+
+        self.datatype = dtype
 
 
 # TODO add return of Asyncstatus
@@ -189,8 +199,8 @@ class SECoP_CMD_X_Backend(SignalBackend):
 
         # Atomic datatypes
         elif isinstance(arg_datatype, atomic_dtypes):
-            sig = next(iter(self.arguments.values()))
-            argument = arg_datatype.export_datatype(await sig.get_value())
+            arg_sig = next(iter(self.arguments.values()))
+            argument = arg_datatype.export_datatype(await arg_sig.get_value())
 
         # Run SECoP Command
 
@@ -210,17 +220,17 @@ class SECoP_CMD_X_Backend(SignalBackend):
 
         # StructOf()
         if isinstance(res_datatype, StructOf):
-            sig: SECoP_CMD_IO_Backend
-            for sig_name, sig in self.result.items():
-                await sig.put(res.get(sig_name))
+            res_sig_struct: SECoP_CMD_IO_Backend
+            for sig_name, res_sig_struct in self.result.items():
+                await res_sig_struct.put(res.get(sig_name))
 
         # TupleOf()
         elif isinstance(res_datatype, TupleOf):
             raise NotImplementedError
 
         elif isinstance(res_datatype, atomic_dtypes):
-            sig = next(iter(self.result.values()))
-            await sig.put(res)
+            res_sig = next(iter(self.result.values()))
+            await res_sig.put(res)
 
     async def get_descriptor(self) -> Descriptor:
         res = {}
@@ -233,7 +243,7 @@ class SECoP_CMD_X_Backend(SignalBackend):
 
         # get shape from datainfo and SECoPtype
 
-        res["shape"] = []
+        res["shape"] = []  # type: ignore
 
         return res
 
@@ -361,10 +371,12 @@ class SECoP_Param_Backend(SignalBackend):
         # select only the tuple/struct member corresponding to the signal
         dataset.value = deep_get(dataset.value, self.path._dev_path)
 
-        if self.SECoPdtype == "enum":
+        if isinstance(dataset.value, EnumMember):
             dataset.value = dataset.value.value
+
         if self.SECoPdtype in ["tuple", "struct"]:
             dataset.value = str(dataset.value)
+
         # TODO handle multidimensional arrays
         if isinstance(self.SECoPdtype_obj, ArrayOf) and isinstance(
             self.SECoPdtype_obj.members, (StructOf, TupleOf)
@@ -430,15 +442,24 @@ class SECoP_Param_Backend(SignalBackend):
         self.SECoPdtype = self.datainfo["type"]
         self.SECoPdtype_obj = self._param_description["datatype"]
 
+        # what type is contained in the array
         if self.SECoPdtype == "array":
             dtype_obj = self.SECoPdtype_obj
 
             # Get first non array dtype
             while isinstance(dtype_obj, ArrayOf):
                 dtype_obj = dtype_obj.members
-                self.datatype = SECOP2DTYPE.get(dtype_obj.__class__)
+                dtype_class = dtype_obj.__class__
+
+        # scalar or composite type
         else:
-            self.datatype = SECOP2DTYPE.get(self.SECoPdtype_obj.__class__)
+            dtype_class = self.SECoPdtype_obj.__class__
+
+        dtype = SECOP2DTYPE.get(dtype_class)
+        if dtype is None:
+            raise Exception("Datatype " + dtype_class + " not supported")
+
+        self.datatype = dtype
 
 
 class PropertyBackend(SignalBackend):
@@ -487,7 +508,7 @@ class PropertyBackend(SignalBackend):
 
         description["source"] = str(self.source)
         description["dtype"] = self._get_datatype()
-        description["shape"] = []
+        description["shape"] = []  # type: ignore
 
         return description
 
