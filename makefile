@@ -16,7 +16,7 @@ venv: .venv/touchfile
 .venv/touchfile: pyproject.toml 
 	python3 -m venv .venv
 	. .venv/bin/activate; pip install --upgrade pip; pip install -e .[dev]
-	export FRAPPY_DIR=$(pwd)/frappy
+	export FRAPPY_DIR=$(pwd)
 	touch .venv/touchfile
 
 

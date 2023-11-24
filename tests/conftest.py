@@ -20,7 +20,7 @@ def cryo_sim(xprocess):
     class Starter(ProcessStarter):
         # startup pattern
         pattern = ".*: startup done, handling transport messages"
-        timeout = 10
+        timeout = 3
         # command to start process
         args = [
             "python3",
@@ -44,7 +44,7 @@ def nested_struct_sim(xprocess):
     class Starter(ProcessStarter):
         # startup pattern
         pattern = ".*: startup done, handling transport messages"
-        timeout = 10
+        timeout = 3
         # command to start process
         env = {}
         args = [
