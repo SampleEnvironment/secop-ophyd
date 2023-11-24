@@ -51,8 +51,6 @@ jobs:
     - run: |
         git submodule init
         git submodule update
-        echo $PWD
-        echo $FRAPPY_DIR
 
     - name: Install dependencies
       run: |
@@ -61,6 +59,7 @@ jobs:
    
     - name: Test with pytest
       run: |
+        pip freeze
         tox -e pytest
     
 
