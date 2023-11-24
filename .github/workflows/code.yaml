@@ -7,7 +7,7 @@ on:
 
 
 env:
-  FRAPPY_DIR: .
+  FRAPPY_DIR: $PWD
 
 jobs:
 
