@@ -10,7 +10,7 @@ from xprocess import ProcessStarter
 from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient
 from secop_ophyd.SECoPDevices import SECoP_Node_Device
 
-frappy_dir = os.getenv("FRAPPY_DIR")
+frappy_dir = os.getenv("FRAPPY_DIR") + "/frappy"
 
 # Import bluesky and ophyd
 
