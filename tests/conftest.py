@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 
 import pytest
 from bluesky import RunEngine
@@ -8,7 +9,6 @@ from xprocess import ProcessStarter
 
 from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient
 from secop_ophyd.SECoPDevices import SECoP_Node_Device
-import os
 
 frappy_dir = os.getenv("FRAPPY_DIR")
 
