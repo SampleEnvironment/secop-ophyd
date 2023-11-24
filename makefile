@@ -17,6 +17,7 @@ venv: .venv/touchfile
 	python3 -m venv .venv
 	. .venv/bin/activate; pip install --upgrade pip; pip install -e .[dev]
 	export FRAPPY_DIR=$(pwd)
+	echo FRAPPY_DIR
 	touch .venv/touchfile
 
 
