@@ -9,7 +9,6 @@ from ophyd_async.core.signal_backend import SignalBackend
 from ophyd_async.core.utils import T
 
 from frappy.client import CacheItem
-from frappy.lib.enum import EnumMember
 from frappy.datatypes import (
     ArrayOf,
     BLOBType,
@@ -24,6 +23,7 @@ from frappy.datatypes import (
     StructOf,
     TupleOf,
 )
+from frappy.lib.enum import EnumMember
 from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient, SECoPReading
 from secop_ophyd.util import Path, deep_get
 
