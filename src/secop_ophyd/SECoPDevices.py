@@ -10,7 +10,6 @@ from bluesky.protocols import (
     Flyable,
     Movable,
     PartialEvent,
-    Status,
     Stoppable,
     SyncOrAsync,
     Triggerable,
@@ -581,7 +580,7 @@ class SECoP_CMD_Device(StandardReadable, Flyable, Triggerable):
 
         super().__init__(name=dev_name)
 
-    def kickoff(self) -> Status:
+    def kickoff(self) -> AsyncStatus:
         # trigger execution of secop command, wait until Device is Busy
 
         self._start_time = ttime.time()
@@ -612,7 +611,7 @@ class SECoP_CMD_Device(StandardReadable, Flyable, Triggerable):
     async def describe_collect(self) -> SyncOrAsync[Dict[str, Dict[str, Descriptor]]]:
         return await self.describe()
 
-    def trigger(self) -> Status:
+    def trigger(self) -> AsyncStatus:
         coro = asyncio.wait_for(fut=self._exec_cmd(), timeout=None)
         return AsyncStatus(awaitable=coro, watchers=None)
 

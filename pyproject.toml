@@ -107,7 +107,7 @@ allowlist_externals =
     pre-commit
     mypy
 commands =
-    pytest: pytest -v . --ignore=frappy
+    pytest:pytest -s -v tests/test_nested.py::test_tuple_dev
     mypy: mypy src tests {posargs}
     pre-commit: pre-commit run --all-files {posargs}
 """

@@ -153,5 +153,5 @@ async def test_nested_struct_of_arrays(
 
     reading = await str_of_arr_mod.floats.read()
 
-    # print(reading)
+    print(reading)
     await nested_node.disconnect()
