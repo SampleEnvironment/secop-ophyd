@@ -8,6 +8,9 @@ from xprocess import ProcessStarter
 
 from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient
 from secop_ophyd.SECoPDevices import SECoP_Node_Device
+import os
+
+frappy_dir = os.getenv("FRAPPY_DIR")
 
 # Import bluesky and ophyd
 
@@ -21,9 +24,9 @@ def cryo_sim(xprocess):
         # command to start process
         args = [
             "python3",
-            "../../../../frappy/bin/frappy-server",
+            frappy_dir + "/bin/frappy-server",
             "-c",
-            "../../../../frappy/cfg/cryo_cfg.py",
+            frappy_dir + "/cfg/cryo_cfg.py",
             "cryo",
         ]
 
@@ -43,11 +46,12 @@ def nested_struct_sim(xprocess):
         pattern = ".*: startup done, handling transport messages"
         timeout = 10
         # command to start process
+        env = {}
         args = [
             "python3",
-            "../../../../frappy/bin/frappy-server",
+            frappy_dir + "/bin/frappy-server",
             "-c",
-            "../../../../frappy/cfg/ophyd_secop_test_cfg.py",
+            frappy_dir + "/cfg/ophyd_secop_test_cfg.py",
             "nested",
         ]
 

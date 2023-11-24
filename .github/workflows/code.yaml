@@ -43,7 +43,8 @@ jobs:
         python-version: ${{ matrix.python-version }}
     - run: |
         git submodule init
-        git submodule update 
+        git submodule update
+        export FRAPPY_DIR=$(pwd)/frappy 
 
     - name: Install dependencies
       run: |
