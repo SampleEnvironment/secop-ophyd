@@ -59,12 +59,13 @@ jobs:
         python -m pip install --upgrade pip
         python -m pip install .[dev]
    
-    - name: Test with pytest
+    - name: Add ENV Var
       run: |
         pip freeze
         echo "PATH_VAR=$PATH" >> "$GITHUB_ENV"
-        echo PATH_VAR
 
+    - run: |
+        echo $PATH_VAR
         tox -e pytest
     
 
