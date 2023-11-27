@@ -8,7 +8,7 @@ on:
 
 env:
   WORK_DIR: ${{ github.workspace }}
-  PATH_VAR: ${{github.path}}
+
 
 
 
@@ -62,6 +62,8 @@ jobs:
     - name: Test with pytest
       run: |
         pip freeze
+        export PATH_VAR = $PATH
+        echo PATH_VAR
         tox -e pytest
     
 
