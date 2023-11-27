@@ -49,11 +49,11 @@ def nested_struct_sim(xprocess):
         # command to start process
         env = {"PATH": path}
         args = [
-            #"python3",
-            #frappy_dir + "/bin/frappy-server",
-            #"-c",
-            #frappy_dir + "/cfg/ophyd_secop_test_cfg.py",
-            #"nested",
+            # "python3",
+            # frappy_dir + "/bin/frappy-server",
+            # "-c",
+            # frappy_dir + "/cfg/ophyd_secop_test_cfg.py",
+            # "nested",
             "which",
             "python3"
             
