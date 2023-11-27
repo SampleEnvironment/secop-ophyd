@@ -10,7 +10,6 @@ from xprocess import ProcessStarter
 from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient
 from secop_ophyd.SECoPDevices import SECoP_Node_Device
 
-
 work_dir = os.getenv("WORK_DIR")
 path_variable = os.getenv("PATH_VAR")
 
