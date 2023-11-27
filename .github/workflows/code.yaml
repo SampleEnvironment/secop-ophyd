@@ -63,7 +63,7 @@ jobs:
       run: |
         pip freeze
         echo "PATH_VAR=$PATH" >> "$GITHUB_ENV"
-
+        echo PATH_VAR
 
         tox -e pytest
     

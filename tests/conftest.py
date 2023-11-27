@@ -47,7 +47,7 @@ def nested_struct_sim(xprocess):
         pattern = ".*: startup done, handling transport messages"
         timeout = 3
         # command to start process
-        #env = {"PATH": path}
+        env = {"PATH": path}
         args = [
             # "python3",
             # frappy_dir + "/bin/frappy-server",
