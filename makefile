@@ -1,5 +1,5 @@
 
-export FRAPPY_DIR := ${PWD}
+export WORK_DIR := ${PWD}
 
 test: venv  ## 🎯 Unit tests for Bluesky SECoP Integration
 	. .venv/bin/activate && pytest -v . --ignore=frappy

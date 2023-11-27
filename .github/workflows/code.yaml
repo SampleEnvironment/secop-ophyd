@@ -7,7 +7,9 @@ on:
 
 
 env:
-  FRAPPY_DIR: ${{ github.workspace }}
+  WORK_DIR: ${{ github.workspace }}
+
+
 
 
 jobs:
