@@ -46,13 +46,17 @@ def nested_struct_sim(xprocess):
         pattern = ".*: startup done, handling transport messages"
         timeout = 3
         # command to start process
-        env = {}
+        env = {"PYTHONPATH": str("~/home/qfj/git-repos/secop-ophyd/.venv/bin/python3")}
         args = [
-            "python3",
-            frappy_dir + "/bin/frappy-server",
-            "-c",
-            frappy_dir + "/cfg/ophyd_secop_test_cfg.py",
-            "nested",
+            #"python3",
+            #frappy_dir + "/bin/frappy-server",
+            #"-c",
+            #frappy_dir + "/cfg/ophyd_secop_test_cfg.py",
+            #"nested",
+            "pip",
+            "freeze"
+            
+          
         ]
 
     pname = "nested"
