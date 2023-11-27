@@ -59,13 +59,13 @@ jobs:
         python -m pip install --upgrade pip
         python -m pip install .[dev]
    
-    - name: Add ENV Var
+    - name: Add PATH envirnoment variable for xprocess
       run: |
         pip freeze
         echo "PATH_VAR=$PATH" >> "$GITHUB_ENV"
-
-    - run: |
-        echo $PATH_VAR
+    
+    - name: Run Tests 
+      run: |
         tox -e pytest
     
 

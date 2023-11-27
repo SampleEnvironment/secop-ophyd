@@ -10,8 +10,16 @@ from xprocess import ProcessStarter
 from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient
 from secop_ophyd.SECoPDevices import SECoP_Node_Device
 
-frappy_dir = os.getenv("WORK_DIR") + "/frappy"
-path = os.getenv("PATH_VAR")
+
+work_dir = os.getenv("WORK_DIR")
+path_variable = os.getenv("PATH_VAR")
+
+if work_dir is None or path_variable is None:
+    raise Exception("Environment Variables need to be set")
+
+frappy_dir: str = work_dir + "/frappy"
+path: str = path_variable
+
 
 # Import bluesky and ophyd
 
@@ -23,6 +31,7 @@ def cryo_sim(xprocess):
         pattern = ".*: startup done, handling transport messages"
         timeout = 3
         # command to start process
+        env = {"PATH": path}
         args = [
             "python3",
             frappy_dir + "/bin/frappy-server",
@@ -53,7 +62,7 @@ def nested_struct_sim(xprocess):
             frappy_dir + "/bin/frappy-server",
             "-c",
             frappy_dir + "/cfg/ophyd_secop_test_cfg.py",
-            "nested",          
+            "nested",
         ]
 
     pname = "nested"
