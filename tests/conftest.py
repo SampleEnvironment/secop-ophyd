@@ -54,7 +54,6 @@ def nested_struct_sim(xprocess):
             # "-c",
             # frappy_dir + "/cfg/ophyd_secop_test_cfg.py",
             # "nested",
-            "python3",
             "pip",
             "freeze"
             
