@@ -440,8 +440,17 @@ class SECoP_Param_Backend(SignalBackend):
 
     def _set_dtype(self) -> None:
         self.SECoPdtype = self.datainfo["type"]
-        self.SECoPdtype_obj = self._param_description["datatype"]
+        dtypeObj = self._param_description["datatype"]
 
+        if self.path.get_leaf() is None:
+            self.SECoPdtype_obj = dtypeObj
+        else:
+            for path_elem in self.path._dev_path:
+                dtypeObj = dtypeObj.members[path_elem]
+
+            self.SECoPdtype_obj = dtypeObj
+
+        dtype_class = None
         # what type is contained in the array
         if self.SECoPdtype == "array":
             dtype_obj = self.SECoPdtype_obj
