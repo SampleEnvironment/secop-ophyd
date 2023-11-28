@@ -1,6 +1,8 @@
 import asyncio
 import logging
 import os
+from dotenv import load_dotenv
+
 
 import pytest
 from bluesky import RunEngine
@@ -13,11 +15,20 @@ from secop_ophyd.SECoPDevices import SECoP_Node_Device
 work_dir = os.getenv("WORK_DIR")
 path_variable = os.getenv("PATH_VAR")
 
-if work_dir is None or path_variable is None:
-    raise Exception("Environment Variables need to be set")
+if work_dir is None and path_variable is None:
+    if not load_dotenv():
+        raise Exception("Env Vars could not be set")
+        
+    work_dir = os.getenv("WORK_DIR")
+    path_variable = os.getenv("PATH_VAR")
 
+
+# Env Vars are set (tests are probably run within a github actions runner)
 frappy_dir: str = work_dir + "/frappy"
-path: str = path_variable
+env_dict = {"PATH":path_variable}
+
+    
+
 
 
 # Import bluesky and ophyd
@@ -30,7 +41,7 @@ def cryo_sim(xprocess):
         pattern = ".*: startup done, handling transport messages"
         timeout = 3
         # command to start process
-        env = {"PATH": path}
+        env = env_dict
         args = [
             "python3",
             frappy_dir + "/bin/frappy-server",
@@ -54,8 +65,8 @@ def nested_struct_sim(xprocess):
         # startup pattern
         pattern = ".*: startup done, handling transport messages"
         timeout = 3
-        # command to start process
-        env = {"PATH": path}
+        
+        env = env_dict
         args = [
             "python3",
             frappy_dir + "/bin/frappy-server",

@@ -41,7 +41,8 @@ dev = [
     'databroker',
     'ophyd',
     'tox',
-    'mlzlog'
+    'mlzlog',
+    'python-dotenv'
 ]
 
 
