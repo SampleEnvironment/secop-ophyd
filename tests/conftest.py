@@ -1,12 +1,11 @@
 import asyncio
 import logging
 import os
-from dotenv import load_dotenv
-
 
 import pytest
 from bluesky import RunEngine
 from databroker.v2 import temp
+from dotenv import load_dotenv
 from xprocess import ProcessStarter
 
 from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient
@@ -18,17 +17,14 @@ path_variable = os.getenv("PATH_VAR")
 if work_dir is None and path_variable is None:
     if not load_dotenv():
         raise Exception("Env Vars could not be set")
-        
+
     work_dir = os.getenv("WORK_DIR")
     path_variable = os.getenv("PATH_VAR")
 
 
 # Env Vars are set (tests are probably run within a github actions runner)
-frappy_dir: str = work_dir + "/frappy"
-env_dict = {"PATH":path_variable}
-
-    
-
+frappy_dir: str = str(work_dir) + "/frappy"
+env_dict = {"PATH": str(path_variable)}
 
 
 # Import bluesky and ophyd
@@ -65,7 +61,7 @@ def nested_struct_sim(xprocess):
         # startup pattern
         pattern = ".*: startup done, handling transport messages"
         timeout = 3
-        
+
         env = env_dict
         args = [
             "python3",

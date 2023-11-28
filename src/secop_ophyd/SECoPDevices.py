@@ -386,7 +386,6 @@ class SECoPMoveableDevice(SECoPWritableDevice, Movable, Stoppable):
         if not self._success:
             raise RuntimeError("Module was stopped")
 
-    @AsyncStatus.wrap
     async def stop(self, success=True):
         self._success = success
 

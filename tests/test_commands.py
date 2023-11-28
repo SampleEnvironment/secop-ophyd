@@ -18,7 +18,7 @@ async def test_stop_cmd(cryo_sim, cryo_node_internal_loop: SECoP_Node_Device):
 
     await asyncio.sleep(3)
 
-    await cryo.stop(success = True)
+    await cryo.stop(success=True)
 
     await stat
 
