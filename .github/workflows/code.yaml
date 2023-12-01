@@ -29,10 +29,8 @@ jobs:
           python -m pip install .[dev]
 
       - name: Lint
-        #run: tox -e pre-commit,mypy
-        run: |
-          pip freeze
-          flake8 --verbose
+        run: tox -e pre-commit,mypy
+
 
 
 
