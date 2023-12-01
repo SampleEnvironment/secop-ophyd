@@ -466,7 +466,7 @@ class SECoP_Param_Backend(SignalBackend):
 
         dtype = SECOP2DTYPE.get(dtype_class)
         if dtype is None:
-            raise Exception("Datatype " + dtype_class + " not supported")
+            raise Exception("Datatype " + str(dtype_class) + " not supported")
 
         self.datatype = dtype
 

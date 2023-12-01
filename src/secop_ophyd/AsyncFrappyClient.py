@@ -12,7 +12,7 @@ T = TypeVar("T")
 class SECoPReading:
     def __init__(self, entry: CacheItem = None) -> None:
         if entry is None:
-            self.timestamp: float | None = None
+            self.timestamp: float = time.time()
             self.value = None
             self.readerror = None
             return
