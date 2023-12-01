@@ -30,7 +30,7 @@ jobs:
 
       - name: Lint
         #run: tox -e pre-commit,mypy
-        run: pre-commit run --all-files
+        run: flake8 --verbose
 
 
 
