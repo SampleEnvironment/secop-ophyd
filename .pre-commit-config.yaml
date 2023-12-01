@@ -22,27 +22,3 @@ repos:
         entry: flake8 
         types: [python]
         verbose: true
-
-      - id: isort-config
-        name: Run isort
-        stages: [commit]
-        language: system
-        entry: isort --show-config
-        types: [python]
-        verbose: true
-
-      - id: isort-diff
-        name: Run isort
-        stages: [commit]
-        language: system
-        entry: isort isort src/secop_ophyd/AsyncFrappyClient.py --check --diff
-        types: [python]
-        verbose: true
-
-      - id: isort-version
-        name: Run isort
-        stages: [commit]
-        language: system
-        entry: isort --version
-        types: [python]
-        verbose: true
