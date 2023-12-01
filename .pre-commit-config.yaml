@@ -19,5 +19,5 @@ repos:
         name: Run flake8
         stages: [commit]
         language: system
-        entry: flake8
+        entry: flake8 
         types: [python]

@@ -23,10 +23,11 @@ requires-python = ">=3.10"
 
 [project.optional-dependencies]
 dev = [
+    'isort',
     'pytest == 7.4.2',
     'black',
     'flake8',
-    "flake8-isort",
+    "flake8-isort == 6.1.1",
     "Flake8-pyproject",
     'mypy',
     'wheel',
