@@ -35,7 +35,7 @@ repos:
         name: Run isort
         stages: [commit]
         language: system
-        entry: isort --check --diff
+        entry: isort isort src/secop_ophyd/AsyncFrappyClient.py --check --diff
         types: [python]
         verbose: true
 
