@@ -29,7 +29,9 @@ jobs:
           python -m pip install .[dev]
 
       - name: Lint
-        run: tox -e pre-commit,mypy
+        run: |
+          isort src/secop_ophyd/AsyncFrappyClient.py --check --diff
+          tox -e pre-commit,mypy
 
 
 
