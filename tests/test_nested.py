@@ -1,6 +1,6 @@
+from frappy.datatypes import DataType
 from ophyd_async.core.signal import SignalRW
 
-from frappy.datatypes import DataType
 from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient
 from secop_ophyd.SECoPDevices import (
     SECoP_Node_Device,

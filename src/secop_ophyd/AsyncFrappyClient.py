@@ -3,7 +3,6 @@ import time
 from typing import Any, TypeVar
 
 from bluesky.protocols import Reading
-
 from frappy.client import CacheItem, Logger, SecopClient
 
 T = TypeVar("T")

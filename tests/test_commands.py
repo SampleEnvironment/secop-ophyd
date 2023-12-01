@@ -1,9 +1,9 @@
 import asyncio
 
 from bluesky.protocols import Triggerable
+from frappy.errors import ImpossibleError
 from ophyd_async.core.signal import SignalR, SignalX
 
-from frappy.errors import ImpossibleError
 from secop_ophyd.SECoPDevices import (
     SECoP_CMD_Device,
     SECoP_Node_Device,

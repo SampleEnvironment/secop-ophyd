@@ -65,6 +65,7 @@ norecursedirs=["frappy","epics-testing","build"]
 float_to_top = true
 profile = "black"
 skip = [".gitignore"]
+known_third_party = ["frappy"]
 skip_glob = ["frappy/*","epics-testing/*"]
 
 

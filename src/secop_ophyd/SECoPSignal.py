@@ -5,9 +5,6 @@ from functools import wraps
 from typing import Any, Callable, Dict, Optional
 
 from bluesky.protocols import Descriptor, Reading
-from ophyd_async.core.signal_backend import SignalBackend
-from ophyd_async.core.utils import T
-
 from frappy.client import CacheItem
 from frappy.datatypes import (
     ArrayOf,
@@ -24,6 +21,9 @@ from frappy.datatypes import (
     TupleOf,
 )
 from frappy.lib.enum import EnumMember
+from ophyd_async.core.signal_backend import SignalBackend
+from ophyd_async.core.utils import T
+
 from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient, SECoPReading
 from secop_ophyd.util import Path, deep_get
 
