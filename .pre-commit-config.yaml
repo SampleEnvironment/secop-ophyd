@@ -34,6 +34,14 @@ repos:
         name: Run isort
         stages: [commit]
         language: system
+        entry: isort --check --diff
+        types: [python]
+        verbose: true
+
+      - id: isort
+        name: Run isort
+        stages: [commit]
+        language: system
         entry: isort --version
         types: [python]
         verbose: true
