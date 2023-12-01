@@ -30,7 +30,7 @@ jobs:
 
       - name: Lint
         run: |
-          isort src/secop_ophyd/AsyncFrappyClient.py --check --diff
+          isort src/secop_ophyd/AsyncFrappyClient.py --check --diff --verbose
           tox -e pre-commit,mypy
 
 
