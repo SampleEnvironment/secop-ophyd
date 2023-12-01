@@ -21,27 +21,6 @@ repos:
         language: system
         entry: flake8 
         types: [python]
-
-      - id: isort-config
-        name: Run isort
-        stages: [commit]
-        language: system
-        entry: isort --show-config
-        types: [python]
         verbose: true
 
-      - id: isort-diff
-        name: Run isort
-        stages: [commit]
-        language: system
-        entry: isort --check --diff
-        types: [python]
-        verbose: true
-
-      - id: isort-version
-        name: Run isort
-        stages: [commit]
-        language: system
-        entry: isort --version
-        types: [python]
-        verbose: true
+    
