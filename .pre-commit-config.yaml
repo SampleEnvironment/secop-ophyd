@@ -26,5 +26,5 @@ repos:
         name: Run isort
         stages: [commit]
         language: system
-        entry: isort . --check --diff
+        entry: isort --check --diff
         types: [python]
