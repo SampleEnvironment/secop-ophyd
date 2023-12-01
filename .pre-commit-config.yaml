@@ -19,12 +19,12 @@ repos:
         name: Run flake8
         stages: [commit]
         language: system
-        entry: flake8 src tests
+        entry: flake8 
         types: [python]
 
       - id: isort
         name: Run isort
         stages: [commit]
         language: system
-        entry: isort --diff src tests
+        entry: isort --diff 
         types: [python]
