@@ -22,7 +22,7 @@ repos:
         entry: flake8 
         types: [python]
 
-      - id: isort
+      - id: isort-config
         name: Run isort
         stages: [commit]
         language: system
@@ -30,7 +30,7 @@ repos:
         types: [python]
         verbose: true
 
-      - id: isort
+      - id: isort-diff
         name: Run isort
         stages: [commit]
         language: system
@@ -38,7 +38,7 @@ repos:
         types: [python]
         verbose: true
 
-      - id: isort
+      - id: isort-version
         name: Run isort
         stages: [commit]
         language: system
