@@ -68,7 +68,7 @@ class SECoP_CMD_IO_Backend(SignalBackend):
         # Root datainfo or memberinfo for nested datatypes
         self.datainfo: dict = sig_datainfo
 
-        self.callback: Callable[[Reading, Any], None] | None
+        self.callback: Callable[[Reading, Any], None] | None = None
 
         self.SECoPdtype_obj: DataType = SECoPdtype_obj
         self.datatype: str

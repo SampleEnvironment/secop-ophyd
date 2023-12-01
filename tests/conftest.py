@@ -11,31 +11,37 @@ from xprocess import ProcessStarter
 from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient
 from secop_ophyd.SECoPDevices import SECoP_Node_Device
 
-work_dir = os.getenv("WORK_DIR")
-path_variable = os.getenv("PATH_VAR")
 
-if work_dir is None and path_variable is None:
-    if not load_dotenv():
-        raise Exception("Env Vars could not be set")
-
+@pytest.fixture
+def env_vars():
     work_dir = os.getenv("WORK_DIR")
     path_variable = os.getenv("PATH_VAR")
 
+    if work_dir is None and path_variable is None:
+        if not load_dotenv():
+            raise Exception("Env Vars could not be set")
 
-# Env Vars are set (tests are probably run within a github actions runner)
-frappy_dir: str = str(work_dir) + "/frappy"
-env_dict = {"PATH": str(path_variable)}
+        work_dir = os.getenv("WORK_DIR")
+        path_variable = os.getenv("PATH_VAR")
+
+    # Env Vars are set (tests are probably run within a github actions runner)
+    frappy_dir: str = str(work_dir) + "/frappy"
+    env_dict = {"PATH": str(path_variable)}
+
+    return frappy_dir, env_dict
 
 
 # Import bluesky and ophyd
 
 
 @pytest.fixture
-def cryo_sim(xprocess):
+def cryo_sim(xprocess, env_vars):
+    frappy_dir, env_dict = env_vars
+
     class Starter(ProcessStarter):
         # startup pattern
         pattern = ".*: startup done, handling transport messages"
-        timeout = 3
+        timeout = 5
         # command to start process
         env = env_dict
         args = [
@@ -56,11 +62,13 @@ def cryo_sim(xprocess):
 
 
 @pytest.fixture
-def nested_struct_sim(xprocess):
+def nested_struct_sim(xprocess, env_vars):
+    frappy_dir, env_dict = env_vars
+
     class Starter(ProcessStarter):
         # startup pattern
         pattern = ".*: startup done, handling transport messages"
-        timeout = 3
+        timeout = 5
 
         env = env_dict
         args = [

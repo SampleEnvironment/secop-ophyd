@@ -47,7 +47,9 @@ async def test_struct_dev(nested_client: AsyncFrappyClient):
     await nested_client.disconnect(True)
 
 
-async def test_nested_dtype_str_signal_generation(nested_node: SECoP_Node_Device):
+async def test_nested_dtype_str_signal_generation(
+    nested_struct_sim, nested_node: SECoP_Node_Device
+):
     struct_mod = nested_node.ophy_struct
 
     target: SignalRW = struct_mod.target

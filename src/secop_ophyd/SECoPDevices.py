@@ -587,7 +587,9 @@ class SECoP_CMD_Device(StandardReadable, Flyable, Triggerable):
         return AsyncStatus(coro, watchers=None)
 
     async def _exec_cmd(self):
-        await self.sigx.execute()
+        stat = self.sigx.trigger()
+
+        await stat
 
         await self.parent.status_code.read()
 

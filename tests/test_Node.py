@@ -68,19 +68,21 @@ async def test_node_drive(cryo_sim, cryo_node_internal_loop: SECoP_Node_Device):
 
 
 async def test_node_reconn(
-    cryo_sim: xprocess,
-    cryo_node_internal_loop: SECoP_Node_Device,
+    cryo_sim: xprocess, cryo_node_internal_loop: SECoP_Node_Device, env_vars
 ):
+    frappy_dir, env_dict = env_vars
+
     class Starter(ProcessStarter):
         # startup pattern
         pattern = ".*: startup done, handling transport messages"
-        timeout = 10
+        timeout = 5
         # command to start process
+        env = env_dict
         args = [
             "python3",
-            "../../../../frappy/bin/frappy-server",
+            frappy_dir + "/bin/frappy-server",
             "-c",
-            "../../../../frappy/cfg/cryo_cfg.py",
+            frappy_dir + "/cfg/cryo_cfg.py",
             "cryo",
         ]
 

@@ -104,30 +104,31 @@ async def test_SECoP_Error_on_CMD(nested_struct_sim, nested_node: SECoP_Node_Dev
 
     await nested_node.disconnect()
 
-    async def test_SECoP_triggering_DMD_Dev(
-        nested_struct_sim, nested_node: SECoP_Node_Device
-    ):
-        test_cmd: SECoP_CMD_Device = nested_node.ophy_struct.test_cmd_dev
 
-        error_triggered = False
-        # Triggers SECoP Error
-        await test_cmd.name_arg.set("bad_name")
+async def test_SECoP_triggering_CMD_Dev(
+    nested_struct_sim, nested_node: SECoP_Node_Device
+):
+    test_cmd: SECoP_CMD_Device = nested_node.ophy_struct.test_cmd_dev
 
-        await test_cmd.id_arg.set(1233)
-        await test_cmd.sort_arg.set(False)
+    error_triggered = False
+    # Triggers SECoP Error
+    await test_cmd.name_arg.set("bad_name")
 
-        res: SignalR = test_cmd.test_cmd_res
+    await test_cmd.id_arg.set(1233)
+    await test_cmd.sort_arg.set(False)
 
-        try:
-            stat = test_cmd.trigger()
-            await stat
+    res: SignalR = test_cmd.test_cmd_res
 
-        except ImpossibleError:
-            error_triggered = True
+    try:
+        stat = test_cmd.trigger()
+        await stat
 
-        assert error_triggered is True
+    except ImpossibleError:
+        error_triggered = True
 
-        reading_res = await res.read()
-        assert reading_res.get(res.name)["value"] is None
+    assert error_triggered is True
 
-        await nested_node.disconnect()
+    reading_res = await res.read()
+    assert reading_res.get(res.name)["value"] is None
+
+    await nested_node.disconnect()
