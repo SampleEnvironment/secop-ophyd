@@ -13,8 +13,8 @@ version = "0.0.1"
 description = "An Interface between bluesky and SECoP, using ophyd and frappy-client"
 
 dependencies = [
-    'ophyd-async@git+https://github.com/bluesky/ophyd-async.git@d6c72cfcd3d0af9ad1694cc8826c96058ea92f16',
-
+    'ophyd-async == 0.2.0',  
+    # TODO set frappy as dependency once its released on pypi
 ]
 
 license.file = "LICENSE"
@@ -29,10 +29,10 @@ dev = [
     'flake8',
     "flake8-isort == 6.1.1",
     "Flake8-pyproject",
+    'frappy-core@git+https://github.com/SampleEnvironment/frappy',
     'mypy',
     'wheel',
     'cycler',
-    'frappy-core@git+https://github.com/SampleEnvironment/frappy',
     'mlzlog',
     'matplotlib',
     'pytest-asyncio',
