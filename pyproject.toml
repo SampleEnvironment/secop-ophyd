@@ -3,10 +3,6 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 
-#[build-system]
-#requires = ["setuptools", "setuptools-scm"]
-#build-backend = "setuptools.build_meta"
-
 [project]
 name = "secop-ophyd"
 version = "0.0.1"
@@ -14,7 +10,7 @@ description = "An Interface between bluesky and SECoP, using ophyd and frappy-cl
 
 dependencies = [
     'ophyd-async == 0.2.0',  
-    # TODO set frappy as dependency once its released on pypi
+    'frappy-core@git+https://github.com/SampleEnvironment/frappy',
 ]
 
 license.file = "LICENSE"
@@ -29,7 +25,6 @@ dev = [
     'flake8',
     "flake8-isort == 6.1.1",
     "Flake8-pyproject",
-    'frappy-core@git+https://github.com/SampleEnvironment/frappy',
     'mypy',
     'wheel',
     'cycler',
