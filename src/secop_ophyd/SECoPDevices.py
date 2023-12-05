@@ -198,7 +198,9 @@ class SECoPReadableDevice(SECoPBaseDevice):
                             # add signal for every structmember
                             self._signal_from_parameter(
                                 path=sub_sig_path,
-                                sig_name=sub_sig_path.get_signal_name(),
+                                sig_name=param_path._accessible_name
+                                + "_"
+                                + sub_sig_path.get_signal_name(),
                                 readonly=readonly,
                             )
 

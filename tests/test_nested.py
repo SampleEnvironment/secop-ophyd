@@ -153,7 +153,7 @@ async def test_nested_struct_of_arrays(
 ):
     str_of_arr_mod: SECoPReadableDevice = nested_node.struct_of_arrays
 
-    reading = await str_of_arr_mod.floats.read()
+    reading = await str_of_arr_mod.value_floats.read()
 
     print(reading)
     await nested_node.disconnect()

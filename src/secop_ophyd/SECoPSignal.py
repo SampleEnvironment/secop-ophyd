@@ -368,6 +368,9 @@ class SECoP_Param_Backend(SignalBackend):
             **self.get_param_path(), trycache=False
         )
 
+        if dataset.readerror is not None:
+            raise dataset.readerror
+
         # select only the tuple/struct member corresponding to the signal
         dataset.value = deep_get(dataset.value, self.path._dev_path)
 
