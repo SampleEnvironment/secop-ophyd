@@ -1,6 +1,5 @@
 import asyncio
 import collections.abc
-import copy
 from functools import wraps
 from typing import Any, Callable, Dict, Optional
 
@@ -20,7 +19,6 @@ from frappy.datatypes import (
     StructOf,
     TupleOf,
 )
-from frappy.lib.enum import EnumMember
 from ophyd_async.core.signal_backend import SignalBackend
 from ophyd_async.core.utils import T
 
@@ -372,41 +370,30 @@ class SECoP_Param_Backend(SignalBackend):
             raise dataset.readerror
 
         # select only the tuple/struct member corresponding to the signal
-        dataset.value = deep_get(dataset.value, self.path._dev_path)
+        value = deep_get(dataset.value, self.path._dev_path)
 
-        if isinstance(dataset.value, EnumMember):
-            dataset.value = dataset.value.value
+        exported_value = self.SECoPdtype_obj.export_value(value)
 
-        if self.SECoPdtype in ["tuple", "struct"]:
-            dataset.value = str(dataset.value)
+        dataset.value = exported_value
 
-        # TODO handle multidimensional arrays
+        # Composite Datatypes are returned as Strings
+        if isinstance(self.SECoPdtype_obj, (StructOf, TupleOf)):
+            dataset.value = str(exported_value)
+
+        # Arrys of composite Datatypes, array entries are returned as strings
         if isinstance(self.SECoPdtype_obj, ArrayOf) and isinstance(
             self.SECoPdtype_obj.members, (StructOf, TupleOf)
         ):
-            dataset = copy.deepcopy(dataset)
-            dataset.value = list(map(str, dataset.value))
+            dataset.value = list(map(str, exported_value))
+
+        # TODO handle multidimensional arrays
 
         return dataset.get_reading()
 
     async def get_value(self) -> T:
-        dataset = await self._secclient.getParameter(
-            **self.get_param_path(), trycache=False
-        )
+        dataset: Reading = await self.get_reading()
 
-        # select only the tuple member corresponding to the signal
-        dataset.value = deep_get(dataset.value, self.path._dev_path)
-
-        if self.SECoPdtype in ["tuple", "struct"]:
-            dataset.value = str(dataset.value)
-
-        if isinstance(self.SECoPdtype_obj, ArrayOf) and isinstance(
-            self.SECoPdtype_obj.members, (StructOf, TupleOf)
-        ):
-            dataset = copy.deepcopy(dataset)
-            dataset.value = list(map(str, dataset.value))
-
-        return dataset.get_value()
+        return dataset.value
 
     def set_callback(self, callback: Callable[[Reading, Any], None] | None) -> None:
         def awaitify(sync_func):

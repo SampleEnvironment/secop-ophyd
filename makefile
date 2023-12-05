@@ -11,11 +11,11 @@ test: venv  ## 🎯 Unit tests for Bluesky SECoP Integration
 
 
 
-env: 
+.env: 
 	echo "WORK_DIR=${WORK_DIR}\nPATH_VAR=${PATH_VAR}" > .env
 
 
-venv: env .venv/touchfile
+venv: .env .venv/touchfile
 
 .venv/touchfile: pyproject.toml 
 	python3 -m venv .venv
@@ -23,6 +23,10 @@ venv: env .venv/touchfile
 	touch .venv/touchfile
 
 
+pretty: venv .env
+	black src tests
+	isort src tests
+	flake8 src tests
 
 clean:  ## 🧹 Clean up project
 	rm -rf .venv
@@ -36,3 +40,5 @@ clean:  ## 🧹 Clean up project
 	rm -rf *egg-info
 	rm -rf build
 	rm -rf dist
+	rm -rf .env
+

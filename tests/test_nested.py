@@ -1,5 +1,5 @@
 from frappy.datatypes import DataType
-from ophyd_async.core.signal import SignalRW
+from ophyd_async.core.signal import SignalR, SignalRW
 
 from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient
 from secop_ophyd.SECoPDevices import (
@@ -153,7 +153,50 @@ async def test_nested_struct_of_arrays(
 ):
     str_of_arr_mod: SECoPReadableDevice = nested_node.struct_of_arrays
 
-    reading = await str_of_arr_mod.value_floats.read()
+    floats: SignalR = str_of_arr_mod.value_floats
 
-    print(reading)
+    reading = await floats.read()
+
+    val = reading[floats.name]["value"]
+
+    assert isinstance(val, list)
+
+    reading2 = await floats.read()
+
+    val2 = reading2[floats.name]["value"]
+
+    # check if lists are not equal
+    assert all(x != y for x, y in zip(val, val2))
+
+    dev_reading = await str_of_arr_mod.read()
+
+    # one for each struct member and one where the whole struct is converted to a string
+    assert len(dev_reading) == 4
+
+    # check if struct was converted to string
+    assert isinstance(dev_reading[str_of_arr_mod.value.name]["value"], str)
+
+    # Write testing
+    wfloats: SignalRW = str_of_arr_mod.writable_strct_of_arr_floats
+
+    floats_reading = await wfloats.read()
+
+    floats_val = floats_reading[wfloats.name]["value"]
+
+    floats_new_val = [x + 20 for x in floats_val]
+
+    await wfloats.set(floats_new_val)
+
+    floats_reading = await wfloats.read()
+
+    floats_new_val_remote = floats_reading[wfloats.name]["value"]
+
+    assert all(x == y for x, y in zip(floats_new_val, floats_new_val_remote))
+
     await nested_node.disconnect()
+
+
+# TODO ReadError Exception
+
+
+# TODO Nested Arrays (2D) uniform and ragged
