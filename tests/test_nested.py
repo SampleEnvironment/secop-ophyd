@@ -1,4 +1,5 @@
 from frappy.datatypes import DataType
+from frappy.errors import RangeError
 from ophyd_async.core.signal import SignalR, SignalRW
 
 from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient
@@ -202,7 +203,17 @@ async def test_nested_struct_of_arrays(
     await nested_node.disconnect()
 
 
-# TODO ReadError Exception
+async def test_nested_readerr(nested_struct_sim, nested_node: SECoP_Node_Device):
+    str_of_arr_mod: SECoPReadableDevice = nested_node.struct_of_arrays_readerr
+
+    floats: SignalR = str_of_arr_mod.value_floats
+
+    try:
+        await floats.read()
+    except RangeError:
+        pass
+
+    await nested_node.disconnect()
 
 
 # TODO Nested Arrays (2D) uniform and ragged
