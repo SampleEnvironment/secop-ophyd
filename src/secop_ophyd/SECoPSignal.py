@@ -393,7 +393,7 @@ class SECoP_Param_Backend(SignalBackend):
     async def get_value(self) -> T:
         dataset: Reading = await self.get_reading()
 
-        return dataset.value
+        return dataset.value  # type: ignore
 
     def set_callback(self, callback: Callable[[Reading, Any], None] | None) -> None:
         def awaitify(sync_func):

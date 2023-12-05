@@ -27,6 +27,7 @@ pretty: venv .env
 	black src tests
 	isort src tests
 	flake8 src tests
+	mypy src tests
 
 clean:  ## 🧹 Clean up project
 	rm -rf .venv

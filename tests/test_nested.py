@@ -178,20 +178,26 @@ async def test_nested_struct_of_arrays(
 
     # Write testing
     wfloats: SignalRW = str_of_arr_mod.writable_strct_of_arr_floats
+    wints: SignalRW = str_of_arr_mod.writable_strct_of_arr_ints
 
     floats_reading = await wfloats.read()
+    ints_reading = await wints.read()
 
     floats_val = floats_reading[wfloats.name]["value"]
+    ints_val = ints_reading[wints.name]["value"]
 
     floats_new_val = [x + 20 for x in floats_val]
 
     await wfloats.set(floats_new_val)
 
     floats_reading = await wfloats.read()
+    ints_reading = await wints.read()
 
     floats_new_val_remote = floats_reading[wfloats.name]["value"]
+    ints_new_val = ints_reading[wints.name]["value"]
 
     assert all(x == y for x, y in zip(floats_new_val, floats_new_val_remote))
+    assert all(x == y for x, y in zip(ints_val, ints_new_val))
 
     await nested_node.disconnect()
 
