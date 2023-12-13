@@ -171,7 +171,7 @@ class SECoPReadableDevice(SECoPBaseDevice):
 
             dtype: DataType = properties["datatype"]
 
-            # readonly property
+            # readonly propertyns to plans and plan stubs. IDEs such as vscode should now provide hints when using them. See screenshot below. Fix and update out-of-date docstrings on plans and plan stubs.
             readonly = properties.get("readonly", None)
 
             # sub devices for nested datatypes

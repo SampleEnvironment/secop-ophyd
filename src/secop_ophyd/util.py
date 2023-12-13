@@ -1,12 +1,18 @@
 from __future__ import annotations
 
 import copy
+import time
+from abc import abstractmethod
 from functools import reduce
 from itertools import chain
 from typing import List, Union
 
+import numpy as np
+from bluesky.protocols import Reading
+from frappy.client import CacheItem
 from frappy.datatypes import (
     ArrayOf,
+    BLOBType,
     BoolType,
     DataType,
     EnumType,
@@ -15,6 +21,7 @@ from frappy.datatypes import (
     ScaledInteger,
     StringType,
     StructOf,
+    TupleOf,
 )
 
 SCALAR_DATATYPES = (
@@ -150,3 +157,197 @@ def is_Scalar_or_ArrayOf_scalar(type: DataType):
         return isinstance(type.members, SCALAR_DATATYPES)
     else:
         return False
+
+
+SECOP2PY = {
+    IntRange: int,
+    FloatRange: float,
+    StringType: "U100",
+    BoolType: bool,
+    BLOBType: "U100",
+    ScaledInteger: int,
+    EnumType: int,
+}
+
+
+def mklist(secop_value: dict | tuple, secop_dt: DataType) -> list:
+    if isinstance(secop_dt, StructOf):
+        ret_val = tuple(
+            [
+                mklist(secop_value[key], member_dt)
+                for key, member_dt in secop_dt.members.items()
+            ]
+        )
+
+    elif isinstance(secop_dt, TupleOf):
+        ret_val = tuple(
+            [
+                mklist(secop_value[idx], member_dt)
+                for idx, member_dt in enumerate(secop_dt.members)
+            ]
+        )
+
+    else:
+        ret_val = secop_value
+
+    return ret_val
+
+
+def mk_np_arr(JSON_arr, secop_dt: DataType):
+    pass
+
+
+class dt_NP:
+    secop_dtype: DataType
+
+    @abstractmethod
+    def make_numpy_dtype(self):
+        """Connect to underlying hardware"""
+
+    @abstractmethod
+    def make_numpy_compatible_list(self, value):
+        """make a make a list that is ready for numpy array import"""
+
+
+def dt_factory(secop_dt: TupleOf | StructOf | ArrayOf) -> dt_NP:
+    dt_class = secop_dt.__class__
+
+    dt_Converters = {StructOf: StructNP, TupleOf: TupleNP, ArrayOf: ArrayNP}
+
+    return dt_Converters[dt_class](secop_dt)
+
+
+class StructNP(dt_NP):
+    def __init__(self, struct_dt: StructOf) -> None:
+        self.secop_dtype = struct_dt
+        self.members = {}
+
+        for key, member in struct_dt.members:
+            if isinstance(member, (TupleOf, StructOf, ArrayOf)):
+                self.members[key] = dt_factory(member)
+            else:
+                self.members[key] = member
+
+    def make_numpy_dtype(self):
+        pass
+
+    def make_numpy_compatible_list(self, value):
+        pass
+
+
+class TupleNP(dt_NP):
+    def __init__(self, tuple_dt: TupleOf) -> None:
+        self.secop_dtype = tuple_dt
+        self.members = []
+
+        for member in tuple_dt.members:
+            if isinstance(member, (TupleOf, StructOf, ArrayOf)):
+                self.members.append(dt_factory(member))
+            else:
+                self.members.append(member)
+
+    def make_numpy_dtype(self):
+        pass
+
+    def make_numpy_compatible_list(self, value):
+        pass
+
+
+class ArrayNP(dt_NP):
+    def __init__(self, array_dt: ArrayOf) -> None:
+        self.secop_dtype = array_dt
+
+        self.shape = []
+        self.root_dt = array_dt
+        while isinstance(self.root_dt, ArrayOf):
+            self.shape.append(self.root_dt.maxlen)
+            self.root_dt = self.root_dt.members
+
+    def make_numpy_dtype(self):
+        pass
+
+    def make_numpy_compatible_list(self, value):
+        pass
+
+
+class SECoPdtype:
+    def __init__(self, datatype: DataType) -> None:
+        self.dtype: DataType = datatype
+
+        self.root_dtype = datatype
+        self.shape = None
+
+        if isinstance(datatype, ArrayOf):
+            self.shape = []
+            while isinstance(self.root_dtype, ArrayOf):
+                self.shape.append(self.root_dtype.maxlen)
+                root_dt = self.root_dtype.members
+
+        self._is_composite = (
+            (True,) if isinstance(root_dt, (StructOf, TupleOf)) else False
+        )
+
+        if self._is_composite:
+            self.members = root_dt.members
+
+    def mkdt(self):
+        dt_list = []
+        if isinstance(secop_dt, StructOf):
+            for key, secop_dtype in secop_dt.members.items():
+                # Member is an array
+                shape = []
+                if isinstance(secop_dtype, ArrayOf):
+                    while isinstance(secop_dtype, ArrayOf):
+                        shape.append(secop_dtype.maxlen)
+                        secop_dtype = secop_dtype.members
+
+                # Member is a Tuple or Struct --> recursively call mkdt
+                if isinstance(secop_dtype, (StructOf, TupleOf)):
+                    dt_list.append((key, mkdt(secop_dtype), shape))
+                    continue
+
+                if shape == []:
+                    dt_list.append((key, SECOP2PY[secop_dtype.__class__]))
+                else:
+                    dt_list.append((key, SECOP2PY[secop_dtype.__class__], shape))
+
+        if isinstance(secop_dt, TupleOf):
+            for index, secop_dtype in enumerate(secop_dt.members):
+                if isinstance(secop_dtype, (StructOf, TupleOf)):
+                    dt_list.append(("idx" + str(index), mkdt(secop_dtype)))
+                    continue
+
+                dt_list.append(("idx" + str(index), SECOP2PY[secop_dtype.__class__]))
+
+        return dt_list
+
+
+class SECoPReading:
+    def __init__(
+        self,
+        SECoPdtype: DataType = None,
+        entry: CacheItem = None,
+    ) -> None:
+        if entry is None:
+            self.timestamp: float = time.time()
+            self.value = None
+            self.readerror = None
+            return
+
+        self.secop_dt: DataType = SECoPdtype
+
+        self.value = entry.value
+
+        self.timestamp = entry.timestamp
+
+        self.readerror = entry.readerror
+
+    def get_reading(self) -> Reading:
+        return {"value": self.value, "timestamp": self.timestamp}
+
+    def get_value(self):
+        return self.value
+
+    def set_reading(self, value) -> None:
+        self.value = value
+        self.timestamp = time.time()

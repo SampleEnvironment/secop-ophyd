@@ -6,6 +6,19 @@ import pytest
 from bluesky import RunEngine
 from databroker.v2 import temp
 from dotenv import load_dotenv
+from frappy.datatypes import (
+    ArrayOf,
+    BLOBType,
+    BoolType,
+    DataType,
+    EnumType,
+    FloatRange,
+    IntRange,
+    ScaledInteger,
+    StringType,
+    StructOf,
+    TupleOf,
+)
 from xprocess import ProcessStarter
 
 from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient
@@ -236,3 +249,117 @@ def nested_param_description():
             "readonly": True,
         }
     }
+
+
+@pytest.fixture
+def array_dtype():
+    dty = StructOf(
+        flt=FloatRange(), testarr=ArrayOf(members=IntRange(), minlen=5, maxlen=5)
+    )
+
+    elem = {"flt": 1.3, "testarr": [1, 2, 3, 4, 5]}
+    dty.check_type(elem)
+
+    return dty, elem
+
+
+@pytest.fixture
+def array_tuple_dtype():
+    dty = TupleOf(FloatRange(), ArrayOf(members=IntRange(), minlen=5, maxlen=5))
+
+    elem = {"flt": 1.3, "testarr": [1, 2, 3, 4, 5]}
+    dty.check_type(elem)
+
+    return dty, elem
+
+
+@pytest.fixture
+def array_ragged_dtype():
+    dty = StructOf(
+        flt=FloatRange(),
+        testarr=ArrayOf(
+            members=ArrayOf(members=IntRange(), minlen=1, maxlen=5), minlen=5, maxlen=5
+        ),
+    )
+
+    elem = {"flt": 1.3, "testarr": [[1, 2, 3], [1, 2, 3, 4, 5], [1, 2], [1], [1, 2, 5]]}
+    dty.check_type(elem)
+
+    return dty, elem
+
+
+@pytest.fixture
+def array_2D_dtype():
+    dty = StructOf(
+        flt=FloatRange(),
+        testarr=ArrayOf(
+            members=ArrayOf(members=IntRange(), minlen=5, maxlen=5), minlen=5, maxlen=5
+        ),
+    )
+
+    elem = {
+        "flt": 1.3,
+        "testarr": [
+            [1, 2, 3, 4, 5],
+            [1, 2, 3, 4, 5],
+            [1, 2, 3, 4, 5],
+            [1, 2, 3, 4, 5],
+            [1, 2, 3, 4, 5],
+        ],
+    }
+    dty.check_type(elem)
+
+    return dty, elem
+
+
+@pytest.fixture
+def array_of_structs_dtype():
+    dty = StructOf(
+        flt=FloatRange(),
+        testarr=ArrayOf(
+            members=StructOf(
+                red=FloatRange(),
+                green=FloatRange(),
+                blue=FloatRange(),
+                name=StringType(),
+            ),
+            minlen=5,
+            maxlen=5,
+        ),
+    )
+
+    elem = {
+        "flt": 1.3,
+        "testarr": [
+            {"red": 1.2, "green": 3.4, "blue": 24.5, "name": "dieter"},
+            {"red": 1.2, "green": 3.4, "blue": 24.5, "name": "dieter"},
+            {"red": 1.2, "green": 3.4, "blue": 24.5, "name": "dieter"},
+            {"red": 1.2, "green": 3.4, "blue": 24.5, "name": "dieter"},
+            {"red": 1.2, "green": 3.4, "blue": 24.5, "name": "dieter"},
+        ],
+    }
+    dty.check_type(elem)
+
+    return dty, elem
+
+
+@pytest.fixture
+def bare_array_of_structs_dtype():
+    dty = ArrayOf(
+        members=StructOf(
+            red=FloatRange(), green=FloatRange(), blue=FloatRange(), name=StringType()
+        ),
+        minlen=5,
+        maxlen=5,
+    )
+
+    elem = [
+        {"red": 1.2, "green": 3.4, "blue": 24.5, "name": "dieter"},
+        {"red": 1.2, "green": 3.4, "blue": 24.5, "name": "dieter"},
+        {"red": 1.2, "green": 3.4, "blue": 24.5, "name": "dieter"},
+        {"red": 1.2, "green": 3.4, "blue": 24.5, "name": "dieter"},
+        {"red": 1.2, "green": 3.4, "blue": 24.5, "name": "dieter"},
+    ]
+    dty.check_type(elem)
+
+    return dty, elem
