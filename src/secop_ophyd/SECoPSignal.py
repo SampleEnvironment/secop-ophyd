@@ -550,8 +550,5 @@ SECOP2DTYPE = {
     EnumType: "number",
     StringType: "string",
     BLOBType: "string",
-    ArrayOf: "array",
-    TupleOf: "string",  # but variing types of array elements
-    StructOf: "string",
-    CommandType: "string",
+
 }
