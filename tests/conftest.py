@@ -8,13 +8,8 @@ from databroker.v2 import temp
 from dotenv import load_dotenv
 from frappy.datatypes import (
     ArrayOf,
-    BLOBType,
-    BoolType,
-    DataType,
-    EnumType,
     FloatRange,
     IntRange,
-    ScaledInteger,
     StringType,
     StructOf,
     TupleOf,

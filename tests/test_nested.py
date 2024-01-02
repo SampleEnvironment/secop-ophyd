@@ -1,15 +1,11 @@
+import numpy as np
 from frappy.datatypes import DataType
 from frappy.errors import RangeError
 from ophyd_async.core.signal import SignalR, SignalRW
 
 from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient
-from secop_ophyd.SECoPDevices import (
-    SECoP_Node_Device,
-    SECoP_Struct_Device,
-    SECoP_Tuple_Device,
-    SECoPReadableDevice,
-)
-from secop_ophyd.util import Path
+from secop_ophyd.SECoPDevices import SECoP_Node_Device, SECoPReadableDevice
+from secop_ophyd.util import SECoPdtype
 
 
 async def test_nested_connect(nested_struct_sim, nested_node: SECoP_Node_Device):
@@ -18,32 +14,35 @@ async def test_nested_connect(nested_struct_sim, nested_node: SECoP_Node_Device)
 
 
 async def test_tuple_dev(nested_client: AsyncFrappyClient):
-    path = Path(module_name="ophy_struct", parameter_name="status")
+    ophy_struct = SECoPReadableDevice(
+        secclient=nested_client, module_name="ophy_struct"
+    )
 
-    status_dev = SECoP_Tuple_Device(path=path, secclient=nested_client)
+    status_sig: SignalR = ophy_struct.status
 
-    reading = await status_dev.read()
+    reading = await status_sig.read()
 
-    await status_dev.describe()
+    reading_val = reading[status_sig.name]["value"]
 
-    stat0 = status_dev._read_signals[0]
-    stat1 = status_dev._read_signals[1]
+    await status_sig.describe()
 
-    reading0 = reading[stat0.name]
-    reading1 = reading[stat1.name]
+    stat0 = reading_val["f0"]
+    stat1 = reading_val["f1"]
 
-    assert isinstance(reading0["value"], int)
+    assert isinstance(stat0, int)
 
-    assert isinstance(reading1["value"], str)
+    assert isinstance(stat1, str)
 
     await nested_client.disconnect(True)
 
 
 async def test_struct_dev(nested_client: AsyncFrappyClient):
-    path = Path(module_name="ophy_struct", parameter_name="nested_struct")
-    nested_dev = SECoP_Struct_Device(secclient=nested_client, path=path)
+    ophy_struct = SECoPReadableDevice(
+        secclient=nested_client, module_name="ophy_struct"
+    )
 
-    await nested_dev.read()
+    nested_struct_sig: SignalR = ophy_struct.nested_struct
+    await nested_struct_sig.read()
 
     await nested_client.disconnect(True)
 
@@ -62,8 +61,8 @@ async def test_nested_dtype_str_signal_generation(
     descr = descr_reading.get(target.name)
     val = reading.get(target.name)["value"]
 
-    assert isinstance(val, str)
-    assert descr["dtype"] == "string"
+    assert isinstance(val, np.ndarray)
+    assert descr["dtype"] == "array"
     assert descr["SECoPtype"] == "struct"
     await nested_node.disconnect()
 
@@ -75,21 +74,18 @@ async def test_nested_dtype_set_str_struct(
 
     target: SignalRW = struct_mod.target
 
-    target_dtype: DataType = target._backend.SECoPdtype_obj
+
 
     reading = await target.read()
 
     val = reading.get(target.name)["value"]
 
-    struct_val = target_dtype.from_string(val)
+    val["x"] = 20
+    val["y"] = 30
+    val["z"] = 40
+    val["color"] = "yellow"
 
-    struct_val = dict(struct_val)
-    struct_val["x"] = 20
-    struct_val["y"] = 30
-    struct_val["z"] = 40
-    struct_val["color"] = "yellow"
-
-    stat = target.set(str(struct_val))
+    stat = target.set(val)
 
     await stat
 
@@ -97,13 +93,11 @@ async def test_nested_dtype_set_str_struct(
 
     val = reading.get(target.name)["value"]
 
-    struct_val_read = target_dtype.from_string(val)
-
-    assert struct_val_read["x"] == 20
-    assert struct_val_read["y"] == 30
-    assert struct_val_read["z"] == 40
-    assert struct_val_read["color"] == "yellow"
-    assert isinstance(val, str)
+    assert val["x"] == 20
+    assert val["y"] == 30
+    assert val["z"] == 40
+    assert val["color"] == "yellow"
+    assert isinstance(val, np.ndarray)
 
     await nested_node.disconnect()
 

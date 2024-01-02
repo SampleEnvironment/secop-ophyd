@@ -2,35 +2,9 @@ import asyncio
 import time
 from typing import Any, TypeVar
 
-from bluesky.protocols import Reading
 from frappy.client import CacheItem, Logger, SecopClient
 
 T = TypeVar("T")
-
-
-class SECoPReading:
-    def __init__(self, entry: CacheItem = None) -> None:
-        if entry is None:
-            self.timestamp: float = time.time()
-            self.value = None
-            self.readerror = None
-            return
-
-        self.value = entry.value
-
-        self.timestamp = entry.timestamp
-
-        self.readerror = entry.readerror
-
-    def get_reading(self) -> Reading:
-        return {"value": self.value, "timestamp": self.timestamp}
-
-    def get_value(self):
-        return self.value
-
-    def set_reading(self, value) -> None:
-        self.value = value
-        self.timestamp = time.time()
 
 
 class AsyncFrappyClient:
@@ -86,17 +60,17 @@ class AsyncFrappyClient:
     async def disconnect(self, shutdown=True):
         await asyncio.to_thread(self.client.disconnect, shutdown)
 
-    async def getParameter(self, module, parameter, trycache=False):
+    async def getParameter(self, module, parameter, trycache=False) -> CacheItem:
         paramerter_reading = await asyncio.to_thread(
             self.client.getParameter, module, parameter, trycache
         )
-        return SECoPReading(paramerter_reading)
+        return paramerter_reading
 
-    async def setParameter(self, module, parameter, value):
+    async def setParameter(self, module, parameter, value) -> CacheItem:
         paramerter_reading = await asyncio.to_thread(
             self.client.setParameter, module, parameter, value
         )
-        return SECoPReading(paramerter_reading)
+        return paramerter_reading
 
     async def execCommand(self, module, command, argument=None) -> tuple[Any, dict]:
         return await asyncio.to_thread(

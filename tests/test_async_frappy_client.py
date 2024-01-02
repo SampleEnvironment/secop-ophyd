@@ -1,7 +1,9 @@
 import asyncio
 
+from frappy.client import CacheItem
+
 # import xprocess
-from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient, SECoPReading
+from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient
 
 
 async def test_asycnc_secopclient_conn(
@@ -16,7 +18,7 @@ async def test_asycnc_secopclient_get_Param(
 ):
     reading = await async_frappy_client.getParameter("cryo", "value", False)
 
-    assert isinstance(reading, SECoPReading)
+    assert isinstance(reading, CacheItem)
 
     await async_frappy_client.disconnect()
 
