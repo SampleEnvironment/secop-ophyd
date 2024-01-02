@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import copy
 import time
-from abc import abstractmethod
+from abc import ABC, abstractmethod
 from functools import reduce
 from itertools import chain
-from typing import List, Union,Any
+from typing import Any, List, Union
 
 import numpy as np
 from bluesky.protocols import Reading
@@ -22,7 +22,6 @@ from frappy.datatypes import (
     StringType,
     StructOf,
     TupleOf,
-    CommandType
 )
 
 SCALAR_DATATYPES = (
@@ -160,404 +159,376 @@ def is_Scalar_or_ArrayOf_scalar(type: DataType):
         return False
 
 
-SECOP2PY = {
-    IntRange: int,
-    FloatRange: float,
-    StringType: "U100",
-    BoolType: bool,
-    BLOBType: "U100",
-    ScaledInteger: int,
-    EnumType: int,
-}
-
-
-def mklist(secop_value: dict | tuple, secop_dt: DataType) -> list:
-    if isinstance(secop_dt, StructOf):
-        ret_val = tuple(
-            [
-                mklist(secop_value[key], member_dt)
-                for key, member_dt in secop_dt.members.items()
-            ]
-        )
-
-    elif isinstance(secop_dt, TupleOf):
-        ret_val = tuple(
-            [
-                mklist(secop_value[idx], member_dt)
-                for idx, member_dt in enumerate(secop_dt.members)
-            ]
-        )
-
-    else:
-        ret_val = secop_value
-
-    return ret_val
-
-
-def mk_np_arr(JSON_arr, secop_dt: DataType):
-    pass
-
-
-class dt_NP:
+class dt_NP(ABC):
     secop_dtype: DataType
-    name:[str|None]
+    name: str | None
 
     @abstractmethod
-    def make_numpy_dtype(self)-> tuple:
+    def make_numpy_dtype(self) -> tuple:
         """Create Numpy Compatible structured Datatype"""
 
     @abstractmethod
     def make_numpy_compatible_list(self, value) -> Any:
         """make a make a list that is ready for numpy array import"""
+
     @abstractmethod
-    def make_secop_compatible_object(self,value) -> Any:
+    def make_secop_compatible_object(self, value) -> Any:
         """make a make an SECoP Compatible Object"""
 
 
-def dt_factory(secop_dt: DataType,name:str = '') -> dt_NP:
+def dt_factory(secop_dt: DataType, name: str = "") -> dt_NP:
     dt_class = secop_dt.__class__
 
     dt_Converters = {
         StructOf: StructNP,
         TupleOf: TupleNP,
         ArrayOf: ArrayNP,
-        IntRange:IntNP,
-        FloatRange:FloatNP,
-        ScaledInteger:ScaledIntNP,
-        BLOBType:BLOBNP,
-        BoolType:BoolNP,
-        EnumType:EnumNP,
-        StringType:StringNP}
+        IntRange: IntNP,
+        FloatRange: FloatNP,
+        ScaledInteger: ScaledIntNP,
+        BLOBType: BLOBNP,
+        BoolType: BoolNP,
+        EnumType: EnumNP,
+        StringType: StringNP,
+    }
 
-    return dt_Converters[dt_class](secop_dt,name)
-
-
-
+    return dt_Converters[dt_class](secop_dt, name)  # type: ignore
 
 
-STR_LEN_DEFAULT  = 1000
+STR_LEN_DEFAULT = 100
 
 
 class BLOBNP(dt_NP):
-    def __init__(self,blob_dt: BLOBType,name:str= '') -> None:
-        self.name:str = name
-        self.secop_dtype:BLOBType = blob_dt
-        
-    def make_numpy_dtype(self)-> tuple:       
-        return (self.name,'U' + str(self.secop_dtype.maxbytes))
+    def __init__(self, blob_dt: BLOBType, name: str = "") -> None:
+        self.name: str = name
+        self.secop_dtype: BLOBType = blob_dt
 
+    def make_numpy_dtype(self) -> tuple:
+        return (self.name, "U" + str(self.secop_dtype.maxbytes))
 
-    def make_numpy_compatible_list(self, value:str):
-
+    def make_numpy_compatible_list(self, value: str):
         return value
-    
+
     def make_secop_compatible_object(self, value) -> Any:
         return value
+
 
 class BoolNP(dt_NP):
-    def __init__(self,bool_dt: BoolType,name:str= '') -> None:
-        self.name:str = name
-        self.secop_dtype:BoolType = bool_dt
+    def __init__(self, bool_dt: BoolType, name: str = "") -> None:
+        self.name: str = name
+        self.secop_dtype: BoolType = bool_dt
 
-    def make_numpy_dtype(self)-> tuple:
-        return (self.name,bool)
+    def make_numpy_dtype(self) -> tuple:
+        return (self.name, bool)
 
-    def make_numpy_compatible_list(self, value:bool):
+    def make_numpy_compatible_list(self, value: bool):
         return value
-    
+
     def make_secop_compatible_object(self, value) -> Any:
         return value
- 
-class EnumNP(dt_NP):
-    def __init__(self,enum_dt: EnumType,name:str= '') -> None:
-        self.name:str = name
-        self.secop_dtype:EnumType = enum_dt
 
-    def make_numpy_dtype(self)-> tuple:        
+
+class EnumNP(dt_NP):
+    def __init__(self, enum_dt: EnumType, name: str = "") -> None:
+        self.name: str = name
+        self.secop_dtype: EnumType = enum_dt
+
+    def make_numpy_dtype(self) -> tuple:
         return (self.name, int)
 
-    def make_numpy_compatible_list(self, value:int):
+    def make_numpy_compatible_list(self, value: int):
         return value
-    
+
     def make_secop_compatible_object(self, value) -> Any:
         return value
+
 
 class FloatNP(dt_NP):
-    def __init__(self,float_dt: FloatRange,name:str= '') -> None:
-        self.name:str = name
-        self.secop_dtype:FloatRange = float_dt
+    def __init__(self, float_dt: FloatRange, name: str = "") -> None:
+        self.name: str = name
+        self.secop_dtype: FloatRange = float_dt
 
-    def make_numpy_dtype(self)-> tuple:
-        return (self.name,float)
+    def make_numpy_dtype(self) -> tuple:
+        return (self.name, float)
 
-
-    def make_numpy_compatible_list(self, value:float):
+    def make_numpy_compatible_list(self, value: float):
         return value
 
     def make_secop_compatible_object(self, value) -> Any:
         return value
+
 
 class IntNP(dt_NP):
-    def __init__(self,int_dt: IntRange,name:str= '') -> None:
-        self.name:str = name
-        self.secop_dtype:IntRange = int_dt
+    def __init__(self, int_dt: IntRange, name: str = "") -> None:
+        self.name: str = name
+        self.secop_dtype: IntRange = int_dt
 
-    def make_numpy_dtype(self)-> tuple:
-        return (self.name,int)
+    def make_numpy_dtype(self) -> tuple:
+        return (self.name, int)
 
-
-    def make_numpy_compatible_list(self, value:int):
+    def make_numpy_compatible_list(self, value: int):
         return value
 
     def make_secop_compatible_object(self, value) -> Any:
         return value
-    
+
 
 class ScaledIntNP(dt_NP):
-    def __init__(self,scaled_int_dt: ScaledInteger,name:str= '') -> None:
-        self.name:str = name
-        self.secop_dtype:ScaledInteger = scaled_int_dt
+    def __init__(self, scaled_int_dt: ScaledInteger, name: str = "") -> None:
+        self.name: str = name
+        self.secop_dtype: ScaledInteger = scaled_int_dt
 
-    def make_numpy_dtype(self)-> tuple:
-        return  (self.name,int)
+    def make_numpy_dtype(self) -> tuple:
+        return (self.name, int)
 
-
-    def make_numpy_compatible_list(self, value:int):
+    def make_numpy_compatible_list(self, value: int):
         return value
-    
+
     def make_secop_compatible_object(self, value) -> Any:
         return value
+
 
 class StringNP(dt_NP):
-    def __init__(self,string_dt: StringType,name:str= '') -> None:
-        self.name:str = name
-        self.secop_dtype:StringType = string_dt
+    def __init__(self, string_dt: StringType, name: str = "") -> None:
+        self.name: str = name
+        self.secop_dtype: StringType = string_dt
 
-    def make_numpy_dtype(self)-> tuple:
-        strlen = self.secop_dtype.maxchars 
-        
+    def make_numpy_dtype(self) -> tuple:
+        strlen = self.secop_dtype.maxchars
+
         if self.secop_dtype.maxchars == 1 << 64:
-            Warning('maxchars was not set, default max char lenght is set to: '+ str(STR_LEN_DEFAULT))
+            Warning(
+                "maxchars was not set, default max char lenght is set to: "
+                + str(STR_LEN_DEFAULT)
+            )
             strlen = STR_LEN_DEFAULT
-        return (self.name,'U'+str(strlen))
+        return (self.name, "U" + str(strlen))
 
-
-    def make_numpy_compatible_list(self, value:str):
+    def make_numpy_compatible_list(self, value: str):
         return value
-    
+
     def make_secop_compatible_object(self, value) -> Any:
         return value
+
 
 class StructNP(dt_NP):
-    def __init__(self, struct_dt: StructOf,name:str= '') -> None:
-        self.name:str = name
-        self.secop_dtype:StructOf = struct_dt
-        self.members: dict[str,dt_NP]= {name:dt_factory(member,name) for (name,member) in struct_dt.members.items()}
+    def __init__(self, struct_dt: StructOf, name: str = "") -> None:
+        self.name: str = name
+        self.secop_dtype: StructOf = struct_dt
+        self.members: dict[str, dt_NP] = {
+            name: dt_factory(member, name)
+            for (name, member) in struct_dt.members.items()
+        }
 
-    def make_numpy_dtype(self)-> tuple:
+    def make_numpy_dtype(self) -> tuple:
         dt_list = []
-        for  member in self.members.values():
-            dt_list.append(member.make_numpy_dtype()) 
+        for member in self.members.values():
+            dt_list.append(member.make_numpy_dtype())
 
-        return (self.name,dt_list)
+        return (self.name, dt_list)
 
-    def make_numpy_compatible_list(self, value:dict):
-        return tuple([self.members[name].make_numpy_compatible_list(value[name]) for name in self.members.keys()])
+    def make_numpy_compatible_list(self, value: dict):
+        return tuple(
+            [
+                self.members[name].make_numpy_compatible_list(value[name])
+                for name in self.members.keys()
+            ]
+        )
 
     def make_secop_compatible_object(self, value) -> Any:
-        
-        return {member:np_dtype.make_secop_compatible_object(value=value[member]) for (member,np_dtype) in self.members.items() }
-
-
-
-
+        return {
+            member: np_dtype.make_secop_compatible_object(value=value[member])
+            for (member, np_dtype) in self.members.items()
+        }
 
 
 class TupleNP(dt_NP):
-    def __init__(self, tuple_dt: TupleOf,name:str= '') -> None:
-        self.name:str = name
+    def __init__(self, tuple_dt: TupleOf, name: str = "") -> None:
+        self.name: str = name
         self.secop_dtype = tuple_dt
         self.members: list[dt_NP] = [dt_factory(member) for member in tuple_dt.members]
 
-    def make_numpy_dtype(self)-> tuple:
+    def make_numpy_dtype(self) -> tuple:
         dt_list = []
-        for  member in self.members:
+        for member in self.members:
             dt_list.append(member.make_numpy_dtype())
 
-        return (self.name,dt_list)
+        return (self.name, dt_list)
 
-    def make_numpy_compatible_list(self, value:tuple):
-        return tuple([self.members[idx].make_numpy_compatible_list(value[idx]) for idx,member in enumerate(self.members)])
+    def make_numpy_compatible_list(self, value: tuple):
+        return tuple(
+            [
+                self.members[idx].make_numpy_compatible_list(value[idx])
+                for idx, member in enumerate(self.members)
+            ]
+        )
 
     def make_secop_compatible_object(self, value) -> Any:
-        
-        return tuple( [np_dtype.make_secop_compatible_object(value=value['f'+str(idx)]) for idx,np_dtype in enumerate(self.members) ])
+        return tuple(
+            [
+                np_dtype.make_secop_compatible_object(value=value["f" + str(idx)])
+                for idx, np_dtype in enumerate(self.members)
+            ]
+        )
 
-        
 
 class ArrayNP(dt_NP):
-    def __init__(self,array_dt: ArrayOf,name:str = '' ) -> None:
-        self.name:str = name
+    def __init__(self, array_dt: ArrayOf, name: str = "") -> None:
+        self.name: str = name
         self.secop_dtype = array_dt
         self.maxlen = array_dt.maxlen
         self.shape = [self.maxlen]
-        
-        
 
-        self.members:dt_NP = dt_factory(array_dt.members)
-        self.root_type:dt_NP|None = None
+        self.members: dt_NP = dt_factory(array_dt.members)
+        self.root_type: dt_NP
 
-         
-
-        if isinstance(self.members,ArrayNP):
+        if isinstance(self.members, ArrayNP):
             self.shape.extend(self.members.shape)
             self.root_type = self.members.root_type
             self.members.shape = []
-        
-        else:
 
+        else:
             self.root_type = self.members
 
-            
-
-
-
-        
-
-    def make_numpy_dtype(self)-> tuple:
+    def make_numpy_dtype(self) -> tuple:
         if self.shape == []:
             return self.members.make_numpy_dtype()
         else:
-            return (self.name,list(self.members.make_numpy_dtype()).pop(),self.shape)
-            
+            return (self.name, list(self.members.make_numpy_dtype()).pop(), self.shape)
 
+    def make_numpy_compatible_list(self, value: list):
+        return [self.members.make_numpy_compatible_list(elem) for elem in value]
 
-    def make_numpy_compatible_list(self, value:list):
-        return [ self.members.make_numpy_compatible_list(elem) for elem in value]
-        
     def make_secop_compatible_object(self, value: np.ndarray) -> Any:
-        return [ self.members.make_secop_compatible_object(value[idx]) for idx in range(0,self.maxlen)]
+        return [
+            self.members.make_secop_compatible_object(value[idx])
+            for idx in range(0, self.maxlen)
+        ]
+
 
 class SECoPdtype:
     def __init__(self, datatype: DataType) -> None:
         self.raw_dtype: DataType = datatype
 
-
         # Describe Fields ------------------------
 
-        self.dtype:str
+        self.dtype: str
 
         # The array-protocol typestring of the data-type object.
-        self.dtype_str:str
+        self.dtype_str: str
 
         # String representation of the numpy structured array dtype
-        self.dtype_descr:str
+        self.dtype_descr: str
 
         # string representation of the original secop datatype
-        self.secop_dtype_str:str
+        self.secop_dtype_str = datatype.export_datatype()
 
         # Shape of Data
         self.shape = []
 
-
         # Describe Fields ------------------------
 
-        self.numpy_dtype:np.dtype
-        
+        self.numpy_dtype: np.dtype
 
-        self.dtype_tree:dt_NP
+        self.dtype_tree: dt_NP
 
-        self._is_composite:bool = False
+        self._is_composite: bool = False
 
-        self.describe_dict:dict = {}
+        self.describe_dict: dict = {}
 
-        if isinstance(datatype, (TupleOf,StructOf,ArrayOf)):
-            self.dtype_tree = dt_factory(datatype)
+        self.dtype_tree = dt_factory(datatype)
 
-            if isinstance(self.dtype_tree,ArrayNP):
-                self.shape = self.dtype_tree.shape
-                self._is_composite = True if isinstance(self.dtype_tree.root_type,(StructNP,TupleNP)) else False
-            else:
-                self._is_composite = True
+        if isinstance(self.dtype_tree, ArrayNP):
+            self.shape = self.dtype_tree.shape
+            self._is_composite = (
+                True
+                if isinstance(self.dtype_tree.root_type, (StructNP, TupleNP))
+                else False
+            )
+
+        if isinstance(self.dtype_tree, (TupleNP, StructNP)):
+            self._is_composite = True
 
         # Composite Datatypes & Arrays of COmposite Datatypes
-        if self._is_composite:          
-
+        if self._is_composite:
             dt = self.dtype_tree.make_numpy_dtype()
 
-            # Top level Arrays are not a named dtype and shape of the array is already covered by the shape var
-            if isinstance(self.dtype_tree,ArrayNP):
-                dt = dt[1]
-             
+            # Top level elements are not named and shape is
+            # already covered by the shape var
+            dt = dt[1]
 
             self.numpy_dtype = np.dtype(dt)
 
-            # all composite Dtypes are transported as numpy arrays 
-            self.dtype = 'array'
-            
-        
+            # all composite Dtypes are transported as numpy arrays
+            self.dtype = "array"
 
             self.dtype_str = self.numpy_dtype.str
-            self.describe_dict['dtype_str'] = self.dtype_str
-            
-            self.dtype_descr = self.numpy_dtype.descr
-            self.describe_dict['dtype_descr'] = self.dtype_descr
-                
+            self.describe_dict["dtype_str"] = self.dtype_str
+
+            self.dtype_descr = str(self.numpy_dtype.descr)
+            self.describe_dict["dtype_descr"] = self.dtype_descr
+
         # Scalar atomic Datatypes and arrays of atomic dataypes
         else:
             self._is_composite = False
 
-            self.dtype = SECOP2DTYPE.get(datatype)
+            if isinstance(self.dtype_tree, ArrayNP):
+                # root secop datatype that is contained in the array
+                root_secop_dt = self.dtype_tree.root_type.secop_dtype
+                self.dtype = SECOP2DTYPE[root_secop_dt.__class__]
+            else:
+                self.dtype = SECOP2DTYPE[datatype.__class__]
 
-        self.describe_dict['dtype'] = self.dtype 
-        self.describe_dict['shape'] = self.shape 
+        self.describe_dict["dtype"] = self.dtype
+        self.describe_dict["shape"] = self.shape
+        self.describe_dict["SECOP_datainfo"] = self.secop_dtype_str
 
-
-    def _SECoP2NumpyArr(self, value) -> np.ndarray :
+    def _SECoP2NumpyArr(self, value) -> np.ndarray:
         np_list = self.dtype_tree.make_numpy_compatible_list(value)
 
-        return np.array(np_list,dtype=self.numpy_dtype)
-    
+        return np.array(np_list, dtype=self.numpy_dtype)
 
-    def SECoP2Val(self,reading_val) -> Any:
+    def SECoP2Val(self, reading_val) -> Any:
         if self._is_composite:
-            
             return self._SECoP2NumpyArr(reading_val)
-            
+
         else:
             return reading_val
-        
 
-    def Val2SECoP(self,input_val) -> Any:
-        if self._is_composite:
+    def Val2SECoP(self, input_val) -> Any:
+        # TODO check input_Val for conformity with datatype
+        # TODO check if it is already in SECoP Format
+
+        if self._is_composite and isinstance(input_val, np.ndarray):
             return self.dtype_tree.make_secop_compatible_object(input_val)
         else:
-            return input_val
-        
-
-
-        
+            return self.raw_dtype.validate(input_val)
 
 
 class SECoPReading:
     def __init__(
         self,
-        secop_dt:SECoPdtype = None,
-        entry: CacheItem = None,
+        secop_dt: SECoPdtype,
+        entry: CacheItem | None = None,
     ) -> None:
+        self.secop_dt: SECoPdtype = secop_dt
+
         if entry is None:
             self.timestamp: float = time.time()
             self.value = None
             self.readerror = None
+
             return
 
-        self.secop_dt: DataType = secop_dt
+        if entry.readerror is not None:
+            raise entry.readerror
 
-        self.value = secop_dt.SECoP2Val(entry.value)
+        exported_val = secop_dt.raw_dtype.export_value(entry.value)
+
+        self.value = secop_dt.SECoP2Val(exported_val)
+        self.secop_val = exported_val
 
         self.timestamp = entry.timestamp
-
-        self.readerror = entry.readerror
 
     def get_reading(self) -> Reading:
         return {"value": self.value, "timestamp": self.timestamp}
@@ -565,10 +536,13 @@ class SECoPReading:
     def get_value(self):
         return self.value
 
+    def get_secop_value(self):
+        return self.secop_val
+
     def set_reading(self, value) -> None:
         self.value = value
+        self.secop_val = self.secop_dt.Val2SECoP(value)
         self.timestamp = time.time()
-
 
 
 SECOP2DTYPE = {
@@ -580,5 +554,3 @@ SECOP2DTYPE = {
     StringType: "string",
     BLOBType: "string",
 }
-
-

@@ -1,7 +1,9 @@
 import asyncio
 
+from frappy.client import CacheItem
+
 # import xprocess
-from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient, SECoPReading
+from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient
 
 
 async def test_asycnc_secopclient_conn(
@@ -16,7 +18,7 @@ async def test_asycnc_secopclient_get_Param(
 ):
     reading = await async_frappy_client.getParameter("cryo", "value", False)
 
-    assert isinstance(reading, SECoPReading)
+    assert isinstance(reading, CacheItem)
 
     await async_frappy_client.disconnect()
 
@@ -34,10 +36,10 @@ async def test_async_secopclient_disconnect(
 async def test_async_secopclient_reconn(
     cryo_sim, async_frappy_client: AsyncFrappyClient
 ):
-    reading1 = await async_frappy_client.getParameter("cryo", "value", False)
-    reading2 = await async_frappy_client.getParameter("cryo", "value", False)
+    reading1: CacheItem = await async_frappy_client.getParameter("cryo", "value", False)
+    reading2: CacheItem = await async_frappy_client.getParameter("cryo", "value", False)
 
-    assert reading1.get_value() != reading2.get_value()
+    assert reading1.value != reading2.value
 
     await async_frappy_client.disconnect(False)
 
@@ -53,10 +55,10 @@ async def test_async_secopclient_reconn(
     assert async_frappy_client.state == "connected"
 
     # ensures we are connected and getting fresh data again
-    reading3 = await async_frappy_client.getParameter("cryo", "value", False)
-    reading4 = await async_frappy_client.getParameter("cryo", "value", False)
+    reading3: CacheItem = await async_frappy_client.getParameter("cryo", "value", False)
+    reading4: CacheItem = await async_frappy_client.getParameter("cryo", "value", False)
 
-    assert reading3.get_value() != reading4.get_value()
+    assert reading3.value != reading4.value
 
     await async_frappy_client.disconnect(True)
 
@@ -64,10 +66,10 @@ async def test_async_secopclient_reconn(
 async def test_async_secopclient_shutdown_and_reconn(
     cryo_sim, async_frappy_client: AsyncFrappyClient
 ):
-    reading1 = await async_frappy_client.getParameter("cryo", "value", False)
-    reading2 = await async_frappy_client.getParameter("cryo", "value", False)
+    reading1: CacheItem = await async_frappy_client.getParameter("cryo", "value", False)
+    reading2: CacheItem = await async_frappy_client.getParameter("cryo", "value", False)
 
-    assert reading1.get_value() != reading2.get_value()
+    assert reading1.value != reading2.value
 
     # Shutdown
     await async_frappy_client.disconnect(True)
@@ -89,6 +91,6 @@ async def test_async_secopclient_shutdown_and_reconn(
     reading1 = await async_frappy_client.getParameter("cryo", "value", False)
     reading2 = await async_frappy_client.getParameter("cryo", "value", False)
 
-    assert reading1.get_value() != reading2.get_value()
+    assert reading1.value != reading2.value
 
     await async_frappy_client.disconnect(True)

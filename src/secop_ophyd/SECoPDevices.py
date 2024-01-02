@@ -2,7 +2,6 @@ import asyncio
 import re
 import threading
 import time as ttime
-import warnings
 from typing import Dict, Iterator, Optional
 
 from bluesky.protocols import (
@@ -15,7 +14,7 @@ from bluesky.protocols import (
     Triggerable,
 )
 from frappy.client import Logger
-from frappy.datatypes import ArrayOf, CommandType, DataType, StructOf, TupleOf
+from frappy.datatypes import CommandType
 from ophyd_async.core.async_status import AsyncStatus
 from ophyd_async.core.signal import SignalR, SignalRW, SignalX, observe_value
 from ophyd_async.core.standard_readable import StandardReadable
@@ -28,9 +27,8 @@ from secop_ophyd.SECoPSignal import (
     SECoP_CMD_IO_Backend,
     SECoP_CMD_X_Backend,
     SECoP_Param_Backend,
-    atomic_dtypes,
 )
-from secop_ophyd.util import Path, deep_get, parseStructOf
+from secop_ophyd.util import Path
 
 # Predefined Status Codes
 DISABLED = 0
@@ -92,7 +90,7 @@ class SECoPBaseDevice(StandardReadable):
         # list for read signals
         self._read: list = []
 
-        self.status_code: SignalR = None
+        self.status: SignalR = None
 
     def _signal_from_parameter(self, path: Path, sig_name: str, readonly: str):
         # Normal types + (struct and tuple as JSON object Strings)
@@ -113,15 +111,18 @@ class SECoPBaseDevice(StandardReadable):
         """asynchronously waits until module is IDLE again. this is helpful,
         for running commands that are not done immediately
         """
-        if self.status_code is None:
+        if self.status is None:
             raise Exception("status Signal not initialized")
 
         # force reading of fresh status from device
-        await self.status_code.read(False)
+        await self.status.read(False)
 
         async def wait_for_idle():
-            async for current_stat in observe_value(self.status_code):
-                stat_code = current_stat[0].value
+            async for current_stat in observe_value(self.status):
+                # status is has type Tuple and is therefore transported as
+                # structured Numpy array ('f0':statuscode;'f1':status Message)
+
+                stat_code = current_stat["f0"]
 
                 # Module is in IDLE/WARN state
                 if IDLE <= stat_code < BUSY:
@@ -156,78 +157,19 @@ class SECoPReadableDevice(SECoPBaseDevice):
             setattr(self, property, SignalR(backend=propb))
             self._config.append(getattr(self, property))
 
-        # add status code signal to root device
-        # Path to status Parameter
-        stat_path = Path(parameter_name="status", module_name=module_name)
-
-        self.status_code = SignalR(
-            SECoP_Param_Backend(stat_path.append(0), secclient=self._secclient)
-        )
-
         # generate Signals from Module parameters eiter r or rw
         for parameter, properties in module_desc["parameters"].items():
             # generate new root path
             param_path = Path(parameter_name=parameter, module_name=module_name)
 
-            dtype: DataType = properties["datatype"]
-
-            # readonly propertyns to plans and plan stubs. IDEs such as vscode should now provide hints when using them. See screenshot below. Fix and update out-of-date docstrings on plans and plan stubs.
+            # readonly propertyns to plans and plan stubs.
             readonly = properties.get("readonly", None)
-
-            # sub devices for nested datatypes
-            match dtype:
-                # Tuple sub-device
-                case TupleOf():
-                    setattr(
-                        self,
-                        parameter + "_tuple",
-                        SECoP_Tuple_Device(
-                            path=param_path,
-                            secclient=secclient,
-                            status_sig=self.status_code,
-                        ),
-                    )
-
-                # Struct sub-device
-                case StructOf():
-                    if all(parseStructOf(dtype)):
-                        # struct only contains scalars or arrays of scalars
-                        for member_name, sigtype in dtype.members.items():
-                            sub_sig_path = param_path.append(member_name)
-
-                            # add signal for every structmember
-                            self._signal_from_parameter(
-                                path=sub_sig_path,
-                                sig_name=param_path._accessible_name
-                                + "_"
-                                + sub_sig_path.get_signal_name(),
-                                readonly=readonly,
-                            )
-
-                    else:
-                        # Struct contains nested datatypes, and gets its own subdevice
-                        setattr(
-                            self,
-                            parameter + "_struct",
-                            SECoP_Struct_Device(
-                                path=param_path,
-                                secclient=secclient,
-                                status_sig=self.status_code,
-                            ),
-                        )
-                case ArrayOf():
-                    if isinstance(dtype.members, (StructOf, TupleOf)):
-                        warnings.warn(
-                            """Arrays of composed datatypes are not supported.
-                            Array of tuples/structs is turned to Array of Strings"""
-                        )
-                # TODO write test for arrays of tuple/struct to check correct behaviour
 
             # Normal types + (struct and tuple as JSON object Strings)
             self._signal_from_parameter(
                 path=param_path,
                 sig_name=parameter,
-                readonly=properties.get("readonly", None),
+                readonly=readonly,
             )
 
         # Initialize Command Devices
@@ -236,7 +178,7 @@ class SECoPReadableDevice(SECoPBaseDevice):
             cmd_path = Path(parameter_name=command, module_name=module_name)
             setattr(
                 self,
-                command + "_dev",
+                command + "_CMD",
                 SECoP_CMD_Device(path=cmd_path, secclient=secclient),
             )
 
@@ -259,83 +201,6 @@ class SECoPReadableDevice(SECoPBaseDevice):
         # config
         elif path._accessible_name != "target":
             self._config.append(getattr(self, sig_name))
-
-
-class SECoP_Tuple_Device(SECoPBaseDevice):
-    """
-    used to recursively deconstruct the nonatomic "tuple"-SECoP-datatype
-    into subdevices/Signals
-    """
-
-    def __init__(
-        self, path: Path, secclient: AsyncFrappyClient, status_sig: SignalR = None
-    ):
-        """constructs tuple device from the SECoP tuple that "path" points to.
-
-        Args:
-            path (Path): path to the SECoP tuple within the secclient modules dict
-            secclient (AsyncFrappyClient): connected seccop client
-
-        """
-        super().__init__(secclient=secclient)
-
-        dev_name: str = path.get_signal_name() + "_tuple"
-
-        props = secclient.modules[path._module_name]["parameters"][
-            path._accessible_name
-        ]  # noqa: E501
-
-        datainfo = props[DATAINFO]
-
-        self.status_code = status_sig
-
-        for ix, member_info in enumerate(
-            deep_get(datainfo, path.get_memberinfo_path() + ["members"])
-        ):  # noqa: E501
-            # new path object for tuple member
-            tuplemember_path = path.append(ix)
-            attr_name = tuplemember_path.get_signal_name()
-
-            match member_info["type"]:
-                case "tuple":
-                    setattr(
-                        self,
-                        attr_name + "_tuple",
-                        SECoP_Tuple_Device(
-                            path=tuplemember_path,
-                            secclient=secclient,
-                            status_sig=status_sig,
-                        ),
-                    )
-                case "struct":
-                    setattr(
-                        self,
-                        attr_name + "_struct",
-                        SECoP_Struct_Device(
-                            path=tuplemember_path,
-                            secclient=secclient,
-                            status_sig=status_sig,
-                        ),
-                    )
-
-                # atomic datatypes & arrays
-                case _:
-                    self._signal_from_parameter(
-                        path=tuplemember_path,
-                        sig_name=attr_name,
-                        readonly=props.get("readonly", None),
-                    )
-
-        self.set_readable_signals(read=self._read)
-        self.set_name(dev_name)
-
-    def _signal_from_parameter(self, path: Path, sig_name: str, readonly: str):
-        super(SECoP_Tuple_Device, self)._signal_from_parameter(
-            path=path, sig_name=sig_name, readonly=readonly
-        )
-
-        # set all Signals Read signals
-        self._read.append(getattr(self, sig_name))
 
 
 class SECoPWritableDevice(SECoPReadableDevice):
@@ -365,11 +230,11 @@ class SECoPMoveableDevice(SECoPWritableDevice, Movable, Stoppable):
         await self.target.set(new_target, wait=False)
 
         # force reading of status from device
-        await self.status_code.read(False)
+        await self.status.read(False)
 
         # observe status and wait until dvice is IDLE again
-        async for current_stat in observe_value(self.status_code):
-            stat_code = current_stat[0].value
+        async for current_stat in observe_value(self.status):
+            stat_code = current_stat["f0"]
 
             if self._stopped is True:
                 break
@@ -395,84 +260,6 @@ class SECoPMoveableDevice(SECoPWritableDevice, Movable, Stoppable):
         self._stopped = True
 
 
-class SECoP_Struct_Device(SECoPBaseDevice):
-    """
-    used to recursively deconstruct the non atomic "struct"-SECoP-datatype
-    into subdevices/Signals
-    """
-
-    def __init__(
-        self, path: Path, secclient: AsyncFrappyClient, status_sig: SignalR = None
-    ):
-        """constructs struct device from the SECoP struct that "path" points to.
-
-        Args:
-            path (Path): path to the SECoP struct within the secclient modules dict
-            secclient (AsyncFrappyClient): connected seccop client
-
-        """
-
-        super().__init__(secclient=secclient)
-
-        dev_name: str = path.get_signal_name() + "_struct"
-
-        props = secclient.modules[path._module_name]["parameters"][
-            path._accessible_name
-        ]  # noqa: E501
-
-        datainfo = props[DATAINFO]
-
-        self.status_code = status_sig
-
-        for member_name, member_info in deep_get(
-            datainfo, path.get_memberinfo_path() + ["members"]
-        ).items():  # noqa: E501
-            # new path object for tuple member
-            struct_member_path = path.append(member_name)
-            attr_name = struct_member_path.get_signal_name()
-
-            match member_info["type"]:
-                case "tuple":
-                    setattr(
-                        self,
-                        attr_name + "_tuple",
-                        SECoP_Tuple_Device(
-                            path=struct_member_path,
-                            secclient=secclient,
-                            status_sig=status_sig,
-                        ),
-                    )
-                case "struct":
-                    setattr(
-                        self,
-                        attr_name + "_struct",
-                        SECoP_Struct_Device(
-                            path=struct_member_path,
-                            secclient=secclient,
-                            status_sig=status_sig,
-                        ),
-                    )
-
-                # atomic datatypes & arrays
-                case _:
-                    self._signal_from_parameter(
-                        path=struct_member_path,
-                        sig_name=attr_name,
-                        readonly=props.get("readonly", None),
-                    )
-
-        self.set_readable_signals(read=self._read)
-        self.set_name(dev_name)
-
-    def _signal_from_parameter(self, path: Path, sig_name: str, readonly: str):
-        super(SECoP_Struct_Device, self)._signal_from_parameter(
-            path=path, sig_name=sig_name, readonly=readonly
-        )
-
-        # set all Signals Read signals
-        self._read.append(getattr(self, sig_name))
-
-
 class SECoP_CMD_Device(StandardReadable, Flyable, Triggerable):
     """
     Command devices that have Signals for command args, return values and a signal
@@ -480,7 +267,7 @@ class SECoP_CMD_Device(StandardReadable, Flyable, Triggerable):
     """
 
     def __init__(self, path: Path, secclient: AsyncFrappyClient):
-        dev_name: str = path.get_signal_name() + "_cmd"
+        dev_name: str = path.get_signal_name() + "_CMD"
 
         self._secclient: AsyncFrappyClient = secclient
 
@@ -493,10 +280,8 @@ class SECoP_CMD_Device(StandardReadable, Flyable, Triggerable):
         arg_dtype = cmd_datatype.argument
         res_dtype = cmd_datatype.result
 
-        # Argument Signals (config Signals, can also be read)
-        arg_path = path.append("argument")
-        arguments = {}
-        result = {}
+        self.argument: SignalRW | None
+        self.result: SignalR | None
 
         # result signals
         read = []
@@ -504,65 +289,34 @@ class SECoP_CMD_Device(StandardReadable, Flyable, Triggerable):
         config = []
 
         self._start_time: float
-        self.sigx: SignalX
+        self.commandx: SignalX
 
-        if isinstance(arg_dtype, StructOf):
-            for signame, sig_desc in datainfo["argument"]["members"].items():
-                arg_backend = SECoP_CMD_IO_Backend(
-                    path=arg_path.append(signame),
-                    SECoPdtype_obj=arg_dtype.members.get(signame),
-                    sig_datainfo=sig_desc,
-                )
-
-                arguments[signame] = arg_backend
-
-                signame = signame + "_arg"
-                setattr(self, signame, SignalRW(arg_backend))
-                config.append(getattr(self, signame))
-
-        elif isinstance(arg_dtype, TupleOf):
-            raise NotImplementedError
-
-        elif isinstance(arg_dtype, atomic_dtypes):
+        # Argument Signals (config Signals, can also be read)
+        arg_path = path.append("argument")
+        if arg_dtype is None:
+            self.argument = None
+        else:
             arg_backend = SECoP_CMD_IO_Backend(
                 path=arg_path,
                 SECoPdtype_obj=arg_dtype,
                 sig_datainfo=datainfo["argument"],
             )
-            signame = path._accessible_name + "_arg"
-            setattr(self, signame, SignalRW(arg_backend))
-            config.append(getattr(self, signame))
-            arguments[signame] = arg_backend
+            self.argument = SignalRW(arg_backend)
+            config.append(self.argument)
 
         # Result Signals  (read Signals)
         res_path = path.append("result")
 
-        if isinstance(res_dtype, StructOf):
-            for signame, sig_desc in datainfo["result"]["members"].items():
-                res_backend = SECoP_CMD_IO_Backend(
-                    path=res_path.append(signame),
-                    SECoPdtype_obj=res_dtype.members.get(signame),
-                    sig_datainfo=sig_desc,
-                )
-                result[signame] = res_backend
-
-                signame = signame + "_res"
-                setattr(self, signame, SignalR(res_backend))
-                read.append(getattr(self, signame))
-
-        elif isinstance(res_dtype, TupleOf):
-            raise NotImplementedError
-
-        elif isinstance(res_dtype, atomic_dtypes):
+        if res_dtype is None:
+            self.result = None
+        else:
             res_backend = SECoP_CMD_IO_Backend(
                 path=res_path,
                 SECoPdtype_obj=res_dtype,
                 sig_datainfo=datainfo["result"],
             )
-            signame = path._accessible_name + "_res"
-            setattr(self, signame, SignalR(res_backend))
-            read.append(getattr(self, signame))
-            result[signame] = res_backend
+            self.result = SignalRW(res_backend)
+            read.append(self.argument)
 
         # SignalX (signal that triggers execution of the Command)
         exec_backend = SECoP_CMD_X_Backend(
@@ -570,12 +324,11 @@ class SECoP_CMD_Device(StandardReadable, Flyable, Triggerable):
             secclient=secclient,
             frappy_datatype=cmd_datatype,
             cmd_desc=cmd_props,
-            arguments=arguments,
-            result=result,
+            argument=None if self.argument is None else self.argument._backend,
+            result=None if self.result is None else self.result._backend,
         )
 
-        self.sigx = SignalX(exec_backend)
-        setattr(self, path._accessible_name + "_x", self.sigx)
+        self.commandx = SignalX(exec_backend)
 
         self.set_readable_signals(read=read, config=config)
 
@@ -589,18 +342,11 @@ class SECoP_CMD_Device(StandardReadable, Flyable, Triggerable):
         return AsyncStatus(coro, watchers=None)
 
     async def _exec_cmd(self):
-        stat = self.sigx.trigger()
+        stat = self.commandx.trigger()
 
         await stat
 
-        await self.parent.status_code.read()
-
-        async for current_stat in observe_value(self.parent.status_code):
-            stat_code = current_stat[0].value
-
-            # Module not Busy anymore
-            if stat_code < BUSY or stat_code >= ERROR:
-                break
+        await self.parent.wait_for_IDLE()
 
     def complete(self) -> AsyncStatus:
         coro = asyncio.wait_for(fut=self._exec_cmd(), timeout=None)
