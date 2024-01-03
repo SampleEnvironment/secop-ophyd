@@ -214,7 +214,7 @@ class SECoP_Param_Backend(SignalBackend):
 
         self.datatype: str
         self.SECoPdtype_str: str
-        self.SECoPdtype_obj: DataType
+        self.SECoPdtype_obj: DataType = self._param_description['datatype']
 
         self.SECoP_type_info: SECoPdtype = SECoPdtype(self.SECoPdtype_obj)
 
@@ -240,7 +240,7 @@ class SECoP_Param_Backend(SignalBackend):
 
         for property_name, prop_val in self._param_description.items():
             # skip datainfo (treated seperately)
-            if property_name == "datainfo":
+            if property_name == "datainfo" or property_name == "datatype":
                 continue
             self.describe_dict[property_name] = prop_val
 
@@ -289,7 +289,7 @@ class SECoP_Param_Backend(SignalBackend):
             return async_func
 
         def updateItem(module, parameter, entry: CacheItem):
-            data = SECoPReading(entry)
+            data = SECoPReading(secop_dt=self.SECoP_type_info,entry=entry)
             async_callback = awaitify(callback)
 
             asyncio.run_coroutine_threadsafe(
@@ -391,14 +391,4 @@ class ReadonlyError(Exception):
 # TODO: Array: shape for now only for the first Dim, later maybe recursive??
 
 
-# Tuple and struct are handled in a special way. They are unfolded into subdevices
 
-SECOP2DTYPE = {
-    FloatRange: "number",
-    IntRange: "number",
-    ScaledInteger: "number",
-    BoolType: "boolean",
-    EnumType: "number",
-    StringType: "string",
-    BLOBType: "string",
-}

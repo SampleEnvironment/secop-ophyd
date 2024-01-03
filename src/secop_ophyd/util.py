@@ -159,15 +159,7 @@ def is_Scalar_or_ArrayOf_scalar(type: DataType):
         return False
 
 
-SECOP2PY = {
-    IntRange: int,
-    FloatRange: float,
-    StringType: "U100",
-    BoolType: bool,
-    BLOBType: "U100",
-    ScaledInteger: int,
-    EnumType: int,
-}
+
 
 
 class dt_NP(ABC):
@@ -206,7 +198,7 @@ def dt_factory(secop_dt: DataType, name: str = "") -> dt_NP:
     return dt_Converters[dt_class](secop_dt, name)  # type: ignore
 
 
-STR_LEN_DEFAULT = 1000
+STR_LEN_DEFAULT = 100
 
 
 class BLOBNP(dt_NP):
@@ -483,7 +475,7 @@ class SECoPdtype:
         else:
             self._is_composite = False
 
-            self.dtype = SECOP2DTYPE[datatype]
+            self.dtype = SECOP2DTYPE.get(datatype.__class__)
 
         self.describe_dict["dtype"] = self.dtype
         self.describe_dict["shape"] = self.shape

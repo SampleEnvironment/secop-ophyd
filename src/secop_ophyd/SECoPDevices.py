@@ -90,7 +90,7 @@ class SECoPBaseDevice(StandardReadable):
         # list for read signals
         self._read: list = []
 
-        self.status_code: SignalR = None
+        self.status: SignalR = None
 
     def _signal_from_parameter(self, path: Path, sig_name: str, readonly: str):
         # Normal types + (struct and tuple as JSON object Strings)
@@ -111,15 +111,17 @@ class SECoPBaseDevice(StandardReadable):
         """asynchronously waits until module is IDLE again. this is helpful,
         for running commands that are not done immediately
         """
-        if self.status_code is None:
+        if self.status is None:
             raise Exception("status Signal not initialized")
 
         # force reading of fresh status from device
-        await self.status_code.read(False)
+        await self.status.read(False)
 
         async def wait_for_idle():
-            async for current_stat in observe_value(self.status_code):
-                stat_code = current_stat[0].value
+            async for current_stat in observe_value(self.status):
+                # status is has type Tuple and is therefore transported as
+                # structured Numpy array ('f0':statuscode;'f1':status Message)
+                stat_code = current_stat['f0'].value
 
                 # Module is in IDLE/WARN state
                 if IDLE <= stat_code < BUSY:
@@ -154,13 +156,7 @@ class SECoPReadableDevice(SECoPBaseDevice):
             setattr(self, property, SignalR(backend=propb))
             self._config.append(getattr(self, property))
 
-        # add status code signal to root device
-        # Path to status Parameter
-        stat_path = Path(parameter_name="status", module_name=module_name)
 
-        self.status_code = SignalR(
-            SECoP_Param_Backend(stat_path.append(0), secclient=self._secclient)
-        )
 
         # generate Signals from Module parameters eiter r or rw
         for parameter, properties in module_desc["parameters"].items():
@@ -235,11 +231,13 @@ class SECoPMoveableDevice(SECoPWritableDevice, Movable, Stoppable):
         await self.target.set(new_target, wait=False)
 
         # force reading of status from device
-        await self.status_code.read(False)
+        await self.status.read(False)
 
+ 
         # observe status and wait until dvice is IDLE again
-        async for current_stat in observe_value(self.status_code):
-            stat_code = current_stat[0].value
+        async for current_stat in observe_value(self.status):
+
+            stat_code = current_stat['f0']
 
             if self._stopped is True:
                 break
