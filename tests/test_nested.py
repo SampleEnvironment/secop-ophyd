@@ -1,11 +1,8 @@
 import numpy as np
-from frappy.datatypes import DataType
-from frappy.errors import RangeError
 from ophyd_async.core.signal import SignalR, SignalRW
 
 from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient
 from secop_ophyd.SECoPDevices import SECoP_Node_Device, SECoPReadableDevice
-from secop_ophyd.util import SECoPdtype
 
 
 async def test_nested_connect(nested_struct_sim, nested_node: SECoP_Node_Device):
@@ -29,9 +26,9 @@ async def test_tuple_dev(nested_client: AsyncFrappyClient):
     stat0 = reading_val["f0"]
     stat1 = reading_val["f1"]
 
-    assert isinstance(stat0, int)
+    assert stat0.item() == 300  # isinstance(stat0, int)
 
-    assert isinstance(stat1, str)
+    assert isinstance(stat1.item(), str)
 
     await nested_client.disconnect(True)
 
@@ -74,8 +71,6 @@ async def test_nested_dtype_set_str_struct(
 
     target: SignalRW = struct_mod.target
 
-
-
     reading = await target.read()
 
     val = reading.get(target.name)["value"]
@@ -109,22 +104,18 @@ async def test_nested_dtype_set_str_tuple(
 
     tuple_param: SignalRW = struct_mod.tuple_param
 
-    target_dtype: DataType = tuple_param._backend.SECoPdtype_obj
-
     reading = await tuple_param.read()
 
     val = reading.get(tuple_param.name)["value"]
 
-    tuple_val = target_dtype.from_string(val)
-
-    assert tuple_val[0] == 5
-    assert tuple_val[1] == 5
-    assert tuple_val[2] == 5
-    assert tuple_val[3] == "green"
+    assert val["f0"] == 5
+    assert val["f1"] == 5
+    assert val["f2"] == 5
+    assert val["f3"] == "green"
 
     tuple_val = (50, 20, 30, "blue")
 
-    stat = tuple_param.set(str(tuple_val))
+    stat = tuple_param.set(tuple_val)
 
     await stat
 
@@ -132,13 +123,11 @@ async def test_nested_dtype_set_str_tuple(
 
     val = reading.get(tuple_param.name)["value"]
 
-    tuple_val_read = target_dtype.from_string(val)
-
-    assert tuple_val_read[0] == 50
-    assert tuple_val_read[1] == 20
-    assert tuple_val_read[2] == 30
-    assert tuple_val_read[3] == "blue"
-    assert isinstance(val, str)
+    assert val["f0"] == 50
+    assert val["f1"] == 20
+    assert val["f2"] == 30
+    assert val["f3"] == "blue"
+    assert isinstance(val, np.ndarray)
 
     await nested_node.disconnect()
 
@@ -148,64 +137,33 @@ async def test_nested_struct_of_arrays(
 ):
     str_of_arr_mod: SECoPReadableDevice = nested_node.struct_of_arrays
 
-    floats: SignalR = str_of_arr_mod.value_floats
+    reading = await str_of_arr_mod.read()
 
-    reading = await floats.read()
+    val = reading[str_of_arr_mod.value.name]["value"]
 
-    val = reading[floats.name]["value"]
-
-    assert isinstance(val, list)
-
-    reading2 = await floats.read()
-
-    val2 = reading2[floats.name]["value"]
-
-    # check if lists are not equal
-    assert all(x != y for x, y in zip(val, val2))
-
-    dev_reading = await str_of_arr_mod.read()
-
-    # one for each struct member and one where the whole struct is converted to a string
-    assert len(dev_reading) == 4
-
-    # check if struct was converted to string
-    assert isinstance(dev_reading[str_of_arr_mod.value.name]["value"], str)
+    assert isinstance(val, np.ndarray)
 
     # Write testing
-    wfloats: SignalRW = str_of_arr_mod.writable_strct_of_arr_floats
-    wints: SignalRW = str_of_arr_mod.writable_strct_of_arr_ints
+    RW_str_of_arr: SignalRW = str_of_arr_mod.writable_strct_of_arr
 
-    floats_reading = await wfloats.read()
-    ints_reading = await wints.read()
+    RW_reading = await RW_str_of_arr.read()
 
-    floats_val = floats_reading[wfloats.name]["value"]
-    ints_val = ints_reading[wints.name]["value"]
+    RW_val: np.ndarray = RW_reading[RW_str_of_arr.name]["value"]
 
-    floats_new_val = [x + 20 for x in floats_val]
+    RW_old = RW_val.copy()
 
-    await wfloats.set(floats_new_val)
+    RW_val["ints"] += 20
+    RW_val["floats"] += 0.2
 
-    floats_reading = await wfloats.read()
-    ints_reading = await wints.read()
+    await RW_str_of_arr.set(RW_val)
 
-    floats_new_val_remote = floats_reading[wfloats.name]["value"]
-    ints_new_val = ints_reading[wints.name]["value"]
+    RW_reading = await RW_str_of_arr.read()
 
-    assert all(x == y for x, y in zip(floats_new_val, floats_new_val_remote))
-    assert all(x == y for x, y in zip(ints_val, ints_new_val))
+    RW_val = RW_reading[RW_str_of_arr.name]["value"]
 
-    await nested_node.disconnect()
+    assert np.equal(RW_val["ints"], RW_old["ints"] + 20).all()
 
-
-async def test_nested_readerr(nested_struct_sim, nested_node: SECoP_Node_Device):
-    str_of_arr_mod: SECoPReadableDevice = nested_node.struct_of_arrays_readerr
-
-    floats: SignalR = str_of_arr_mod.value_floats
-
-    try:
-        await floats.read()
-    except RangeError:
-        pass
+    assert np.equal(RW_val["floats"], RW_old["floats"] + 0.2).all()
 
     await nested_node.disconnect()
 

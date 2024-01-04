@@ -2,8 +2,8 @@ import asyncio
 
 import numpy as np
 import xprocess
+from ophyd_async.core import SignalR, observe_value
 from xprocess import ProcessStarter, XProcessInfo
-from ophyd_async.core import SignalR,observe_value
 
 from secop_ophyd.SECoPDevices import SECoP_Node_Device, SECoPMoveableDevice
 
@@ -27,12 +27,15 @@ async def test_node_describe(cryo_sim, cryo_node_internal_loop: SECoP_Node_Devic
     await cryo_node_internal_loop.disconnect()
 
 
-async def test_node_module_describe(cryo_sim, cryo_node_internal_loop: SECoP_Node_Device):
+async def test_node_module_describe(
+    cryo_sim, cryo_node_internal_loop: SECoP_Node_Device
+):
     # Node device has no read value, it has to return an empty dict
     val_desc = await cryo_node_internal_loop.cryo.describe_configuration()
     conf = await cryo_node_internal_loop.cryo.read_configuration()
 
     assert val_desc != {}
+    assert conf != {}
     await cryo_node_internal_loop.disconnect()
 
 
@@ -48,18 +51,16 @@ async def test_dev_read(cryo_sim, cryo_node_internal_loop: SECoP_Node_Device):
 async def test_status(cryo_sim, cryo_node_internal_loop: SECoP_Node_Device):
     # Node device has no read value, it has to return an empty dict
     cryo_dev: SECoPMoveableDevice = cryo_node_internal_loop.cryo
-    status:SignalR = cryo_dev.status
+    status: SignalR = cryo_dev.status
 
-    stat_reading= await status.read()
-    
+    stat_reading = await status.read()
+
     stat_val = stat_reading[status.name].get("value")
 
-
     async for current_stat in observe_value(status):
-            print(current_stat)
+        print(current_stat)
 
-    
-    print(stat_val['f0'])
+    print(stat_val["f0"])
     await cryo_node_internal_loop.disconnect()
 
 

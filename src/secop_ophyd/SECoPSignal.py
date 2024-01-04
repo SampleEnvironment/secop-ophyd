@@ -11,7 +11,6 @@ from frappy.datatypes import (
     BoolType,
     CommandType,
     DataType,
-    EnumType,
     FloatRange,
     IntRange,
     ScaledInteger,
@@ -83,7 +82,7 @@ class SECoP_CMD_IO_Backend(SignalBackend):
 
         for property_name, prop_val in self.datainfo.items():
             if property_name == "type":
-                property_name = "SECoPtype"
+                property_name = "SECoP_dtype"
             self.describe_dict[property_name] = prop_val
 
     async def connect(self):
@@ -144,7 +143,7 @@ class SECoP_CMD_X_Backend(SignalBackend):
         if self.argument is None:
             argument = None
         else:
-            argument = self.argument.value
+            argument = await self.argument.get_value()
 
         res, qualifiers = await asyncio.wait_for(
             fut=self._secclient.execCommand(
@@ -214,7 +213,7 @@ class SECoP_Param_Backend(SignalBackend):
 
         self.datatype: str
         self.SECoPdtype_str: str
-        self.SECoPdtype_obj: DataType = self._param_description['datatype']
+        self.SECoPdtype_obj: DataType = self._param_description["datatype"]
 
         self.SECoP_type_info: SECoPdtype = SECoPdtype(self.SECoPdtype_obj)
 
@@ -289,7 +288,7 @@ class SECoP_Param_Backend(SignalBackend):
             return async_func
 
         def updateItem(module, parameter, entry: CacheItem):
-            data = SECoPReading(secop_dt=self.SECoP_type_info,entry=entry)
+            data = SECoPReading(secop_dt=self.SECoP_type_info, entry=entry)
             async_callback = awaitify(callback)
 
             asyncio.run_coroutine_threadsafe(
@@ -389,6 +388,3 @@ class ReadonlyError(Exception):
 
 
 # TODO: Array: shape for now only for the first Dim, later maybe recursive??
-
-
-

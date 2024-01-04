@@ -159,9 +159,6 @@ def is_Scalar_or_ArrayOf_scalar(type: DataType):
         return False
 
 
-
-
-
 class dt_NP(ABC):
     secop_dtype: DataType
     name: str | None
@@ -475,7 +472,7 @@ class SECoPdtype:
         else:
             self._is_composite = False
 
-            self.dtype = SECOP2DTYPE.get(datatype.__class__)
+            self.dtype = SECOP2DTYPE[datatype.__class__]
 
         self.describe_dict["dtype"] = self.dtype
         self.describe_dict["shape"] = self.shape
@@ -496,28 +493,30 @@ class SECoPdtype:
     def Val2SECoP(self, input_val) -> Any:
         # TODO check input_Val for conformity with datatype
         # TODO check if it is already in SECoP Format
-        if self._is_composite:
+
+        if self._is_composite and isinstance(input_val, np.ndarray):
             return self.dtype_tree.make_secop_compatible_object(input_val)
         else:
-            return input_val
+            return self.raw_dtype.validate(input_val)
 
 
 class SECoPReading:
     def __init__(
         self,
         secop_dt: SECoPdtype,
-        entry: CacheItem = None,
+        entry: CacheItem | None = None,
     ) -> None:
+        self.secop_dt: SECoPdtype = secop_dt
+
         if entry is None:
             self.timestamp: float = time.time()
             self.value = None
             self.readerror = None
+
             return
 
         if entry.readerror is not None:
             raise entry.readerror
-
-        self.secop_dt: SECoPdtype = secop_dt
 
         exported_val = secop_dt.raw_dtype.export_value(entry.value)
 

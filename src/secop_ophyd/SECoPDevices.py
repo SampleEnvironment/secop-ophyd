@@ -121,7 +121,8 @@ class SECoPBaseDevice(StandardReadable):
             async for current_stat in observe_value(self.status):
                 # status is has type Tuple and is therefore transported as
                 # structured Numpy array ('f0':statuscode;'f1':status Message)
-                stat_code = current_stat['f0'].value
+
+                stat_code = current_stat["f0"]
 
                 # Module is in IDLE/WARN state
                 if IDLE <= stat_code < BUSY:
@@ -155,8 +156,6 @@ class SECoPReadableDevice(SECoPBaseDevice):
 
             setattr(self, property, SignalR(backend=propb))
             self._config.append(getattr(self, property))
-
-
 
         # generate Signals from Module parameters eiter r or rw
         for parameter, properties in module_desc["parameters"].items():
@@ -233,11 +232,9 @@ class SECoPMoveableDevice(SECoPWritableDevice, Movable, Stoppable):
         # force reading of status from device
         await self.status.read(False)
 
- 
         # observe status and wait until dvice is IDLE again
         async for current_stat in observe_value(self.status):
-
-            stat_code = current_stat['f0']
+            stat_code = current_stat["f0"]
 
             if self._stopped is True:
                 break
@@ -292,7 +289,7 @@ class SECoP_CMD_Device(StandardReadable, Flyable, Triggerable):
         config = []
 
         self._start_time: float
-        self.sigx: SignalX
+        self.commandx: SignalX
 
         # Argument Signals (config Signals, can also be read)
         arg_path = path.append("argument")
@@ -318,7 +315,7 @@ class SECoP_CMD_Device(StandardReadable, Flyable, Triggerable):
                 SECoPdtype_obj=res_dtype,
                 sig_datainfo=datainfo["result"],
             )
-            self.argument = SignalRW(res_backend)
+            self.result = SignalRW(res_backend)
             read.append(self.argument)
 
         # SignalX (signal that triggers execution of the Command)
@@ -327,12 +324,11 @@ class SECoP_CMD_Device(StandardReadable, Flyable, Triggerable):
             secclient=secclient,
             frappy_datatype=cmd_datatype,
             cmd_desc=cmd_props,
-            argument=self.argument,
-            result=self.result,
+            argument=None if self.argument is None else self.argument._backend,
+            result=None if self.result is None else self.result._backend,
         )
 
-        self.sigx = SignalX(exec_backend)
-        setattr(self, path._accessible_name + "_x", self.sigx)
+        self.commandx = SignalX(exec_backend)
 
         self.set_readable_signals(read=read, config=config)
 
@@ -346,18 +342,11 @@ class SECoP_CMD_Device(StandardReadable, Flyable, Triggerable):
         return AsyncStatus(coro, watchers=None)
 
     async def _exec_cmd(self):
-        stat = self.sigx.trigger()
+        stat = self.commandx.trigger()
 
         await stat
 
-        await self.parent.status_code.read()
-
-        async for current_stat in observe_value(self.parent.status_code):
-            stat_code = current_stat[0].value
-
-            # Module not Busy anymore
-            if stat_code < BUSY or stat_code >= ERROR:
-                break
+        await self.parent.wait_for_IDLE()
 
     def complete(self) -> AsyncStatus:
         coro = asyncio.wait_for(fut=self._exec_cmd(), timeout=None)
