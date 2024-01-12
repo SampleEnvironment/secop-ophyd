@@ -1,10 +1,11 @@
-import pytest
-from secop_ophyd.SECoPDevices import SECoP_Node_Device, SECoPMoveableDevice
-import numpy as np
-from xprocess import ProcessStarter, XProcessInfo
-import xprocess
-
 import asyncio
+
+import numpy as np
+import xprocess
+from ophyd_async.core import SignalR, observe_value
+from xprocess import ProcessStarter, XProcessInfo
+
+from secop_ophyd.SECoPDevices import SECoP_Node_Device, SECoPMoveableDevice
 
 
 async def test_node_structure(cryo_sim, cryo_node_internal_loop: SECoP_Node_Device):
@@ -26,12 +27,41 @@ async def test_node_describe(cryo_sim, cryo_node_internal_loop: SECoP_Node_Devic
     await cryo_node_internal_loop.disconnect()
 
 
+async def test_node_module_describe(
+    cryo_sim, cryo_node_internal_loop: SECoP_Node_Device
+):
+    # Node device has no read value, it has to return an empty dict
+    val_desc = await cryo_node_internal_loop.cryo.describe_configuration()
+    conf = await cryo_node_internal_loop.cryo.read_configuration()
+
+    assert val_desc != {}
+    assert conf != {}
+    await cryo_node_internal_loop.disconnect()
+
+
 async def test_dev_read(cryo_sim, cryo_node_internal_loop: SECoP_Node_Device):
     # Node device has no read value, it has to return an empty dict
     cryo_dev: SECoPMoveableDevice = cryo_node_internal_loop.cryo
     cryo_val = await cryo_dev.read()
     val_name = cryo_dev.value.name
     assert cryo_val[val_name].get("value") > 5
+    await cryo_node_internal_loop.disconnect()
+
+
+async def test_status(cryo_sim, cryo_node_internal_loop: SECoP_Node_Device):
+    # Node device has no read value, it has to return an empty dict
+    cryo_dev: SECoPMoveableDevice = cryo_node_internal_loop.cryo
+    status: SignalR = cryo_dev.status
+
+    stat_reading = await status.read()
+
+    stat_val = stat_reading[status.name].get("value")
+
+    async for current_stat in observe_value(status):
+        if current_stat["f0"] == 100:
+            break
+
+    print(stat_val["f0"])
     await cryo_node_internal_loop.disconnect()
 
 
@@ -68,23 +98,25 @@ async def test_node_drive(cryo_sim, cryo_node_internal_loop: SECoP_Node_Device):
 
 
 async def test_node_reconn(
-    cryo_sim: xprocess,
-    cryo_node_internal_loop: SECoP_Node_Device,
+    cryo_sim: xprocess, cryo_node_internal_loop: SECoP_Node_Device, env_vars
 ):
+    frappy_dir, env_dict = env_vars
+
     class Starter(ProcessStarter):
         # startup pattern
         pattern = ".*: startup done, handling transport messages"
-        timeout = 10
+        timeout = 5
         # command to start process
+        env = env_dict
         args = [
             "python3",
-            "../../../../frappy/bin/frappy-server",
+            frappy_dir + "/bin/frappy-server",
             "-c",
-            "../../../../frappy/cfg/cryo_cfg.py",
+            frappy_dir + "/cfg/cryo_cfg.py",
             "cryo",
         ]
 
-    cryo_dev: SECoPMoveableDevice = cryo_node_internal_loop.cryo
+    # cryo_dev: SECoPMoveableDevice = cryo_node_internal_loop.cryo
 
     old_conf = await cryo_node_internal_loop.read_configuration()
 

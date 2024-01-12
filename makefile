@@ -1,24 +1,30 @@
 
-
+export WORK_DIR := ${PWD}
+export PATH_VAR := ${PATH}
 
 test: venv  ## 🎯 Unit tests for Bluesky SECoP Integration
 	. .venv/bin/activate && pytest -v . --ignore=frappy
+	
 
 
 
 
 
 
+.env: 
+	echo "WORK_DIR=${WORK_DIR}\nPATH_VAR=${PATH_VAR}" > .env
 
 
-venv: .venv/touchfile
+venv: .env .venv/touchfile
 
 .venv/touchfile: pyproject.toml 
 	python3 -m venv .venv
-	. .venv/bin/activate; pip install --upgrade pip; pip install .[dev]
+	. .venv/bin/activate; pip install --upgrade pip; pip install -e .[dev]
 	touch .venv/touchfile
 
 
+pretty: venv .env
+	. .venv/bin/activate; black src tests; isort src tests; flake8 src tests; mypy src tests
 
 clean:  ## 🧹 Clean up project
 	rm -rf .venv
@@ -32,3 +38,5 @@ clean:  ## 🧹 Clean up project
 	rm -rf *egg-info
 	rm -rf build
 	rm -rf dist
+	rm -rf .env
+

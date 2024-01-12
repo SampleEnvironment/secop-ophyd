@@ -1,36 +1,26 @@
-from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient, SECoPReading
-from secop_ophyd.util import deep_get, Path
-from typing import Any, Dict, Optional
+import asyncio
+import collections.abc
+from functools import wraps
+from typing import Any, Callable, Dict, Optional
 
-from ophyd_async.core.signal_backend import SignalBackend
-from ophyd_async.core.utils import T
-from bluesky.protocols import Reading, Descriptor
-
+from bluesky.protocols import Descriptor, Reading
+from frappy.client import CacheItem
 from frappy.datatypes import (
-    StructOf,
-    TupleOf,
-    CommandType,
-    DataType,
-    IntRange,
-    FloatRange,
-    StringType,
+    ArrayOf,
     BLOBType,
     BoolType,
+    CommandType,
+    DataType,
+    FloatRange,
+    IntRange,
     ScaledInteger,
-    ArrayOf,
-    EnumType,
+    StringType,
 )
+from ophyd_async.core.signal_backend import SignalBackend
+from ophyd_async.core.utils import T
 
-
-from frappy.client import CacheItem
-import collections.abc
-import asyncio
-import copy
-
-from functools import wraps
-
-
-from typing import Callable
+from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient
+from secop_ophyd.util import Path, SECoPdtype, SECoPReading, deep_get
 
 atomic_dtypes = (
     StringType,
@@ -64,8 +54,11 @@ class SECoP_CMD_IO_Backend(SignalBackend):
     def __init__(
         self, path: Path, SECoPdtype_obj: DataType, sig_datainfo: dict
     ) -> None:
-        self.reading: SECoPReading = SECoPReading(None)
-        self.value = None
+        self.SECoP_type_info: SECoPdtype = SECoPdtype(SECoPdtype_obj)
+
+        self.reading: SECoPReading = SECoPReading(
+            secop_dt=self.SECoP_type_info, entry=None
+        )
 
         # module:acessible Path for reading/writing (module,accessible)
         self.path: Path = path
@@ -73,53 +66,36 @@ class SECoP_CMD_IO_Backend(SignalBackend):
         # Root datainfo or memberinfo for nested datatypes
         self.datainfo: dict = sig_datainfo
 
-        self.callback: Callable = None
+        self.callback: Callable[[Reading, Any], None] | None = None
 
         self.SECoPdtype_obj: DataType = SECoPdtype_obj
-        self.datatype: str
-        self.SECoPdtype: str
-        self.SECoPdtype_obj: DataType
 
-        self._set_dtype()
+        self.describe_dict: dict
 
         self.source = self.path._module_name + ":" + self.path._accessible_name
+
+        self.describe_dict = {}
+
+        self.describe_dict["source"] = self.source
+
+        self.describe_dict.update(self.SECoP_type_info.describe_dict)
+
+        for property_name, prop_val in self.datainfo.items():
+            if property_name == "type":
+                property_name = "SECoP_dtype"
+            self.describe_dict[property_name] = prop_val
 
     async def connect(self):
         pass
 
     async def put(self, value: Any | None, wait=True, timeout=None):
-        if isinstance(self.SECoPdtype_obj, (StructOf, TupleOf)):
-            self.value = self.SECoPdtype_obj.from_string(value)
-        else:
-            self.value = self.SECoPdtype_obj.import_value(value)
-
-        self.reading.set_reading(value)
+        self.reading.set_reading(self.SECoP_type_info.Val2SECoP(value))
 
         if self.callback is not None:
             self.callback(self.reading.get_reading(), self.reading.get_value())
 
     async def get_descriptor(self) -> Descriptor:
-        res = {}
-
-        res["source"] = self.source
-
-        # ophyd datatype (some SECoP datatypeshaveto be converted)
-        res["dtype"] = self.datatype
-
-        # get shape from datainfo and SECoPtype
-
-        # TODO if array is ragged only first dimension is used otherwise parse the array
-        if self.datainfo["type"] == "array":
-            res["shape"] = [1, self.datainfo.get("maxlen", None)]
-        else:
-            res["shape"] = []
-
-        for property_name, prop_val in self.datainfo.items():
-            if property_name == "type":
-                property_name = "SECoPtype"
-            res[property_name] = prop_val
-
-        return res
+        return self.describe_dict
 
     async def get_reading(self) -> Reading:
         return self.reading.get_reading()
@@ -130,19 +106,6 @@ class SECoP_CMD_IO_Backend(SignalBackend):
     def set_callback(self, callback: Callable[[Reading, Any], None] | None) -> None:
         self.callback = callback
 
-    def _set_dtype(self) -> None:
-        self.SECoPdtype = self.datainfo["type"]
-
-        if self.SECoPdtype == "array":
-            dtype_obj = self.SECoPdtype_obj
-
-            # Get first non array dtype
-            while isinstance(dtype_obj, ArrayOf):
-                dtype_obj = dtype_obj.members
-                self.datatype = SECOP2DTYPE.get(dtype_obj.__class__, None)
-        else:
-            self.datatype = SECOP2DTYPE.get(self.SECoPdtype_obj.__class__, None)
-
 
 # TODO add return of Asyncstatus
 class SECoP_CMD_X_Backend(SignalBackend):
@@ -152,8 +115,8 @@ class SECoP_CMD_X_Backend(SignalBackend):
         secclient: AsyncFrappyClient,
         frappy_datatype: CommandType,
         cmd_desc: dict,
-        arguments: dict[SECoP_CMD_IO_Backend],
-        result: dict[SECoP_CMD_IO_Backend],
+        argument: SECoP_CMD_IO_Backend | None,
+        result: SECoP_CMD_IO_Backend | None,
     ) -> None:
         self._secclient: AsyncFrappyClient = secclient
 
@@ -162,10 +125,9 @@ class SECoP_CMD_X_Backend(SignalBackend):
 
         self._cmd_desc: dict = cmd_desc
 
-        self.callback: Callable = None
-
-        self.arguments: dict = arguments
-        self.result: dict = result
+        self.callback: Callable
+        self.argument: SECoP_CMD_IO_Backend | None = argument
+        self.result: SECoP_CMD_IO_Backend | None = result
 
         # Root datainfo or memberinfo for nested datatypes
         self.datainfo: dict = deep_get(self._cmd_desc["datainfo"], self.path._dev_path)
@@ -178,29 +140,10 @@ class SECoP_CMD_X_Backend(SignalBackend):
         pass
 
     async def put(self, value: Any | None, wait=True, timeout=None):
-        argument = None
-
-        arg_datatype = self.frappy_datatype.argument
-
-        # Three different cases:
-
-        # StructOf()
-        if isinstance(arg_datatype, StructOf):
-            argument = {
-                signame: await sig.get_value()
-                for (signame, sig) in self.arguments.items()
-            }
-
-        # TupleOf()
-        elif isinstance(arg_datatype, TupleOf):
-            raise NotImplementedError
-
-        # Atomic datatypes
-        elif isinstance(arg_datatype, atomic_dtypes):
-            sig = next(iter(self.arguments.values()))
-            argument = arg_datatype.export_datatype(await sig.get_value())
-
-        # Run SECoP Command
+        if self.argument is None:
+            argument = None
+        else:
+            argument = await self.argument.get_value()
 
         res, qualifiers = await asyncio.wait_for(
             fut=self._secclient.execCommand(
@@ -211,24 +154,14 @@ class SECoP_CMD_X_Backend(SignalBackend):
             timeout=timeout,
         )
 
-        # write return Value to corresponding Backends
+        # write return Value to corresponding Backend
 
-        # Three different cases:
-        res_datatype = self.frappy_datatype.result
+        if self.result is None:
+            return
+        else:
+            val = self.result.SECoP_type_info.SECoP2Val(res)
 
-        # StructOf()
-        if isinstance(res_datatype, StructOf):
-            sig: SECoP_CMD_IO_Backend
-            for sig_name, sig in self.result.items():
-                await sig.put(res.get(sig_name))
-
-        # TupleOf()
-        elif isinstance(res_datatype, TupleOf):
-            raise NotImplementedError
-
-        elif isinstance(res_datatype, atomic_dtypes):
-            sig = next(iter(self.result.values()))
-            await sig.put(res)
+            await self.result.put(val)
 
     async def get_descriptor(self) -> Descriptor:
         res = {}
@@ -241,7 +174,7 @@ class SECoP_CMD_X_Backend(SignalBackend):
 
         # get shape from datainfo and SECoPtype
 
-        res["shape"] = []
+        res["shape"] = []  # type: ignore
 
         return res
 
@@ -279,10 +212,12 @@ class SECoP_Param_Backend(SignalBackend):
         self.readonly = self._param_description.get("readonly")
 
         self.datatype: str
-        self.SECoPdtype: str
-        self.SECoPdtype_obj: DataType
+        self.SECoPdtype_str: str
+        self.SECoPdtype_obj: DataType = self._param_description["datatype"]
 
-        self._set_dtype()
+        self.SECoP_type_info: SECoPdtype = SECoPdtype(self.SECoPdtype_obj)
+
+        self.describe_dict: dict = {}
 
         self.source = (
             secclient.uri
@@ -294,112 +229,53 @@ class SECoP_Param_Backend(SignalBackend):
             + self.path._accessible_name
         )
 
-    async def connect(self):
-        pass
+        # SECoP metadata is static and can only change when connection is reset
+        self.describe_dict = {}
 
-    async def put(self, value: Any | None, wait=True, timeout=None):
-        # top level nested datatypes (handled as srting Signals)
+        self.describe_dict["source"] = self.source
 
-        if self.path._dev_path == []:
-            if self.SECoPdtype == "tuple":
-                value = self.SECoPdtype_obj.from_string(value)
-
-            if self.SECoPdtype == "struct":
-                value = self.SECoPdtype_obj.from_string(value)
-
-            await asyncio.wait_for(
-                self._secclient.setParameter(**self.get_param_path(), value=value),
-                timeout=timeout,
-            )
-
-            return
-
-        # signal sub element of SECoP parameter (tuple or struct member)
-
-        # get current value
-        reading = await self._secclient.getParameter(
-            **self.get_param_path(), trycache=True
-        )
-
-        curr_val = reading.get_value()
-
-        # insert new val
-        new_val = self.path.insert_val(curr_val, value)
-
-        # set new value
-        await asyncio.wait_for(
-            fut=self._secclient.setParameter(**self.get_param_path(), value=new_val),
-            timeout=timeout,
-        )
-
-    async def get_descriptor(self) -> Descriptor:
-        res = {}
-
-        res["source"] = self.source
-
-        # ophyd datatype (some SECoP datatypeshaveto be converted)
-        res["dtype"] = self.datatype
-
-        # get shape from datainfo and SECoPtype
-
-        # TODO if array is ragged only first dimension is used otherwise parse the array
-        if self.datainfo["type"] == "array":
-            res["shape"] = [1, self.datainfo.get("maxlen", None)]
-        else:
-            res["shape"] = []
+        # add gathered keys from SECoPdtype:
+        self.describe_dict.update(self.SECoP_type_info.describe_dict)
 
         for property_name, prop_val in self._param_description.items():
             # skip datainfo (treated seperately)
             if property_name == "datainfo" or property_name == "datatype":
                 continue
-            res[property_name] = prop_val
+            self.describe_dict[property_name] = prop_val
 
         for property_name, prop_val in self.datainfo.items():
             if property_name == "type":
-                property_name = "SECoPtype"
-            res[property_name] = prop_val
+                property_name = "SECoP_dtype"
+            self.describe_dict[property_name] = prop_val
 
-        return res
+    async def connect(self):
+        pass
+
+    async def put(self, value: Any | None, wait=True, timeout=None):
+        # convert to frappy compatible Format
+        secop_val = self.SECoP_type_info.Val2SECoP(value)
+
+        await asyncio.wait_for(
+            self._secclient.setParameter(**self.get_param_path(), value=secop_val),
+            timeout=timeout,
+        )
+
+    async def get_descriptor(self) -> Descriptor:
+        return self.describe_dict
 
     async def get_reading(self) -> Reading:
         dataset = await self._secclient.getParameter(
             **self.get_param_path(), trycache=False
         )
 
-        # select only the tuple/struct member corresponding to the signal
-        dataset.value = deep_get(dataset.value, self.path._dev_path)
+        sec_reading = SECoPReading(entry=dataset, secop_dt=self.SECoP_type_info)
 
-        if self.SECoPdtype == "enum":
-            dataset.value = dataset.value.value
-        if self.SECoPdtype in ["tuple", "struct"]:
-            dataset.value = str(dataset.value)
-        # TODO handle multidimensional arrays
-        if isinstance(self.SECoPdtype_obj, ArrayOf) and isinstance(
-            self.SECoPdtype_obj.members, (StructOf, TupleOf)
-        ):
-            dataset = copy.deepcopy(dataset)
-            dataset.value = list(map(str, dataset.value))
-
-        return dataset.get_reading()
+        return sec_reading.get_reading()
 
     async def get_value(self) -> T:
-        dataset = await self._secclient.getParameter(
-            **self.get_param_path(), trycache=False
-        )
+        dataset: Reading = await self.get_reading()
 
-        # select only the tuple member corresponding to the signal
-        dataset.value = deep_get(dataset.value, self.path._dev_path)
-
-        if self.SECoPdtype in ["tuple", "struct"]:
-            dataset.value = str(dataset.value)
-
-        if isinstance(self.SECoPdtype_obj, ArrayOf) and isinstance(
-            self.SECoPdtype_obj.members, (StructOf, TupleOf)
-        ):
-            dataset = copy.deepcopy(dataset)
-            dataset.value = list(map(str, dataset.value))
-
-        return dataset.get_value()
+        return dataset.value  # type: ignore
 
     def set_callback(self, callback: Callable[[Reading, Any], None] | None) -> None:
         def awaitify(sync_func):
@@ -412,7 +288,7 @@ class SECoP_Param_Backend(SignalBackend):
             return async_func
 
         def updateItem(module, parameter, entry: CacheItem):
-            data = SECoPReading(entry)
+            data = SECoPReading(secop_dt=self.SECoP_type_info, entry=entry)
             async_callback = awaitify(callback)
 
             asyncio.run_coroutine_threadsafe(
@@ -433,20 +309,6 @@ class SECoP_Param_Backend(SignalBackend):
 
     def get_path_tuple(self):
         return self.path.get_path_tuple()
-
-    def _set_dtype(self) -> None:
-        self.SECoPdtype = self.datainfo["type"]
-        self.SECoPdtype_obj = self._param_description["datatype"]
-
-        if self.SECoPdtype == "array":
-            dtype_obj = self.SECoPdtype_obj
-
-            # Get first non array dtype
-            while isinstance(dtype_obj, ArrayOf):
-                dtype_obj = dtype_obj.members
-                self.datatype = SECOP2DTYPE.get(dtype_obj.__class__, None)
-        else:
-            self.datatype = SECOP2DTYPE.get(self.SECoPdtype_obj.__class__, None)
 
 
 class PropertyBackend(SignalBackend):
@@ -495,7 +357,7 @@ class PropertyBackend(SignalBackend):
 
         description["source"] = str(self.source)
         description["dtype"] = self._get_datatype()
-        description["shape"] = []
+        description["shape"] = []  # type: ignore
 
         return description
 
@@ -526,20 +388,3 @@ class ReadonlyError(Exception):
 
 
 # TODO: Array: shape for now only for the first Dim, later maybe recursive??
-
-
-# Tuple and struct are handled in a special way. They are unfolded into subdevices
-
-SECOP2DTYPE = {
-    FloatRange: "number",
-    IntRange: "number",
-    ScaledInteger: "number",
-    BoolType: "boolean",
-    EnumType: "number",
-    StringType: "string",
-    BLOBType: "string",
-    ArrayOf: "array",
-    TupleOf: "string",  # but variing types of array elements
-    StructOf: "string",
-    CommandType: "string",
-}

@@ -1,35 +1,62 @@
+import asyncio
+import logging
+import os
+
 import pytest
+from bluesky import RunEngine
+from databroker.v2 import temp
+from dotenv import load_dotenv
+from frappy.datatypes import (
+    ArrayOf,
+    FloatRange,
+    IntRange,
+    StringType,
+    StructOf,
+    TupleOf,
+)
 from xprocess import ProcessStarter
 
-
-from secop_ophyd.SECoPDevices import SECoP_Node_Device
 from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient
-
-# Import bluesky and ophyd
-
-from bluesky import RunEngine
-
-
-from databroker.v2 import temp
-
-import logging
-
-
-import asyncio
+from secop_ophyd.SECoPDevices import SECoP_Node_Device
 
 
 @pytest.fixture
-def cryo_sim(xprocess):
+def env_vars():
+    work_dir = os.getenv("WORK_DIR")
+    path_variable = os.getenv("PATH_VAR")
+
+    if work_dir is None and path_variable is None:
+        if not load_dotenv():
+            raise Exception("Env Vars could not be set")
+
+        work_dir = os.getenv("WORK_DIR")
+        path_variable = os.getenv("PATH_VAR")
+
+    # Env Vars are set (tests are probably run within a github actions runner)
+    frappy_dir: str = str(work_dir) + "/frappy"
+    env_dict = {"PATH": str(path_variable)}
+
+    return frappy_dir, env_dict
+
+
+# Import bluesky and ophyd
+
+
+@pytest.fixture
+def cryo_sim(xprocess, env_vars):
+    frappy_dir, env_dict = env_vars
+
     class Starter(ProcessStarter):
         # startup pattern
         pattern = ".*: startup done, handling transport messages"
-        timeout = 10
+        timeout = 5
         # command to start process
+        env = env_dict
         args = [
             "python3",
-            "../../../../frappy/bin/frappy-server",
+            frappy_dir + "/bin/frappy-server",
             "-c",
-            "../../../../frappy/cfg/cryo_cfg.py",
+            frappy_dir + "/cfg/cryo_cfg.py",
             "cryo",
         ]
 
@@ -43,17 +70,20 @@ def cryo_sim(xprocess):
 
 
 @pytest.fixture
-def nested_struct_sim(xprocess):
+def nested_struct_sim(xprocess, env_vars):
+    frappy_dir, env_dict = env_vars
+
     class Starter(ProcessStarter):
         # startup pattern
         pattern = ".*: startup done, handling transport messages"
-        timeout = 10
-        # command to start process
+        timeout = 5
+
+        env = env_dict
         args = [
             "python3",
-            "../../../../frappy/bin/frappy-server",
+            frappy_dir + "/bin/frappy-server",
             "-c",
-            "../../../../frappy/cfg/ophyd_secop_test_cfg.py",
+            frappy_dir + "/cfg/ophyd_secop_test_cfg.py",
             "nested",
         ]
 
@@ -105,7 +135,7 @@ async def async_frappy_client(cryo_sim, logger, port="10769"):
 
 
 @pytest.fixture
-async def nested_client(cryo_sim, logger, port="10771"):
+async def nested_client(nested_struct_sim, logger, port="10771"):
     loop = asyncio.get_running_loop()
 
     return await AsyncFrappyClient.create(
@@ -214,3 +244,117 @@ def nested_param_description():
             "readonly": True,
         }
     }
+
+
+@pytest.fixture
+def array_dtype():
+    dty = StructOf(
+        flt=FloatRange(), testarr=ArrayOf(members=IntRange(), minlen=5, maxlen=5)
+    )
+
+    elem = {"flt": 1.3, "testarr": [1, 2, 3, 4, 5]}
+    dty.check_type(elem)
+
+    return dty, elem
+
+
+@pytest.fixture
+def array_tuple_dtype():
+    dty = TupleOf(FloatRange(), ArrayOf(members=IntRange(), minlen=5, maxlen=5))
+
+    elem = {"flt": 1.3, "testarr": [1, 2, 3, 4, 5]}
+    dty.check_type(elem)
+
+    return dty, elem
+
+
+@pytest.fixture
+def array_ragged_dtype():
+    dty = StructOf(
+        flt=FloatRange(),
+        testarr=ArrayOf(
+            members=ArrayOf(members=IntRange(), minlen=1, maxlen=5), minlen=5, maxlen=5
+        ),
+    )
+
+    elem = {"flt": 1.3, "testarr": [[1, 2, 3], [1, 2, 3, 4, 5], [1, 2], [1], [1, 2, 5]]}
+    dty.check_type(elem)
+
+    return dty, elem
+
+
+@pytest.fixture
+def array_2D_dtype():
+    dty = StructOf(
+        flt=FloatRange(),
+        testarr=ArrayOf(
+            members=ArrayOf(members=IntRange(), minlen=5, maxlen=5), minlen=5, maxlen=5
+        ),
+    )
+
+    elem = {
+        "flt": 1.3,
+        "testarr": [
+            [1, 2, 3, 4, 5],
+            [1, 2, 3, 4, 5],
+            [1, 2, 3, 4, 5],
+            [1, 2, 3, 4, 5],
+            [1, 2, 3, 4, 5],
+        ],
+    }
+    dty.check_type(elem)
+
+    return dty, elem
+
+
+@pytest.fixture
+def array_of_structs_dtype():
+    dty = StructOf(
+        flt=FloatRange(),
+        testarr=ArrayOf(
+            members=StructOf(
+                red=FloatRange(),
+                green=FloatRange(),
+                blue=FloatRange(),
+                name=StringType(),
+            ),
+            minlen=5,
+            maxlen=5,
+        ),
+    )
+
+    elem = {
+        "flt": 1.3,
+        "testarr": [
+            {"red": 1.2, "green": 3.4, "blue": 24.5, "name": "dieter"},
+            {"red": 1.2, "green": 3.4, "blue": 24.5, "name": "dieter"},
+            {"red": 1.2, "green": 3.4, "blue": 24.5, "name": "dieter"},
+            {"red": 1.2, "green": 3.4, "blue": 24.5, "name": "dieter"},
+            {"red": 1.2, "green": 3.4, "blue": 24.5, "name": "dieter"},
+        ],
+    }
+    dty.check_type(elem)
+
+    return dty, elem
+
+
+@pytest.fixture
+def bare_array_of_structs_dtype():
+    dty = ArrayOf(
+        members=StructOf(
+            red=FloatRange(), green=FloatRange(), blue=FloatRange(), name=StringType()
+        ),
+        minlen=5,
+        maxlen=5,
+    )
+
+    elem = [
+        {"red": 1.2, "green": 3.4, "blue": 24.5, "name": "dieter"},
+        {"red": 1.2, "green": 3.4, "blue": 24.5, "name": "dieter"},
+        {"red": 1.2, "green": 3.4, "blue": 24.5, "name": "dieter"},
+        {"red": 1.2, "green": 3.4, "blue": 24.5, "name": "dieter"},
+        {"red": 1.2, "green": 3.4, "blue": 24.5, "name": "dieter"},
+    ]
+    dty.check_type(elem)
+
+    return dty, elem

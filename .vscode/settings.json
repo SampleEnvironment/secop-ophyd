@@ -4,11 +4,14 @@
     ],
     "python.testing.unittestEnabled": false,
     "python.testing.pytestEnabled": true,
-    "terminal.integrated.fontFamily": "DejaVu Sans Mono for Powerline",
-    "editor.formatOnSave": true,
-    "editor.defaultFormatter": "ms-python.isort",
-    "python.formatting.provider": "none",
-    "[python]": { "editor.defaultFormatter": "ms-python.black-formatter" }
+    "python.experiments.optOutFrom": ["pythonTestAdapter"],
+    "terminal.integrated.fontFamily": "monospace, PowerlineSymbols",
+    "terminal.integrated.stickyScroll.enabled": true,
+
+
+    
+    
+
 
   
   

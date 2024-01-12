@@ -3,38 +3,46 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 
-#[build-system]
-#requires = ["setuptools", "setuptools-scm"]
-#build-backend = "setuptools.build_meta"
-
 [project]
 name = "secop-ophyd"
 version = "0.0.1"
 description = "An Interface between bluesky and SECoP, using ophyd and frappy-client"
 
 dependencies = [
-    'ophyd-async@git+https://github.com/bluesky/ophyd-async.git@d6c72cfcd3d0af9ad1694cc8826c96058ea92f16',
-
+    'ophyd-async == 0.2.0',  
+    
 ]
 
 license.file = "LICENSE"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 
 [project.optional-dependencies]
 dev = [
+    'isort',
     'pytest == 7.4.2',
+    'frappy-core@git+https://github.com/SampleEnvironment/frappy',
+    'black',
+    'flake8',
+    "flake8-isort == 6.1.1",
+    "Flake8-pyproject",
+    'mypy',
     'wheel',
     'cycler',
-    'frappy-core@git+https://github.com/SampleEnvironment/frappy',
     'mlzlog',
     'matplotlib',
     'pytest-asyncio',
     'pytest-xprocess',
+    'pre-commit',
     'ipykernel',
     'databroker',
     'ophyd',
+    'tox',
+    'mlzlog',
+    'python-dotenv',
+    'bluesky'
 ]
+
 
 
 
@@ -51,7 +59,10 @@ filterwarnings = "ignore::PendingDeprecationWarning"
 norecursedirs=["frappy","epics-testing","build"]
 
 [tool.isort]
+float_to_top = true
+profile = "black"
 skip = [".gitignore"]
+known_third_party = ["frappy"]
 skip_glob = ["frappy/*","epics-testing/*"]
 
 
@@ -61,3 +72,43 @@ name = "Peter Wegmann"
 
 [tool.hatch.metadata]
 allow-direct-references = true
+
+
+[tool.flake8]
+extend-ignore = [
+    "E203", # See https://github.com/PyCQA/pycodestyle/issues/373
+    "F811", # support typing.overload decorator
+    "F722", # allow Annotated[typ, some_func("some string")]
+    "W504",
+    "W503",
+]
+max-line-length = 88 # Respect black's line length (default 88),
+exclude = [".tox", "venv","frappy"]
+
+
+[tool.mypy]
+ignore_missing_imports = true          # Ignore missing stubs in imported modules
+plugins = ["numpy.typing.mypy_plugin"]
+
+
+
+# tox must currently be configured via an embedded ini string
+# See: https://github.com/tox-dev/tox/issues/999
+[tool.tox]
+legacy_tox_ini = """
+[tox]
+skipsdist=True
+
+[testenv:{pre-commit,mypy,pytest}]
+# Don't create a virtualenv for the command, requires tox-direct plugin
+direct = True
+passenv = *
+allowlist_externals = 
+    pytest 
+    pre-commit
+    mypy
+commands =
+    pytest: pytest -v .
+    mypy: mypy src tests {posargs}
+    pre-commit: pre-commit run --all-files {posargs}
+"""

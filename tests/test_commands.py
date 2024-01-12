@@ -1,15 +1,14 @@
-from secop_ophyd.SECoPDevices import (
-    SECoP_Node_Device,
-    SECoPMoveableDevice,
-    SECoP_CMD_Device,
-)
 import asyncio
-from ophyd_async.core.signal import SignalX, SignalR
-
-
-from frappy.errors import ImpossibleError
 
 from bluesky.protocols import Triggerable
+from frappy.errors import ImpossibleError
+from ophyd_async.core.signal import SignalR, SignalX
+
+from secop_ophyd.SECoPDevices import (
+    SECoP_CMD_Device,
+    SECoP_Node_Device,
+    SECoPMoveableDevice,
+)
 
 
 async def test_stop_cmd(cryo_sim, cryo_node_internal_loop: SECoP_Node_Device):
@@ -19,7 +18,7 @@ async def test_stop_cmd(cryo_sim, cryo_node_internal_loop: SECoP_Node_Device):
 
     await asyncio.sleep(3)
 
-    await cryo.stop(True)
+    await cryo.stop(success=True)
 
     await stat
 
@@ -51,45 +50,45 @@ async def test_stop_no_sucess_cmd(cryo_sim, cryo_node_internal_loop: SECoP_Node_
 
 
 async def test_struct_inp_cmd(nested_struct_sim, nested_node: SECoP_Node_Device):
-    test_cmd: SECoP_CMD_Device = nested_node.ophy_struct.test_cmd_dev
+    test_cmd: SECoP_CMD_Device = nested_node.ophy_struct.test_cmd_CMD
 
-    await test_cmd.name_arg.set("test_name")
-    await test_cmd.id_arg.set(1233)
-    await test_cmd.sort_arg.set(False)
+    input_dict = {"name": "test_name", "id": 900, "sort": False}
 
-    res: SignalR = test_cmd.test_cmd_res
+    await test_cmd.argument.set(input_dict)  # type: ignore
 
-    run_obj: SignalX = test_cmd.test_cmd_x
+    res: SignalR = test_cmd.result
+
+    run_obj: SignalX = test_cmd.commandx
 
     stat = run_obj.trigger()
 
     await stat
 
     reading_res = await res.read()
+    print(reading_res)
     assert isinstance(reading_res.get(res.name)["value"], int)
 
     await nested_node.disconnect()
 
 
 def test_triggerable(nested_struct_sim, nested_node: SECoP_Node_Device):
-    test_cmd: SECoP_CMD_Device = nested_node.ophy_struct.test_cmd_dev
+    test_cmd: SECoP_CMD_Device = nested_node.ophy_struct.test_cmd_CMD
 
     assert isinstance(test_cmd, Triggerable)
 
 
 async def test_SECoP_Error_on_CMD(nested_struct_sim, nested_node: SECoP_Node_Device):
-    test_cmd: SECoP_CMD_Device = nested_node.ophy_struct.test_cmd_dev
+    test_cmd: SECoP_CMD_Device = nested_node.ophy_struct.test_cmd_CMD
 
     error_triggered = False
     # Triggers SECoP Error
-    await test_cmd.name_arg.set("bad_name")
+    input_dict = {"name": "bad_name", "id": 900, "sort": False}
 
-    await test_cmd.id_arg.set(1233)
-    await test_cmd.sort_arg.set(False)
+    await test_cmd.argument.set(input_dict)  # type: ignore
 
-    res: SignalR = test_cmd.test_cmd_res
+    res: SignalR = test_cmd.result
 
-    run_obj: SignalX = test_cmd.test_cmd_x
+    run_obj: SignalX = test_cmd.commandx
 
     try:
         stat = run_obj.trigger()
@@ -105,30 +104,23 @@ async def test_SECoP_Error_on_CMD(nested_struct_sim, nested_node: SECoP_Node_Dev
 
     await nested_node.disconnect()
 
-    async def test_SECoP_triggering_DMD_Dev(
-        nested_struct_sim, nested_node: SECoP_Node_Device
-    ):
-        test_cmd: SECoP_CMD_Device = nested_node.ophy_struct.test_cmd_dev
 
-        error_triggered = False
-        # Triggers SECoP Error
-        await test_cmd.name_arg.set("bad_name")
+async def test_SECoP_triggering_CMD_Dev(
+    nested_struct_sim, nested_node: SECoP_Node_Device
+):
+    test_cmd: SECoP_CMD_Device = nested_node.ophy_struct.test_cmd_CMD
 
-        await test_cmd.id_arg.set(1233)
-        await test_cmd.sort_arg.set(False)
+    input_dict = {"name": "test_name", "id": 900, "sort": False}
 
-        res: SignalR = test_cmd.test_cmd_res
+    await test_cmd.argument.set(input_dict)  # type: ignore
 
-        try:
-            stat = test_cmd.trigger()
-            await stat
+    res: SignalR = test_cmd.result
 
-        except ImpossibleError:
-            error_triggered = True
+    stat = test_cmd.trigger()
 
-        assert error_triggered is True
+    await stat
 
-        reading_res = await res.read()
-        assert reading_res.get(res.name)["value"] is None
+    reading_res = await res.read()
+    assert isinstance(reading_res.get(res.name)["value"], int)
 
-        await nested_node.disconnect()
+    await nested_node.disconnect()
