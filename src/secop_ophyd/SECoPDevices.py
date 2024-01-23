@@ -199,8 +199,8 @@ class SECoPReadableDevice(SECoPBaseDevice):
 
         # target should only be set through the set method. And is not part of
         # config
-        elif path._accessible_name != "target":
-            self._config.append(getattr(self, sig_name))
+        #elif path._accessible_name != "target":
+        #    self._config.append(getattr(self, sig_name))
 
 
 class SECoPWritableDevice(SECoPReadableDevice):
