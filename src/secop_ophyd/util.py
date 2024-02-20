@@ -88,9 +88,11 @@ class Path:
         return list(
             chain(
                 *[
-                    [k] + self._dev_path[i : i + N]
-                    if len(self._dev_path[i : i + N]) == N
-                    else self._dev_path[i : i + N]
+                    (
+                        [k] + self._dev_path[i : i + N]
+                        if len(self._dev_path[i : i + N]) == N
+                        else self._dev_path[i : i + N]
+                    )
                     for i in range(0, len(self._dev_path), N)
                 ]
             )
