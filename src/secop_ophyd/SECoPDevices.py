@@ -497,7 +497,8 @@ class SECoP_Node_Device(StandardReadable):
                     ):
                         module_class_dict[module_attr_name] = type(module_attr_value)
 
-                # Define a new class using type() with dynamically generated attributes and their types
+                # Define a new class using type() with dynamically generated
+                # attributes and their types
                 ModuleInstanceClass = type(
                     module_className, (attr_value.__class__,), module_class_dict
                 )
@@ -507,18 +508,13 @@ class SECoP_Node_Device(StandardReadable):
                     module_class_dict,
                 )
 
-                class_dict[
-                    attr_name
-                ] = ModuleInstanceClass  # type(attr_value.__class__.__name__, (), inner_class_dict)
+                class_dict[attr_name] = ModuleInstanceClass
 
             # Poperty Signals
             if isinstance(attr_value, (SignalR)):
                 class_dict[attr_name] = type(attr_value)
 
-        # Define a new class using type() with dynamically generated attributes and their types
-        NodeInstanceClass = type(self.name, (SECoP_Node_Device,), class_dict)
-
-        imports.add(f"from secop_ophyd.SECoPDevices import SECoP_Node_Device")
+        imports.add("from secop_ophyd.SECoPDevices import SECoP_Node_Device")
 
         # Collect imports required for type hints (Node)
         for attr_type in class_dict.values():
