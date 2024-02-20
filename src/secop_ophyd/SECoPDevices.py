@@ -91,6 +91,9 @@ class SECoPBaseDevice(StandardReadable):
         self._read: list = []
 
         self.status: SignalR = None
+        
+        self.impl:str|None = None
+        
 
     def _signal_from_parameter(self, path: Path, sig_name: str, readonly: str):
         # Normal types + (struct and tuple as JSON object Strings)
@@ -146,13 +149,15 @@ class SECoPReadableDevice(SECoPBaseDevice):
     def __init__(self, secclient: AsyncFrappyClient, module_name: str):
         """Initializes readable dev"""
         super().__init__(secclient=secclient)
-
+        
         self._module = module_name
         module_desc = secclient.modules[module_name]
 
         # generate Signals from Module Properties
         for property in module_desc["properties"]:
             propb = PropertyBackend(property, module_desc["properties"], secclient)
+            if property == "implementation":
+                self.impl = module_desc["properties"]["implementation"]
 
             setattr(self, property, SignalR(backend=propb))
             self._config.append(getattr(self, property))
@@ -456,6 +461,95 @@ class SECoP_Node_Device(StandardReadable):
                 self._secclient.disconnect(True), self._secclient.loop
             )
             await asyncio.wrap_future(future=disconn_future)
+    
+    
+    def class_from_instance(self):
+        attributes = self.__dict__
+
+        class_dict = {}
+        modclass_dict = {}
+
+        code = ""
+        imports = set()
+
+        for attr_name, attr_value in attributes.items():
+            # Modules
+            if isinstance(attr_value, (SECoPReadableDevice,SECoPWritableDevice,SECoPMoveableDevice)):
+                
+                attr_type = type(attr_value)
+                module = getattr(attr_type, '__module__', None)
+                
+                imports.add(f"from {module} import {attr_type.__name__}")
+                
+                module_attributes = attr_value.__dict__
+                module_class_dict = {}
+
+                module_className = attr_name 
+                
+                if attr_value.impl is not None:                   
+                    module_className = attr_value.impl.split(".").pop()
+
+                #Module:Acessibles
+                for module_attr_name, module_attr_value in module_attributes.items():
+                    if isinstance(module_attr_value, (SignalR,SignalX,SignalRW,SignalR,SECoP_CMD_Device)):
+                        module_class_dict[module_attr_name] = type(module_attr_value)
+
+                # Define a new class using type() with dynamically generated attributes and their types
+                ModuleInstanceClass = type(module_className, (attr_value.__class__,), module_class_dict)
+                
+
+                modclass_dict[module_className] = (str(attr_value.__class__.__name__),module_class_dict)     
+                
+                class_dict[attr_name] = ModuleInstanceClass #type(attr_value.__class__.__name__, (), inner_class_dict)
+            
+            # Poperty Signals
+            if isinstance(attr_value, (SignalR)):
+                class_dict[attr_name] = type(attr_value)
+
+        # Define a new class using type() with dynamically generated attributes and their types
+        NodeInstanceClass = type(self.name, (SECoP_Node_Device,), class_dict)
+
+
+
+        imports.add(f"from secop_ophyd.SECoPDevices import SECoP_Node_Device")
+
+        # Collect imports required for type hints (Node)
+        for attr_type in class_dict.values():
+            module = getattr(attr_type, '__module__', None)
+            if module and module != 'builtins' and module != 'abc' :
+                imports.add(f"from {module} import {attr_type.__name__}")
+
+        # Collect imports required for type hints (Module)
+        for mod_cls in modclass_dict.values():
+            for attr_type in mod_cls[1].values():
+                module = getattr(attr_type, '__module__', None)
+                if module and module != 'builtins':
+                    imports.add(f"from {module} import {attr_type.__name__}")
+
+
+
+        # Add imports to the code
+        code += "\n".join(imports) + "\n\n"
+
+        for ModInstanceCls,ModClsTuple in modclass_dict.items():
+            # Generate the Python code for each Module class
+            code += f"class {ModInstanceCls}({ModClsTuple[0]}):\n"
+            for attr_name, attr_type in ModClsTuple[1].items():
+                code += f"    {attr_name}: {attr_type.__name__}\n"
+            
+            code += "\n\n"
+
+
+
+        # Generate the Python code for the Node class
+        code += f"class {self.name}(SECoP_Node_Device):\n"
+        for attr_name, attr_type in class_dict.items():
+            code += f"    {attr_name}: {attr_type.__name__}\n"
+
+        # Write the generated code to a .py file
+        filename = f"gen_{self.name}_NodeClass.py"
+        with open(filename, "w") as file:
+            file.write(code)
 
     def disconnect_external(self):
         """shuts down secclient, eventloop mus be running in external thread"""
