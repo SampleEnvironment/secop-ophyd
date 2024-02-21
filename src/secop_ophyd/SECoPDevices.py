@@ -2,8 +2,8 @@ import asyncio
 import re
 import threading
 import time as ttime
-from typing import Dict, Iterator, Optional
 from importlib import import_module
+from typing import Dict, Iterator, Optional
 
 from bluesky.protocols import (
     Descriptor,
@@ -375,7 +375,6 @@ class SECoP_Node_Device(StandardReadable):
     Generates the root ophyd device from a Sec-node. Signals of this Device correspond
     to the Sec-node properties
     """
-    
 
     def __init__(self, secclient: AsyncFrappyClient):
         """initializes the node device and generates all node signals and subdevices
@@ -386,9 +385,9 @@ class SECoP_Node_Device(StandardReadable):
             to a Sec-node
         """
         self._secclient: AsyncFrappyClient = secclient
-        
-        self._module_name:str = ""
-        self._patch_dict:dict = {}
+
+        self._module_name: str = ""
+        self._patch_dict: dict = {}
         self._node_cls_name = ""
         self.mod_devices: Dict[str, T] = {}
 
@@ -418,7 +417,7 @@ class SECoP_Node_Device(StandardReadable):
 
         super().__init__(name=name)
 
-        #Dynamically generate python class file 
+        # Dynamically generate python class file
         self.class_from_instance()
 
     @classmethod
@@ -481,9 +480,6 @@ class SECoP_Node_Device(StandardReadable):
         # Module Name (file name of cls)
         self._module_name = f"gen_{self._node_cls_name}_NodeClass"
 
-
-
-
         code = ""
         imports = set()
 
@@ -505,7 +501,6 @@ class SECoP_Node_Device(StandardReadable):
 
                 if attr_value.impl is not None:
                     module_className = attr_value.impl.split(".").pop()
-
 
                 self._patch_dict[attr_name] = module_className
 
@@ -564,7 +559,6 @@ class SECoP_Node_Device(StandardReadable):
         code += f"class {self._node_cls_name}(SECoP_Node_Device):\n"
         for attr_name, attr_type in class_dict.items():
             code += f"    {attr_name}: {attr_type.__name__}\n"
-
 
         # Write the generated code to a .py file
         filename = f"{self._module_name}.py"
@@ -628,15 +622,13 @@ class SECoP_Node_Device(StandardReadable):
 
         node_mod = import_module(self._module_name)
 
-        for module_name , mod_class_name in self._patch_dict.items():
-            module_cls = getattr(node_mod,mod_class_name)
-            module = getattr(self,module_name)
+        for module_name, mod_class_name in self._patch_dict.items():
+            module_cls = getattr(node_mod, mod_class_name)
+            module = getattr(self, module_name)
 
-            module.__class__ = module_cls 
+            module.__class__ = module_cls
 
-        self.__class__ = getattr(node_mod,self._node_cls_name)       
-
-        
+        self.__class__ = getattr(node_mod, self._node_cls_name)
 
 
 IF_CLASSES = {
