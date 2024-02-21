@@ -3,6 +3,7 @@ import re
 import threading
 import time as ttime
 from typing import Dict, Iterator, Optional
+from importlib import import_module
 
 from bluesky.protocols import (
     Descriptor,
@@ -374,6 +375,7 @@ class SECoP_Node_Device(StandardReadable):
     Generates the root ophyd device from a Sec-node. Signals of this Device correspond
     to the Sec-node properties
     """
+    
 
     def __init__(self, secclient: AsyncFrappyClient):
         """initializes the node device and generates all node signals and subdevices
@@ -384,7 +386,10 @@ class SECoP_Node_Device(StandardReadable):
             to a Sec-node
         """
         self._secclient: AsyncFrappyClient = secclient
-
+        
+        self._module_name:str = ""
+        self._patch_dict:dict = {}
+        self._node_cls_name = ""
         self.mod_devices: Dict[str, T] = {}
 
         # Name is set to sec-node equipment_id
@@ -412,6 +417,9 @@ class SECoP_Node_Device(StandardReadable):
         )
 
         super().__init__(name=name)
+
+        #Dynamically generate python class file 
+        self.class_from_instance()
 
     @classmethod
     async def create(cls, host: str, port: str, loop, log=Logger):
@@ -467,6 +475,15 @@ class SECoP_Node_Device(StandardReadable):
         class_dict = {}
         modclass_dict = {}
 
+        # NodeClass Name
+        self._node_cls_name: str = self.name.capitalize()
+
+        # Module Name (file name of cls)
+        self._module_name = f"gen_{self._node_cls_name}_NodeClass"
+
+
+
+
         code = ""
         imports = set()
 
@@ -488,6 +505,9 @@ class SECoP_Node_Device(StandardReadable):
 
                 if attr_value.impl is not None:
                     module_className = attr_value.impl.split(".").pop()
+
+
+                self._patch_dict[attr_name] = module_className
 
                 # Module:Acessibles
                 for module_attr_name, module_attr_value in module_attributes.items():
@@ -541,12 +561,13 @@ class SECoP_Node_Device(StandardReadable):
             code += "\n\n"
 
         # Generate the Python code for the Node class
-        code += f"class {self.name}(SECoP_Node_Device):\n"
+        code += f"class {self._node_cls_name}(SECoP_Node_Device):\n"
         for attr_name, attr_type in class_dict.items():
             code += f"    {attr_name}: {attr_type.__name__}\n"
 
+
         # Write the generated code to a .py file
-        filename = f"gen_{self.name}_NodeClass.py"
+        filename = f"{self._module_name}.py"
         with open(filename, "w") as file:
             file.write(code)
 
@@ -602,6 +623,20 @@ class SECoP_Node_Device(StandardReadable):
         """
         if state == "connected" and online is True:
             self._secclient.conn_timestamp = ttime.time()
+
+    def monkeypatch(self):
+
+        node_mod = import_module(self._module_name)
+
+        for module_name , mod_class_name in self._patch_dict.items():
+            module_cls = getattr(node_mod,mod_class_name)
+            module = getattr(self,module_name)
+
+            module.__class__ = module_cls 
+
+        self.__class__ = getattr(node_mod,self._node_cls_name)       
+
+        
 
 
 IF_CLASSES = {
