@@ -1,9 +1,10 @@
 import inspect
-from importlib import import_module
+from importlib import import_module, reload
 
 
 class GenNodeCode:
     ModName: str = "genNodeClass"
+    node_mod = None
 
     def __init__(self):
 
@@ -24,12 +25,12 @@ class GenNodeCode:
         self.node_cls_string: str = ""
 
         try:
-            node_mod = import_module(self.ModName)
+            self.node_mod = import_module(self.ModName)
         except ModuleNotFoundError:
             print("no code generated yet, building from scratch")
             return
 
-        modules = inspect.getmembers(node_mod)
+        modules = inspect.getmembers(self.node_mod)
 
         results = filter(lambda m: inspect.isclass(m[1]), modules)
         for class_symbol, class_obj in results:
@@ -140,3 +141,6 @@ class GenNodeCode:
         filename = f"{self.ModName}.py"
         with open(filename, "w") as file:
             file.write(code)
+
+        
+        
