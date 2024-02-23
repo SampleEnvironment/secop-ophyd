@@ -3,7 +3,6 @@ import re
 import threading
 import time as ttime
 from typing import Dict, Iterator, Optional
-from importlib import reload
 
 from bluesky.protocols import (
     Descriptor,
@@ -539,9 +538,6 @@ class SECoP_Node_Device(StandardReadable):
         self.genCode.add_node_class(self._node_cls_name, node_bases, node_class_attrs)
 
         self.genCode.write_genNodeClass_file()
-
-
-
 
     def disconnect_external(self):
         """shuts down secclient, eventloop mus be running in external thread"""
