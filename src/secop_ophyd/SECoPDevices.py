@@ -540,9 +540,7 @@ class SECoP_Node_Device(StandardReadable):
 
         self.genCode.write_genNodeClass_file()
 
-        # Reload the Module after its source has been edited
-        if self.genCode.node_mod != None:
-            reload(self.genCode.node_mod)
+
 
 
     def disconnect_external(self):
