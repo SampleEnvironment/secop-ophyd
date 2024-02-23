@@ -142,5 +142,11 @@ class GenNodeCode:
         with open(filename, "w") as file:
             file.write(code)
 
+                # Reload the Module after its source has been edited
+        if self.node_mod != None:
+            reload(self.node_mod)
+
+
+
         
         
