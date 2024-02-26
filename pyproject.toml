@@ -84,7 +84,7 @@ extend-ignore = [
     "W503",
 ]
 max-line-length = 88 # Respect black's line length (default 88),
-exclude = [".tox", "venv","frappy"]
+exclude = [".tox", "venv","frappy","docs"]
 
 
 [tool.mypy]

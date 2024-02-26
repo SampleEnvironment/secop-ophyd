@@ -312,8 +312,8 @@ class SECoPMoveableDevice(SECoPWritableDevice, Movable, Stoppable):
     async def stop(self, success=True):
         """Calls stop command on the SEC Node module
 
-        :param success: 
-            True: device is stopped as planned 
+        :param success:
+            True: device is stopped as planned
             False: something has gone wrong
             (defaults to True)
         :type success: bool, optional
