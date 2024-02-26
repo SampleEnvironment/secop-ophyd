@@ -79,7 +79,19 @@ def get_config_attrs(parameters):
 
 
 class SECoPBaseDevice(StandardReadable):
+    """Base Class for generating Opyd devices from SEC Node modules,
+    objects of type SECoPBaseDevice are not supposed to be instanciated
+
+    """
+
     def __init__(self, secclient: AsyncFrappyClient) -> None:
+        """Initiate A SECoPBaseDevice
+
+        :param secclient: SECoP client providing communication to the SEC Node
+        :type secclient: AsyncFrappyClient
+        :raises Exception: If SECoPBaseDevice is instanciated on its own
+        """
+
         if type(self) is SECoPBaseDevice:
             raise Exception("<SECoPBaseDevice> must be subclassed.")
 
@@ -95,20 +107,24 @@ class SECoPBaseDevice(StandardReadable):
 
         self.impl: str | None = None
 
-    def _signal_from_parameter(self, path: Path, sig_name: str, readonly: str):
+    def _signal_from_parameter(self, path: Path, sig_name: str, readonly: bool):
+        """Generates an Ophyd Signal from a Module Parameter
+
+        :param path: Path to the Parameter in the secclient module dict
+        :type path: Path
+        :param sig_name: Name of the new Signal
+        :type sig_name: str
+        :param readonly: Signal is R or RW
+        :type readonly: bool
+        """
         # Normal types + (struct and tuple as JSON object Strings)
         paramb = SECoP_Param_Backend(path=path, secclient=self._secclient)
 
         # construct signal
-        if readonly is True:
+        if readonly:
             setattr(self, sig_name, SignalR(paramb))
-        elif readonly is False:
-            setattr(self, sig_name, SignalRW(paramb))
         else:
-            raise Exception(
-                "Invalid SECoP Parameter, readonly property "
-                + "is mandatory, but was not found, or is not bool"
-            )
+            setattr(self, sig_name, SignalRW(paramb))
 
     async def wait_for_IDLE(self):
         """asynchronously waits until module is IDLE again. this is helpful,
@@ -147,7 +163,15 @@ class SECoPReadableDevice(SECoPBaseDevice):
     """
 
     def __init__(self, secclient: AsyncFrappyClient, module_name: str):
-        """Initializes readable dev"""
+        """Initializes the SECoPReadableDevice
+
+        :param secclient: SECoP client providing communication to the SEC Node
+        :type secclient: AsyncFrappyClient
+        :param module_name: Name of the SEC Node module that is represented by
+            this device
+        :type module_name: str
+        """
+
         super().__init__(secclient=secclient)
 
         self._module = module_name
@@ -168,7 +192,7 @@ class SECoPReadableDevice(SECoPBaseDevice):
             param_path = Path(parameter_name=parameter, module_name=module_name)
 
             # readonly propertyns to plans and plan stubs.
-            readonly = properties.get("readonly", None)
+            readonly: bool = properties.get("readonly", None)
 
             # Normal types + (struct and tuple as JSON object Strings)
             self._signal_from_parameter(
@@ -191,7 +215,17 @@ class SECoPReadableDevice(SECoPBaseDevice):
 
         self.set_name(module_name)
 
-    def _signal_from_parameter(self, path: Path, sig_name: str, readonly: str):
+    def _signal_from_parameter(self, path: Path, sig_name: str, readonly: bool):
+        """Generates an Ophyd Signal from a Module Parameter
+
+        :param path: Path to the Parameter in the secclient module dict
+        :type path: Path
+        :param sig_name: Name of the new Signal
+        :type sig_name: str
+        :param readonly: Signal is R or RW
+        :type readonly: bool
+        """
+
         super(SECoPReadableDevice, self)._signal_from_parameter(
             path=path, sig_name=sig_name, readonly=readonly
         )
@@ -221,11 +255,28 @@ class SECoPMoveableDevice(SECoPWritableDevice, Movable, Stoppable):
     """
 
     def __init__(self, secclient: AsyncFrappyClient, module_name: str):
+        """Initialize SECoPMovableDevice
+
+        :param secclient: SECoP client providing communication to the SEC Node
+        :type secclient: AsyncFrappyClient
+        :param module_name: ame of the SEC Node module that is represented by
+            this device
+        :type module_name: str
+        """
         super().__init__(secclient, module_name)
         self._success = True
         self._stopped = False
 
     def set(self, new_target, timeout: Optional[float] = None) -> AsyncStatus:
+        """Sends new target to SEC Nonde and waits until module is IDLE again
+
+        :param new_target: new taget/setpoint for module
+        :type new_target: _type_
+        :param timeout: timeout for set operation, defaults to None
+        :type timeout: Optional[float], optional
+        :return: Asyncstatus that gets set to Done once module is IDLE again
+        :rtype: AsyncStatus
+        """
         coro = asyncio.wait_for(self._move(new_target), timeout=timeout)
         return AsyncStatus(coro)
 
@@ -259,6 +310,14 @@ class SECoPMoveableDevice(SECoPWritableDevice, Movable, Stoppable):
             raise RuntimeError("Module was stopped")
 
     async def stop(self, success=True):
+        """Calls stop command on the SEC Node module
+
+        :param success: 
+            True: device is stopped as planned 
+            False: something has gone wrong
+            (defaults to True)
+        :type success: bool, optional
+        """
         self._success = success
 
         await self._secclient.execCommand(self._module, "stop")

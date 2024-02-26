@@ -40,7 +40,8 @@ dev = [
     'tox',
     'mlzlog',
     'python-dotenv',
-    'bluesky'
+    'bluesky',
+    'sphinx'
 ]
 
 
