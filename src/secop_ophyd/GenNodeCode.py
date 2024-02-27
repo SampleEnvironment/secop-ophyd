@@ -3,10 +3,11 @@ from importlib import import_module, reload
 
 
 class GenNodeCode:
-    """Generates A Python Class for a given SECoP_Node_Device instance. This allows 
-    autocompletiion and type hinting in IDEs, this is needed since the attributes of 
-    the generated Ophyd devices are only known at runtime. 
+    """Generates A Python Class for a given SECoP_Node_Device instance. This allows
+    autocompletiion and type hinting in IDEs, this is needed since the attributes of
+    the generated Ophyd devices are only known at runtime.
     """
+
     ModName: str = "genNodeClass"
     node_mod = None
 
