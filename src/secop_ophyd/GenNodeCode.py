@@ -3,11 +3,17 @@ from importlib import import_module, reload
 
 
 class GenNodeCode:
+    """Generates A Python Class for a given SECoP_Node_Device instance. This allows 
+    autocompletiion and type hinting in IDEs, this is needed since the attributes of 
+    the generated Ophyd devices are only known at runtime. 
+    """
     ModName: str = "genNodeClass"
     node_mod = None
 
     def __init__(self):
-
+        """Instantiates GenNodeCode, internally all atrribues on a node and module level
+        are collected. Additionally all the needed imports are collected in a dict
+        """
         # prevent circular import
         from secop_ophyd.SECoPDevices import (
             SECoP_Node_Device,
@@ -79,12 +85,28 @@ class GenNodeCode:
                 self.add_import(module, class_symbol)
 
     def add_import(self, module: str, class_str: str):
+        """adds an Import to the import dict
+
+        :param module: Python Module of the dict
+        :type module: str
+        :param class_str: Class that is to be imported
+        :type class_str: str
+        """
         if self.dimport.get(module):
             self.dimport[module].add(class_str)
         else:
             self.dimport[module] = {class_str}
 
     def add_mod_class(self, module_cls: str, bases: list[str], attrs: tuple[str, str]):
+        """adds module class to the module dict
+
+        :param module_cls: name of the new Module class
+        :type module_cls: str
+        :param bases: bases the new class is derived from
+        :type bases: list[str]
+        :param attrs: list of attributes of the class
+        :type attrs: tuple[str, str]
+        """
         self.dmodule[module_cls] = {"bases": bases, "attrs": attrs}
 
     def add_node_class(self, node_cls: str, bases: list[str], attrs: tuple[str, str]):
