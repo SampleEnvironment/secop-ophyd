@@ -327,10 +327,10 @@ class SECoPMoveableDevice(SECoPWritableDevice, Movable, Stoppable):
 class SECoP_CMD_Device(StandardReadable, Flyable, Triggerable):
     """
     Command devices that have Signals for command args, return values and a signal
-    for triggering command execution. They themselves are triggerable.
+    for triggering command execution (SignalX). They themselves are triggerable.
 
     Once the CMD Device is triggered, the command args are retrieved from the 'argument'
-    Signal. The command message is sent to the SEC Node and the returnvalue is written
+    Signal. The command message is sent to the SEC Node and the return value is written
     to 'result' signal.
 
     """
@@ -398,8 +398,6 @@ class SECoP_CMD_Device(StandardReadable, Flyable, Triggerable):
         exec_backend = SECoP_CMD_X_Backend(
             path=path,
             secclient=secclient,
-            frappy_datatype=cmd_datatype,
-            cmd_desc=cmd_props,
             argument=None if self.argument is None else self.argument._backend,
             result=None if self.result is None else self.result._backend,
         )

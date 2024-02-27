@@ -9,7 +9,6 @@ from frappy.datatypes import (
     ArrayOf,
     BLOBType,
     BoolType,
-    CommandType,
     DataType,
     FloatRange,
     IntRange,
@@ -33,27 +32,26 @@ atomic_dtypes = (
 )
 
 
-def get_read_str(value, timestamp):
-    return {"value": value, "timestamp": timestamp}
-
-
-def get_shape(datainfo):
-    # print(datainfo)
-    SECoPdtype = datainfo.get("type", None)
-
-    if SECoPdtype.__eq__("array"):
-        return [1, datainfo.get("maxlen", None)]
-    elif SECoPdtype.__eq__("tuple"):
-        memeberArr = datainfo.get("members", None)
-        return [1, len(memeberArr)]
-    else:
-        return []
-
-
 class SECoP_CMD_IO_Backend(SignalBackend):
+    """Class for the 'argument' and 'result' Signal backends of a SECoP_CMD_Device.
+    These Signals act as a local cache for storing the command argument and result.
+
+    """
+
     def __init__(
         self, path: Path, SECoPdtype_obj: DataType, sig_datainfo: dict
     ) -> None:
+        """Initialize SECoP_CMD_IO_Backend
+
+        :param path: Path to the command in the secclient module dict
+        :type path: Path
+        :param SECoPdtype_obj: detailed SECoP datatype object for bidirectional
+        conversion between JSON to and numpy arrays
+        :type SECoPdtype_obj: DataType
+        :param sig_datainfo: SECoP datainfo string of the value represented
+        by the signal
+        :type sig_datainfo: dict
+        """
         self.SECoP_type_info: SECoPdtype = SECoPdtype(SECoPdtype_obj)
 
         self.reading: SECoPReading = SECoPReading(
@@ -64,6 +62,7 @@ class SECoP_CMD_IO_Backend(SignalBackend):
         self.path: Path = path
 
         # Root datainfo or memberinfo for nested datatypes
+        # TODO check if this is really needed
         self.datainfo: dict = sig_datainfo
 
         self.callback: Callable[[Reading, Any], None] | None = None
@@ -109,30 +108,38 @@ class SECoP_CMD_IO_Backend(SignalBackend):
 
 # TODO add return of Asyncstatus
 class SECoP_CMD_X_Backend(SignalBackend):
+    """
+    Signal backend for SignalX of a SECoP_CMD_Device, that handles command execution
+
+    """
+
     def __init__(
         self,
         path: Path,
         secclient: AsyncFrappyClient,
-        frappy_datatype: CommandType,
-        cmd_desc: dict,
         argument: SECoP_CMD_IO_Backend | None,
         result: SECoP_CMD_IO_Backend | None,
     ) -> None:
+        """Initializes SECoP_CMD_X_Backend
+
+        :param path: Path to the command in the secclient module dict
+        :type path: Path
+        :param secclient: SECoP client providing communication to the SEC Node
+        :type secclient: AsyncFrappyClient
+        :param argument: Refence to Argument Signal
+        :type argument: SECoP_CMD_IO_Backend | None
+        :param result: Reference to Result Signal
+        :type result: SECoP_CMD_IO_Backend | None
+        """
+
         self._secclient: AsyncFrappyClient = secclient
 
         # module:acessible Path for reading/writing (module,accessible)
         self.path: Path = path
 
-        self._cmd_desc: dict = cmd_desc
-
         self.callback: Callable
         self.argument: SECoP_CMD_IO_Backend | None = argument
         self.result: SECoP_CMD_IO_Backend | None = result
-
-        # Root datainfo or memberinfo for nested datatypes
-        self.datainfo: dict = deep_get(self._cmd_desc["datainfo"], self.path._dev_path)
-
-        self.frappy_datatype: CommandType = frappy_datatype
 
         self.source = self.path._module_name + ":" + self.path._accessible_name
 
@@ -140,6 +147,7 @@ class SECoP_CMD_X_Backend(SignalBackend):
         pass
 
     async def put(self, value: Any | None, wait=True, timeout=None):
+
         if self.argument is None:
             argument = None
         else:
@@ -164,6 +172,7 @@ class SECoP_CMD_X_Backend(SignalBackend):
             await self.result.put(val)
 
     async def get_descriptor(self) -> Descriptor:
+
         res = {}
 
         res["source"] = self.source
@@ -195,7 +204,16 @@ class SECoP_CMD_X_Backend(SignalBackend):
 
 
 class SECoP_Param_Backend(SignalBackend):
+    """Standard backend for a Signal that represents SECoP Parameter"""
+
     def __init__(self, path: Path, secclient: AsyncFrappyClient) -> None:
+        """_summary_
+
+        :param path: Path to the parameter in the secclient module dict
+        :type path: Path
+        :param secclient: SECoP client providing communication to the SEC Node
+        :type secclient: AsyncFrappyClient
+        """
         # secclient
         self._secclient: AsyncFrappyClient = secclient
 
@@ -312,11 +330,20 @@ class SECoP_Param_Backend(SignalBackend):
 
 
 class PropertyBackend(SignalBackend):
-    """read backend for a SECoP Properties"""
+    """Readonly backend for static SECoP Properties of Nodes/Modules"""
 
     def __init__(
         self, prop_key: str, propertyDict: Dict[str, T], secclient: AsyncFrappyClient
     ) -> None:
+        """Initializes PropertyBackend
+
+        :param prop_key: Name of Property
+        :type prop_key: str
+        :param propertyDict: Dicitonary containing all properties of Node/Module
+        :type propertyDict: Dict[str, T]
+        :param secclient: SECoP client providing communication to the SEC Node
+        :type secclient: AsyncFrappyClient
+        """
         # secclient
 
         self._property_dict = propertyDict
@@ -363,10 +390,10 @@ class PropertyBackend(SignalBackend):
 
     async def get_reading(self) -> Reading:
         """The current value, timestamp and severity"""
-        return get_read_str(
-            self._property_dict[self._prop_key],
-            timestamp=self._secclient.conn_timestamp,
-        )
+        return {
+            "value": self._property_dict[self._prop_key],
+            "timestamp": self._secclient.conn_timestamp,
+        }
 
     async def get_value(self) -> T:
         """The current value"""
@@ -374,17 +401,3 @@ class PropertyBackend(SignalBackend):
 
     def set_callback(self, callback: Callable[[Reading, Any], None] | None) -> None:
         pass
-
-
-class ReadonlyError(Exception):
-    """Raised, when Secop parameter is readonly, but was used to
-    construct rw ophyd Signal"""
-
-    pass
-
-    def __init__(self, prefix, name, module_name, param_desc, secclient, kind) -> None:
-        super().__init__(prefix, name, module_name, param_desc, secclient, kind)
-        self.dtype = "string"
-
-
-# TODO: Array: shape for now only for the first Dim, later maybe recursive??
