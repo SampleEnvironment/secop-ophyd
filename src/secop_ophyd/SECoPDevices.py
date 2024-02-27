@@ -327,10 +327,22 @@ class SECoPMoveableDevice(SECoPWritableDevice, Movable, Stoppable):
 class SECoP_CMD_Device(StandardReadable, Flyable, Triggerable):
     """
     Command devices that have Signals for command args, return values and a signal
-    for triggering command execution
+    for triggering command execution. They themselves are triggerable.
+
+    Once the CMD Device is triggered, the command args are retrieved from the 'argument'
+    Signal. The command message is sent to the SEC Node and the returnvalue is written
+    to 'result' signal.
+
     """
 
     def __init__(self, path: Path, secclient: AsyncFrappyClient):
+        """Initialize the CMD Device
+
+        :param path: Path to the command in the secclient module dict
+        :type path: Path
+        :param secclient: SECoP client providing communication to the SEC Node
+        :type secclient: AsyncFrappyClient
+        """
         dev_name: str = path.get_signal_name() + "_CMD"
 
         self._secclient: AsyncFrappyClient = secclient
@@ -398,6 +410,18 @@ class SECoP_CMD_Device(StandardReadable, Flyable, Triggerable):
 
         super().__init__(name=dev_name)
 
+    def trigger(self) -> AsyncStatus:
+        """Triggers the SECoPCMDDevice and sends command message to SEC Node.
+        Command argument is taken form 'argument' Signal, and return value is
+        written in the 'return' Signal
+
+        :return: A Status object, that is marked Done once the answer from the
+        SEC Node is received
+        :rtype: AsyncStatus
+        """
+        coro = asyncio.wait_for(fut=self._exec_cmd(), timeout=None)
+        return AsyncStatus(awaitable=coro, watchers=None)
+
     def kickoff(self) -> AsyncStatus:
         # trigger execution of secop command, wait until Device is Busy
 
@@ -410,7 +434,7 @@ class SECoP_CMD_Device(StandardReadable, Flyable, Triggerable):
 
         await stat
 
-        await self.parent.wait_for_IDLE()
+        # await self.parent.wait_for_IDLE()
 
     def complete(self) -> AsyncStatus:
         coro = asyncio.wait_for(fut=self._exec_cmd(), timeout=None)
@@ -424,10 +448,6 @@ class SECoP_CMD_Device(StandardReadable, Flyable, Triggerable):
     async def describe_collect(self) -> SyncOrAsync[Dict[str, Dict[str, Descriptor]]]:
         return await self.describe()
 
-    def trigger(self) -> AsyncStatus:
-        coro = asyncio.wait_for(fut=self._exec_cmd(), timeout=None)
-        return AsyncStatus(awaitable=coro, watchers=None)
-
 
 class SECoP_Node_Device(StandardReadable):
     """
@@ -436,12 +456,11 @@ class SECoP_Node_Device(StandardReadable):
     """
 
     def __init__(self, secclient: AsyncFrappyClient):
-        """initializes the node device and generates all node signals and subdevices
+        """Initializes the node device and generates all node signals and subdevices
         corresponding to the SECoP-modules of the secnode
 
-        Args:
-            secclient (AsyncFrappyClient): running Frappy client that is connected
-            to a Sec-node
+        :param secclient: SECoP client providing communication to the SEC Node
+        :type secclient: AsyncFrappyClient
         """
         self._secclient: AsyncFrappyClient = secclient
 
@@ -482,17 +501,18 @@ class SECoP_Node_Device(StandardReadable):
         """async factory pattern to be able to have an async io constructor,
         since __init__ isnt allowed to be async.
 
-        Args:
-            host (str): hostname of Sec-node
-            port (str): Sec-node port
-            loop (_type_): asyncio eventloop, can either run in same thread or external
+        :param host: hostname of Sec-node
+        :type host: str
+        :param port: Sec-node port
+        :type port: str
+        :param loop: asyncio eventloop, can either run in same thread or external
             thread. In conjunction with bluesky RE.loop should be used
-            log (_type_, optional): Logging of AsyncFrappyClient. Defaults to Logger.
-
-
-        Returns:
-            SECoP_Node_Device: fully initializedand connected Sec-node device including
+        :type loop: _type_
+        :param log: Logging of AsyncFrappyClient, defaults to Logger
+        :type log: _type_, optional
+        :return: fully initializedand connected Sec-node device including
             all subdevices
+        :rtype: _type_
         """
         # check if asyncio eventloop is running in the same thread
         if loop._thread_id == threading.current_thread().ident and loop.is_running():
@@ -526,7 +546,10 @@ class SECoP_Node_Device(StandardReadable):
             await asyncio.wrap_future(future=disconn_future)
 
     def class_from_instance(self):
-        # Dynamically generate python class file
+        """Dynamically generate python class file for the SECoP_Node_Device, this
+        allows autocompletion in IDEs and eases working with the generated Ophyd
+        devices
+        """
 
         # parse genClass file if already present
         self.genCode = GenNodeCode()
@@ -617,7 +640,18 @@ class SECoP_Node_Device(StandardReadable):
 
         this callback is called on the node with module=None
         and on every changed module with module==<module name>
+
+        :param module: module name of the module that has changes
+        :type module: _type_
+        :param description: new Node description string
+        :type description: _type_
         """
+        # TODO this functionality is untested and will probably break the generated
+        # ophyd device since a changed module description would lead a newly
+        # instanciated module object while references to the old one are broken
+        # mitigation: alway call methods via:
+        #
+        # 'node_obj.module_obj.method()'
 
         self._secclient.conn_timestamp = ttime.time()
 

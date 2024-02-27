@@ -7,6 +7,13 @@
     "python.experiments.optOutFrom": ["pythonTestAdapter"],
     "terminal.integrated.fontFamily": "monospace, PowerlineSymbols",
     "terminal.integrated.stickyScroll.enabled": true,
+    "editor.rulers": [
+        88
+    ],
+    "workbench.colorCustomizations": {
+        "editorRuler.foreground": "#f5f38067"
+    }
+
 
 
     
