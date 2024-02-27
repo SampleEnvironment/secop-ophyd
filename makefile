@@ -20,7 +20,7 @@ venv: .env .venv/touchfile
 
 
 pretty: venv .env
-	. .venv/bin/activate; black src tests; isort src tests; flake8 src tests; mypy src tests; pre-commit run --all-files
+	. .venv/bin/activate; black src tests docs; isort src tests docs; flake8 src tests docs; mypy src tests docs ; pre-commit run --all-files
 
 clean:  ## 🧹 Clean up project
 	rm -rf .venv

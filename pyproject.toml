@@ -75,6 +75,7 @@ name = "Peter Wegmann"
 allow-direct-references = true
 
 
+
 [tool.flake8]
 extend-ignore = [
     "E203", # See https://github.com/PyCQA/pycodestyle/issues/373
@@ -84,7 +85,7 @@ extend-ignore = [
     "W503",
 ]
 max-line-length = 88 # Respect black's line length (default 88),
-exclude = [".tox", "venv","frappy","docs"]
+exclude = [".tox", "venv","frappy"]
 
 
 [tool.mypy]
@@ -92,6 +93,8 @@ ignore_missing_imports = true          # Ignore missing stubs in imported module
 plugins = ["numpy.typing.mypy_plugin"]
 
 
+[tool.black]
+line-length =  88
 
 # tox must currently be configured via an embedded ini string
 # See: https://github.com/tox-dev/tox/issues/999
