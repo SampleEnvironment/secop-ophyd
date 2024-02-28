@@ -24,7 +24,7 @@ async def test_stop_cmd(cryo_sim, cryo_node_internal_loop: SECoP_Node_Device):
 
     assert cryo._stopped is True
 
-    await cryo_node_internal_loop.disconnect()
+    await cryo_node_internal_loop.disconnect_async()
 
 
 async def test_stop_no_sucess_cmd(cryo_sim, cryo_node_internal_loop: SECoP_Node_Device):
@@ -46,7 +46,7 @@ async def test_stop_no_sucess_cmd(cryo_sim, cryo_node_internal_loop: SECoP_Node_
     assert cryo._stopped is True
     assert rt_error is True
 
-    await cryo_node_internal_loop.disconnect()
+    await cryo_node_internal_loop.disconnect_async()
 
 
 async def test_struct_inp_cmd(nested_struct_sim, nested_node: SECoP_Node_Device):
@@ -68,7 +68,7 @@ async def test_struct_inp_cmd(nested_struct_sim, nested_node: SECoP_Node_Device)
     print(reading_res)
     assert isinstance(reading_res.get(res.name)["value"], int)
 
-    await nested_node.disconnect()
+    await nested_node.disconnect_async()
 
 
 def test_triggerable(nested_struct_sim, nested_node: SECoP_Node_Device):
@@ -102,7 +102,7 @@ async def test_SECoP_Error_on_CMD(nested_struct_sim, nested_node: SECoP_Node_Dev
     reading_res = await res.read()
     assert reading_res.get(res.name)["value"] is None
 
-    await nested_node.disconnect()
+    await nested_node.disconnect_async()
 
 
 async def test_SECoP_triggering_CMD_Dev(
@@ -123,4 +123,4 @@ async def test_SECoP_triggering_CMD_Dev(
     reading_res = await res.read()
     assert isinstance(reading_res.get(res.name)["value"], int)
 
-    await nested_node.disconnect()
+    await nested_node.disconnect_async()
