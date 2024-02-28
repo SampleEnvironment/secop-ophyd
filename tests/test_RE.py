@@ -23,11 +23,11 @@ async def test_RE_count(cryo_sim, RE, cryo_node: SECoP_Node_Device, db):
     assert len(cryo_dat) == 5
     assert max(cryo_dat.data) < 11 and min(cryo_dat.data) > 8
 
-    await cryo_node.disconnect()
+    cryo_node.disconnect()
 
 
 async def test_RE_String_value(
     nested_struct_sim, RE, nested_node_RE: SECoP_Node_Device, db
 ):
     # p = RE(read(nested_node_RE.str_test))
-    await nested_node_RE.disconnect()
+    nested_node_RE.disconnect()
