@@ -10,21 +10,21 @@ from secop_ophyd.SECoPDevices import SECoP_Node_Device, SECoPMoveableDevice
 
 async def test_node_structure(cryo_sim, cryo_node_internal_loop: SECoP_Node_Device):
     assert isinstance(cryo_node_internal_loop, SECoP_Node_Device)
-    await cryo_node_internal_loop.disconnect()
+    await cryo_node_internal_loop.disconnect_async()
 
 
 async def test_node_read(cryo_sim, cryo_node_internal_loop: SECoP_Node_Device):
     # Node device has no read value, it has to return an empty dict
     val_read = await cryo_node_internal_loop.read()
     assert val_read == {}
-    await cryo_node_internal_loop.disconnect()
+    await cryo_node_internal_loop.disconnect_async()
 
 
 async def test_node_describe(cryo_sim, cryo_node_internal_loop: SECoP_Node_Device):
     # Node device has no read value, it has to return an empty dict
     val_desc = await cryo_node_internal_loop.describe()
     assert val_desc == {}
-    await cryo_node_internal_loop.disconnect()
+    await cryo_node_internal_loop.disconnect_async()
 
 
 async def test_node_module_describe(
@@ -36,7 +36,7 @@ async def test_node_module_describe(
 
     assert val_desc != {}
     assert conf != {}
-    await cryo_node_internal_loop.disconnect()
+    await cryo_node_internal_loop.disconnect_async()
 
 
 async def test_dev_read(cryo_sim, cryo_node_internal_loop: SECoP_Node_Device):
@@ -45,7 +45,7 @@ async def test_dev_read(cryo_sim, cryo_node_internal_loop: SECoP_Node_Device):
     cryo_val = await cryo_dev.read()
     val_name = cryo_dev.value.name
     assert cryo_val[val_name].get("value") > 5
-    await cryo_node_internal_loop.disconnect()
+    await cryo_node_internal_loop.disconnect_async()
 
 
 async def test_status(cryo_sim, cryo_node_internal_loop: SECoP_Node_Device):
@@ -62,7 +62,7 @@ async def test_status(cryo_sim, cryo_node_internal_loop: SECoP_Node_Device):
             break
 
     print(stat_val["f0"])
-    await cryo_node_internal_loop.disconnect()
+    await cryo_node_internal_loop.disconnect_async()
 
 
 # async def test_node_read_config(cryo_sim,cryo_node:SECoP_Node_Device):
@@ -94,7 +94,7 @@ async def test_node_drive(cryo_sim, cryo_node_internal_loop: SECoP_Node_Device):
         reading.get(cryo_dev.value.name).get("value"), new_target, atol=0.2
     )
 
-    await cryo_node_internal_loop.disconnect()
+    await cryo_node_internal_loop.disconnect_async()
 
 
 async def test_node_reconn(
@@ -139,3 +139,5 @@ async def test_node_reconn(
     fw_new = new_conf[cryo_node_internal_loop.firmware.name]
 
     assert fw_new["timestamp"] > fw_old["timestamp"]
+
+    await cryo_node_internal_loop.disconnect_async()

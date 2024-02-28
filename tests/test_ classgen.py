@@ -8,3 +8,5 @@ async def test_class_gen(nested_struct_sim, nested_node: SECoP_Node_Device):
 
     if os.path.exists("genNodeClass.py"):
         os.remove("genNodeClass.py")
+
+    await nested_node.disconnect_async()
