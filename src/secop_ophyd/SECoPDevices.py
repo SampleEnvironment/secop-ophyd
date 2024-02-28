@@ -1,6 +1,7 @@
 import asyncio
 import re
 import threading
+import time
 import time as ttime
 from typing import Dict, Iterator, Optional
 
@@ -210,6 +211,7 @@ class SECoPReadableDevice(SECoPBaseDevice):
                 command + "_CMD",
                 SECoP_CMD_Device(path=cmd_path, secclient=secclient),
             )
+            # Add Bluesky Plan Methods
 
         self.set_readable_signals(read=self._read, config=self._config)
 
@@ -495,28 +497,43 @@ class SECoP_Node_Device(StandardReadable):
         super().__init__(name=name)
 
     @classmethod
-    async def create(cls, host: str, port: str, loop, log=Logger):
-        """async factory pattern to be able to have an async io constructor,
-        since __init__ isnt allowed to be async.
+    def create(cls, host: str, port: str, loop, log=Logger):
 
-        :param host: hostname of Sec-node
-        :type host: str
-        :param port: Sec-node port
-        :type port: str
-        :param loop: asyncio eventloop, can either run in same thread or external
-            thread. In conjunction with bluesky RE.loop should be used
-        :type loop: _type_
-        :param log: Logging of AsyncFrappyClient, defaults to Logger
-        :type log: _type_, optional
-        :return: fully initializedand connected Sec-node device including
-            all subdevices
-        :rtype: _type_
-        """
-        # check if asyncio eventloop is running in the same thread
-        if loop._thread_id == threading.current_thread().ident and loop.is_running():
+        secclient: AsyncFrappyClient
+
+        if not loop.is_running():
+            raise Exception("The provided Eventloop is not running")
+
+        if loop._thread_id != threading.current_thread().ident:
+            client_future = asyncio.run_coroutine_threadsafe(
+                AsyncFrappyClient.create(host=host, port=port, loop=loop, log=log), loop
+            )
+            secclient = client_future.result()
+
+            secclient.external = True
+
+        else:
+            raise Exception(
+                "should be calles with an eventloop that is"
+                "running in a seperate thread"
+            )
+
+        return SECoP_Node_Device(secclient=secclient)
+
+    @classmethod
+    async def create_async(cls, host: str, port: str, loop, log=Logger):
+
+        secclient: AsyncFrappyClient
+
+        if not loop.is_running():
+            raise Exception("The provided Eventloop is not running")
+
+        if loop._thread_id == threading.current_thread().ident:
             secclient = await AsyncFrappyClient.create(
                 host=host, port=port, loop=loop, log=log
             )
+
+            secclient.external = False
 
         else:
             # Event loop is running in a different thread
@@ -528,7 +545,24 @@ class SECoP_Node_Device(StandardReadable):
 
         return SECoP_Node_Device(secclient=secclient)
 
-    async def disconnect(self):
+    def disconnect(self):
+        """shuts down secclient, eventloop must be running in external thread"""
+        if (
+            self._secclient.loop._thread_id == threading.current_thread().ident
+            and self._secclient.loop.is_running()
+        ):
+            raise Exception(
+                "Eventloop must be running in external thread,"
+                " try await node.disconnect_async()"
+            )
+        else:
+            future = asyncio.run_coroutine_threadsafe(
+                self._secclient.disconnect(True), self._secclient.loop
+            )
+
+            future.result(2)
+
+    async def disconnect_async(self):
         """shuts down secclient using asyncio, eventloop can be running in same or
         external thread
         """
@@ -618,20 +652,6 @@ class SECoP_Node_Device(StandardReadable):
         self.genCode.add_node_class(self._node_cls_name, node_bases, node_class_attrs)
 
         self.genCode.write_genNodeClass_file()
-
-    def disconnect_external(self):
-        """shuts down secclient, eventloop mus be running in external thread"""
-        if (
-            self._secclient.loop._thread_id == threading.current_thread().ident
-            and self._secclient.loop.is_running()
-        ):
-            raise Exception
-        else:
-            future = asyncio.run_coroutine_threadsafe(
-                self._secclient.disconnect(True), self._secclient.loop
-            )
-
-            future.result(2)
 
     def descriptiveDataChange(self, module, description):
         """called when the description has changed

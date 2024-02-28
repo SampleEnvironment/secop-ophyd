@@ -7,7 +7,7 @@ from secop_ophyd.SECoPDevices import SECoP_Node_Device, SECoPReadableDevice
 
 async def test_nested_connect(nested_struct_sim, nested_node: SECoP_Node_Device):
     assert isinstance(nested_node, SECoP_Node_Device)
-    await nested_node.disconnect()
+    await nested_node.disconnect_async()
 
 
 async def test_tuple_dev(nested_client: AsyncFrappyClient):
@@ -61,7 +61,7 @@ async def test_nested_dtype_str_signal_generation(
     assert isinstance(val, np.ndarray)
     assert descr["dtype"] == "array"
     assert descr["SECoP_dtype"] == "struct"
-    await nested_node.disconnect()
+    await nested_node.disconnect_async()
 
 
 async def test_nested_dtype_set_str_struct(
@@ -94,7 +94,7 @@ async def test_nested_dtype_set_str_struct(
     assert val["color"] == "yellow"
     assert isinstance(val, np.ndarray)
 
-    await nested_node.disconnect()
+    await nested_node.disconnect_async()
 
 
 async def test_nested_dtype_set_str_tuple(
@@ -129,7 +129,7 @@ async def test_nested_dtype_set_str_tuple(
     assert val["f3"] == "blue"
     assert isinstance(val, np.ndarray)
 
-    await nested_node.disconnect()
+    await nested_node.disconnect_async()
 
 
 async def test_nested_struct_of_arrays(
@@ -165,7 +165,7 @@ async def test_nested_struct_of_arrays(
 
     assert np.equal(RW_val["floats"], RW_old["floats"] + 0.2).all()
 
-    await nested_node.disconnect()
+    await nested_node.disconnect_async()
 
 
 # TODO Nested Arrays (2D) uniform and ragged
