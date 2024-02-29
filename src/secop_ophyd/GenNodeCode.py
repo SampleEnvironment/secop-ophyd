@@ -10,8 +10,9 @@ class GenNodeCode:
 
     ModName: str = "genNodeClass"
     node_mod = None
+    path_to_module: str | None = None
 
-    def __init__(self):
+    def __init__(self, path: str | None = None):
         """Instantiates GenNodeCode, internally all atrribues on a node and module level
         are collected. Additionally all the needed imports are collected in a dict
         """
@@ -31,8 +32,17 @@ class GenNodeCode:
         self.mod_cls_string: str = ""
         self.node_cls_string: str = ""
 
+        self.path_to_module = path
+
+        mod_path = self.ModName
+
+        if self.path_to_module is not None:
+            rep_slash = self.path_to_module.replace("/", ".",-1).replace('",' ".",-1)
+            mod_path = f"{rep_slash}.{self.ModName}"
+            print(mod_path)
+
         try:
-            self.node_mod = import_module(self.ModName)
+            self.node_mod = import_module(mod_path)
         except ModuleNotFoundError:
             print("no code generated yet, building from scratch")
             return
@@ -161,10 +171,10 @@ class GenNodeCode:
         code += self.node_cls_string
 
         # Write the generated code to a .py file
-        filename = f"{self.ModName}.py"
+        filename = f"{self.path_to_module}/{self.ModName}.py"
         with open(filename, "w") as file:
             file.write(code)
 
-            # Reload the Module after its source has been edited
+        # Reload the Module after its source has been edited
         if self.node_mod is not None:
             reload(self.node_mod)

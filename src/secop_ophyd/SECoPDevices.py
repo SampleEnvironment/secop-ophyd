@@ -3,7 +3,8 @@ import re
 import threading
 import time
 import time as ttime
-from typing import Dict, Iterator, Optional
+import types
+from typing import Dict, Iterator, Optional, Type
 
 from bluesky.protocols import (
     Descriptor,
@@ -157,175 +158,6 @@ class SECoPBaseDevice(StandardReadable):
             await asyncio.wrap_future(future=fut)
 
 
-class SECoPReadableDevice(SECoPBaseDevice):
-    """
-    Standard readable SECoP device, corresponding to a SECoP module with the
-    interface class "Readable"
-    """
-
-    def __init__(self, secclient: AsyncFrappyClient, module_name: str):
-        """Initializes the SECoPReadableDevice
-
-        :param secclient: SECoP client providing communication to the SEC Node
-        :type secclient: AsyncFrappyClient
-        :param module_name: Name of the SEC Node module that is represented by
-            this device
-        :type module_name: str
-        """
-
-        super().__init__(secclient=secclient)
-
-        self._module = module_name
-        module_desc = secclient.modules[module_name]
-
-        # generate Signals from Module Properties
-        for property in module_desc["properties"]:
-            propb = PropertyBackend(property, module_desc["properties"], secclient)
-            if property == "implementation":
-                self.impl = module_desc["properties"]["implementation"]
-
-            setattr(self, property, SignalR(backend=propb))
-            self._config.append(getattr(self, property))
-
-        # generate Signals from Module parameters eiter r or rw
-        for parameter, properties in module_desc["parameters"].items():
-            # generate new root path
-            param_path = Path(parameter_name=parameter, module_name=module_name)
-
-            # readonly propertyns to plans and plan stubs.
-            readonly: bool = properties.get("readonly", None)
-
-            # Normal types + (struct and tuple as JSON object Strings)
-            self._signal_from_parameter(
-                path=param_path,
-                sig_name=parameter,
-                readonly=readonly,
-            )
-
-        # Initialize Command Devices
-        for command, properties in module_desc["commands"].items():
-            # generate new root path
-            cmd_path = Path(parameter_name=command, module_name=module_name)
-            setattr(
-                self,
-                command + "_CMD",
-                SECoP_CMD_Device(path=cmd_path, secclient=secclient),
-            )
-            # Add Bluesky Plan Methods
-
-        self.set_readable_signals(read=self._read, config=self._config)
-
-        self.set_name(module_name)
-
-    def _signal_from_parameter(self, path: Path, sig_name: str, readonly: bool):
-        """Generates an Ophyd Signal from a Module Parameter
-
-        :param path: Path to the Parameter in the secclient module dict
-        :type path: Path
-        :param sig_name: Name of the new Signal
-        :type sig_name: str
-        :param readonly: Signal is R or RW
-        :type readonly: bool
-        """
-
-        super(SECoPReadableDevice, self)._signal_from_parameter(
-            path=path, sig_name=sig_name, readonly=readonly
-        )
-
-        # In SECoP only the 'value' parameter is the primary read prameter, but
-        # if the value is a SECoP-tuple all elements belonging to the tuple are
-        # appended to the read list
-        if path._accessible_name == "value":
-            self._read.append(getattr(self, sig_name))
-
-        # target should only be set through the set method. And is not part of
-        # config
-        else:
-            self._config.append(getattr(self, sig_name))
-
-
-class SECoPWritableDevice(SECoPReadableDevice):
-    """Fast settable device target"""
-
-    pass
-
-
-class SECoPMoveableDevice(SECoPWritableDevice, Movable, Stoppable):
-    """
-    Standard movable SECoP device, corresponding to a SECoP module with the
-    interface class "Drivable"
-    """
-
-    def __init__(self, secclient: AsyncFrappyClient, module_name: str):
-        """Initialize SECoPMovableDevice
-
-        :param secclient: SECoP client providing communication to the SEC Node
-        :type secclient: AsyncFrappyClient
-        :param module_name: ame of the SEC Node module that is represented by
-            this device
-        :type module_name: str
-        """
-        super().__init__(secclient, module_name)
-        self._success = True
-        self._stopped = False
-
-    def set(self, new_target, timeout: Optional[float] = None) -> AsyncStatus:
-        """Sends new target to SEC Nonde and waits until module is IDLE again
-
-        :param new_target: new taget/setpoint for module
-        :type new_target: _type_
-        :param timeout: timeout for set operation, defaults to None
-        :type timeout: Optional[float], optional
-        :return: Asyncstatus that gets set to Done once module is IDLE again
-        :rtype: AsyncStatus
-        """
-        coro = asyncio.wait_for(self._move(new_target), timeout=timeout)
-        return AsyncStatus(coro)
-
-    async def _move(self, new_target):
-        self._success = True
-        self._stopped = False
-        await self.target.set(new_target, wait=False)
-
-        # force reading of status from device
-        await self.status.read(False)
-
-        # observe status and wait until dvice is IDLE again
-        async for current_stat in observe_value(self.status):
-            stat_code = current_stat["f0"]
-
-            if self._stopped is True:
-                break
-
-            # Error State or DISABLED
-            if stat_code >= ERROR or stat_code < IDLE:
-                self._success = False
-                break
-
-            # Module is in IDLE/WARN state
-            if IDLE <= stat_code < BUSY:
-                break
-
-            # TODO other status transitions
-
-        if not self._success:
-            raise RuntimeError("Module was stopped")
-
-    async def stop(self, success=True):
-        """Calls stop command on the SEC Node module
-
-        :param success:
-            True: device is stopped as planned
-            False: something has gone wrong
-            (defaults to True)
-        :type success: bool, optional
-        """
-        self._success = success
-
-        await self._secclient.execCommand(self._module, "stop")
-        self._stopped = True
-
-
 class SECoP_CMD_Device(StandardReadable, Flyable, Triggerable):
     """
     Command devices that have Signals for command args, return values and a signal
@@ -447,6 +279,197 @@ class SECoP_CMD_Device(StandardReadable, Flyable, Triggerable):
 
     async def describe_collect(self) -> SyncOrAsync[Dict[str, Dict[str, Descriptor]]]:
         return await self.describe()
+
+
+class SECoPReadableDevice(SECoPBaseDevice):
+    """
+    Standard readable SECoP device, corresponding to a SECoP module with the
+    interface class "Readable"
+    """
+
+    def __init__(self, secclient: AsyncFrappyClient, module_name: str):
+        """Initializes the SECoPReadableDevice
+
+        :param secclient: SECoP client providing communication to the SEC Node
+        :type secclient: AsyncFrappyClient
+        :param module_name: Name of the SEC Node module that is represented by
+            this device
+        :type module_name: str
+        """
+
+        super().__init__(secclient=secclient)
+
+        self._module = module_name
+        module_desc = secclient.modules[module_name]
+
+        # generate Signals from Module Properties
+        for property in module_desc["properties"]:
+            propb = PropertyBackend(property, module_desc["properties"], secclient)
+            if property == "implementation":
+                self.impl = module_desc["properties"]["implementation"]
+
+            setattr(self, property, SignalR(backend=propb))
+            self._config.append(getattr(self, property))
+
+        # generate Signals from Module parameters eiter r or rw
+        for parameter, properties in module_desc["parameters"].items():
+            # generate new root path
+            param_path = Path(parameter_name=parameter, module_name=module_name)
+
+            # readonly propertyns to plans and plan stubs.
+            readonly: bool = properties.get("readonly", None)
+
+            # Normal types + (struct and tuple as JSON object Strings)
+            self._signal_from_parameter(
+                path=param_path,
+                sig_name=parameter,
+                readonly=readonly,
+            )
+
+        # Initialize Command Devices
+        for command, properties in module_desc["commands"].items():
+            # generate new root path
+            cmd_path = Path(parameter_name=command, module_name=module_name)
+            setattr(
+                self,
+                command + "_CMD",
+                SECoP_CMD_Device(path=cmd_path, secclient=secclient),
+            )
+            # Add Bluesky Plan Methods
+
+        self.set_readable_signals(read=self._read, config=self._config)
+
+        self.set_name(module_name)
+
+    def generate_cmd_method(
+        self,
+        CMD_Device: SECoP_CMD_Device,
+        argument_type: Type = None,
+        return_type: Optional[Type] = None,
+    ) -> types.FunctionType:
+        def command_method(self, wait_for_IDLE: bool, *args) -> Optional[return_type]:
+            if argument_type is not None and len(args) != 1:
+                raise TypeError(f"Expected 1 argument, got {len(args)}")
+            if argument_type is not None:
+                if not isinstance(args[0], argument_type):
+                    raise Exception("argument is not of expected Type")
+
+            # Process the arguments here
+            # if return_type is not None:
+            #    result = sum(typed_args)  # Just a dummy example
+            #    return return_type(result)  # Return type conversion
+
+            CMD_Device.argument.set()
+
+        return command_method
+
+    def _signal_from_parameter(self, path: Path, sig_name: str, readonly: bool):
+        """Generates an Ophyd Signal from a Module Parameter
+
+        :param path: Path to the Parameter in the secclient module dict
+        :type path: Path
+        :param sig_name: Name of the new Signal
+        :type sig_name: str
+        :param readonly: Signal is R or RW
+        :type readonly: bool
+        """
+
+        super(SECoPReadableDevice, self)._signal_from_parameter(
+            path=path, sig_name=sig_name, readonly=readonly
+        )
+
+        # In SECoP only the 'value' parameter is the primary read prameter, but
+        # if the value is a SECoP-tuple all elements belonging to the tuple are
+        # appended to the read list
+        if path._accessible_name == "value":
+            self._read.append(getattr(self, sig_name))
+
+        # target should only be set through the set method. And is not part of
+        # config
+        else:
+            self._config.append(getattr(self, sig_name))
+
+
+class SECoPWritableDevice(SECoPReadableDevice):
+    """Fast settable device target"""
+
+    pass
+
+
+class SECoPMoveableDevice(SECoPWritableDevice, Movable, Stoppable):
+    """
+    Standard movable SECoP device, corresponding to a SECoP module with the
+    interface class "Drivable"
+    """
+
+    def __init__(self, secclient: AsyncFrappyClient, module_name: str):
+        """Initialize SECoPMovableDevice
+
+        :param secclient: SECoP client providing communication to the SEC Node
+        :type secclient: AsyncFrappyClient
+        :param module_name: ame of the SEC Node module that is represented by
+            this device
+        :type module_name: str
+        """
+        super().__init__(secclient, module_name)
+        self._success = True
+        self._stopped = False
+
+    def set(self, new_target, timeout: Optional[float] = None) -> AsyncStatus:
+        """Sends new target to SEC Nonde and waits until module is IDLE again
+
+        :param new_target: new taget/setpoint for module
+        :type new_target: _type_
+        :param timeout: timeout for set operation, defaults to None
+        :type timeout: Optional[float], optional
+        :return: Asyncstatus that gets set to Done once module is IDLE again
+        :rtype: AsyncStatus
+        """
+        coro = asyncio.wait_for(self._move(new_target), timeout=timeout)
+        return AsyncStatus(coro)
+
+    async def _move(self, new_target):
+        self._success = True
+        self._stopped = False
+        await self.target.set(new_target, wait=False)
+
+        # force reading of status from device
+        await self.status.read(False)
+
+        # observe status and wait until dvice is IDLE again
+        async for current_stat in observe_value(self.status):
+            stat_code = current_stat["f0"]
+
+            if self._stopped is True:
+                break
+
+            # Error State or DISABLED
+            if stat_code >= ERROR or stat_code < IDLE:
+                self._success = False
+                break
+
+            # Module is in IDLE/WARN state
+            if IDLE <= stat_code < BUSY:
+                break
+
+            # TODO other status transitions
+
+        if not self._success:
+            raise RuntimeError("Module was stopped")
+
+    async def stop(self, success=True):
+        """Calls stop command on the SEC Node module
+
+        :param success:
+            True: device is stopped as planned
+            False: something has gone wrong
+            (defaults to True)
+        :type success: bool, optional
+        """
+        self._success = success
+
+        await self._secclient.execCommand(self._module, "stop")
+        self._stopped = True
 
 
 class SECoP_Node_Device(StandardReadable):
