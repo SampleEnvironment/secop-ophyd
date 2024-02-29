@@ -1,6 +1,6 @@
 import inspect
 from importlib import import_module, reload
-
+from pathlib import Path
 
 class GenNodeCode:
     """Generates A Python Class for a given SECoP_Node_Device instance. This allows
@@ -10,7 +10,10 @@ class GenNodeCode:
 
     ModName: str = "genNodeClass"
     node_mod = None
-    path_to_module: str | None = None
+
+    """relative path to the directory that the generated module is written to   
+    """
+    module_folder_path: Path | None = None
 
     def __init__(self, path: str | None = None):
         """Instantiates GenNodeCode, internally all atrribues on a node and module level
@@ -32,14 +35,16 @@ class GenNodeCode:
         self.mod_cls_string: str = ""
         self.node_cls_string: str = ""
 
-        self.path_to_module = path
+        if path is not None:
+            self.module_folder_path = Path(path)
 
         mod_path = self.ModName
 
-        if self.path_to_module is not None:
-            rep_slash = self.path_to_module.replace("/", ".",-1).replace('",' ".",-1)
+        if self.module_folder_path is not None:
+            str_path = str(self.module_folder_path)
+            rep_slash = str_path.replace("/", ".").replace("\\", ".")
             mod_path = f"{rep_slash}.{self.ModName}"
-            print(mod_path)
+
 
         try:
             self.node_mod = import_module(mod_path)
@@ -171,8 +176,12 @@ class GenNodeCode:
         code += self.node_cls_string
 
         # Write the generated code to a .py file
-        filename = f"{self.path_to_module}/{self.ModName}.py"
-        with open(filename, "w") as file:
+
+        if self.module_folder_path is None:
+            filep = Path(f"{self.ModName}.py")
+        else:
+            filep = self.module_folder_path/f"{self.ModName}.py"
+        with open(filep, "w") as file:
             file.write(code)
 
         # Reload the Module after its source has been edited
