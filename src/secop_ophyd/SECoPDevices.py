@@ -600,14 +600,14 @@ class SECoP_Node_Device(StandardReadable):
             )
             await asyncio.wrap_future(future=disconn_future)
 
-    def class_from_instance(self):
+    def class_from_instance(self,path_to_module:str|None = None):
         """Dynamically generate python class file for the SECoP_Node_Device, this
         allows autocompletion in IDEs and eases working with the generated Ophyd
         devices
         """
 
         # parse genClass file if already present
-        self.genCode = GenNodeCode()
+        self.genCode = GenNodeCode(path=path_to_module)
 
         self.genCode.add_import(self.__module__, self.__class__.__name__)
 
