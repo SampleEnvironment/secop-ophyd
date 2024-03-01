@@ -4,8 +4,10 @@ import threading
 import time
 import time as ttime
 import types
+from types import MethodType
 from typing import Dict, Iterator, Optional, Type
 
+import bluesky.plan_stubs as bps
 from bluesky.protocols import (
     Descriptor,
     Flyable,
@@ -21,6 +23,7 @@ from ophyd_async.core.async_status import AsyncStatus
 from ophyd_async.core.signal import SignalR, SignalRW, SignalX, observe_value
 from ophyd_async.core.standard_readable import StandardReadable
 from ophyd_async.core.utils import T
+from typing_extensions import Self
 
 from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient
 from secop_ophyd.GenNodeCode import GenNodeCode
@@ -138,24 +141,15 @@ class SECoPBaseDevice(StandardReadable):
         # force reading of fresh status from device
         await self.status.read(False)
 
-        async def wait_for_idle():
-            async for current_stat in observe_value(self.status):
-                # status is has type Tuple and is therefore transported as
-                # structured Numpy array ('f0':statuscode;'f1':status Message)
+        async for current_stat in observe_value(self.status):
+            # status is has type Tuple and is therefore transported as
+            # structured Numpy array ('f0':statuscode;'f1':status Message)
 
-                stat_code = current_stat["f0"]
+            stat_code = current_stat["f0"]
 
-                # Module is in IDLE/WARN state
-                if IDLE <= stat_code < BUSY:
-                    break
-
-        if not self._secclient.external:
-            await wait_for_idle()
-        else:
-            fut = asyncio.run_coroutine_threadsafe(
-                wait_for_idle(), self._secclient.loop
-            )
-            await asyncio.wrap_future(future=fut)
+            # Module is in IDLE/WARN state
+            if IDLE <= stat_code < BUSY:
+                break
 
 
 class SECoP_CMD_Device(StandardReadable, Flyable, Triggerable):
@@ -187,8 +181,8 @@ class SECoP_CMD_Device(StandardReadable, Flyable, Triggerable):
         cmd_datatype: CommandType = cmd_props["datatype"]
         datainfo = cmd_props[DATAINFO]
 
-        arg_dtype = cmd_datatype.argument
-        res_dtype = cmd_datatype.result
+        self.arg_dtype = cmd_datatype.argument
+        self.res_dtype = cmd_datatype.result
 
         self.argument: SignalRW | None
         self.result: SignalR | None
@@ -201,14 +195,16 @@ class SECoP_CMD_Device(StandardReadable, Flyable, Triggerable):
         self._start_time: float
         self.commandx: SignalX
 
+        self.wait_idle: bool = False
+
         # Argument Signals (config Signals, can also be read)
         arg_path = path.append("argument")
-        if arg_dtype is None:
+        if self.arg_dtype is None:
             self.argument = None
         else:
             arg_backend = SECoP_CMD_IO_Backend(
                 path=arg_path,
-                SECoPdtype_obj=arg_dtype,
+                SECoPdtype_obj=self.arg_dtype,
                 sig_datainfo=datainfo["argument"],
             )
             self.argument = SignalRW(arg_backend)
@@ -217,12 +213,12 @@ class SECoP_CMD_Device(StandardReadable, Flyable, Triggerable):
         # Result Signals  (read Signals)
         res_path = path.append("result")
 
-        if res_dtype is None:
+        if self.res_dtype is None:
             self.result = None
         else:
             res_backend = SECoP_CMD_IO_Backend(
                 path=res_path,
-                SECoPdtype_obj=res_dtype,
+                SECoPdtype_obj=self.res_dtype,
                 sig_datainfo=datainfo["result"],
             )
             self.result = SignalRW(res_backend)
@@ -237,6 +233,10 @@ class SECoP_CMD_Device(StandardReadable, Flyable, Triggerable):
         )
 
         self.commandx = SignalX(exec_backend)
+
+        self.cmd_plan = MethodType(
+            self.generate_cmd_method(self.arg_dtype, self.res_dtype), self
+        )
 
         self.set_readable_signals(read=read, config=config)
 
@@ -266,8 +266,6 @@ class SECoP_CMD_Device(StandardReadable, Flyable, Triggerable):
 
         await stat
 
-        # await self.parent.wait_for_IDLE()
-
     def complete(self) -> AsyncStatus:
         coro = asyncio.wait_for(fut=self._exec_cmd(), timeout=None)
         return AsyncStatus(awaitable=coro, watchers=None)
@@ -279,6 +277,35 @@ class SECoP_CMD_Device(StandardReadable, Flyable, Triggerable):
 
     async def describe_collect(self) -> SyncOrAsync[Dict[str, Dict[str, Descriptor]]]:
         return await self.describe()
+
+    def generate_cmd_method(
+        self,
+        argument_type: Type | None = None,
+        return_type: Type | None = None,
+    ) -> types.FunctionType:
+        def command_method(
+            self, arg=None, wait_for_IDLE: bool = False
+        ) -> Optional[return_type]:
+            # TODO  Type checking
+
+            if arg is not None:
+                yield from bps.abs_set(self.argument, arg)
+
+            # Trigger the Command device, meaning that the command gets sent to the
+            # SEC Node
+            yield from bps.trigger(self, wait=True)
+
+            retval = self.result._backend.reading.get_value()
+            if wait_for_IDLE:
+
+                def wait_for_IDLE_factory():
+                    return self.parent.wait_for_IDLE()
+
+                yield from bps.wait_for([wait_for_IDLE_factory])
+
+            return retval
+
+        return command_method
 
 
 class SECoPReadableDevice(SECoPBaseDevice):
@@ -330,38 +357,36 @@ class SECoPReadableDevice(SECoPBaseDevice):
         for command, properties in module_desc["commands"].items():
             # generate new root path
             cmd_path = Path(parameter_name=command, module_name=module_name)
+            cmd_dev_name = command + "_CMD"
             setattr(
                 self,
-                command + "_CMD",
+                cmd_dev_name,
                 SECoP_CMD_Device(path=cmd_path, secclient=secclient),
             )
+
+            cmd_dev: SECoP_CMD_Device = getattr(self, cmd_dev_name)
             # Add Bluesky Plan Methods
+
+            def cmd_plan_method_no_arg(self, wait_for_IDLE: bool = False):
+                retval = cmd_dev.cmd_plan(None, wait_for_IDLE)
+
+                if retval is not None:
+                    return retval
+
+            def cmd_plan_method(self, argument, wait_for_IDLE: bool = False):
+                retval = cmd_dev.cmd_plan(argument, wait_for_IDLE)
+
+                if retval is not None:
+                    return retval
+
+            if cmd_dev.argument is None:
+                setattr(self, command, MethodType(cmd_plan_method_no_arg, self))
+            else:
+                setattr(self, command, MethodType(cmd_plan_method, self))
 
         self.set_readable_signals(read=self._read, config=self._config)
 
         self.set_name(module_name)
-
-    def generate_cmd_method(
-        self,
-        CMD_Device: SECoP_CMD_Device,
-        argument_type: Type = None,
-        return_type: Optional[Type] = None,
-    ) -> types.FunctionType:
-        def command_method(self, wait_for_IDLE: bool, *args) -> Optional[return_type]:
-            if argument_type is not None and len(args) != 1:
-                raise TypeError(f"Expected 1 argument, got {len(args)}")
-            if argument_type is not None:
-                if not isinstance(args[0], argument_type):
-                    raise Exception("argument is not of expected Type")
-
-            # Process the arguments here
-            # if return_type is not None:
-            #    result = sum(typed_args)  # Just a dummy example
-            #    return return_type(result)  # Return type conversion
-
-            CMD_Device.argument.set()
-
-        return command_method
 
     def _signal_from_parameter(self, path: Path, sig_name: str, readonly: bool):
         """Generates an Ophyd Signal from a Module Parameter
@@ -520,7 +545,7 @@ class SECoP_Node_Device(StandardReadable):
         super().__init__(name=name)
 
     @classmethod
-    def create(cls, host: str, port: str, loop, log=Logger):
+    def create(cls, host: str, port: str, loop, log=Logger) -> Self:
 
         secclient: AsyncFrappyClient
 
@@ -544,7 +569,7 @@ class SECoP_Node_Device(StandardReadable):
         return SECoP_Node_Device(secclient=secclient)
 
     @classmethod
-    async def create_async(cls, host: str, port: str, loop, log=Logger):
+    async def create_async(cls, host: str, port: str, loop, log=Logger) -> Self:
 
         secclient: AsyncFrappyClient
 
@@ -600,7 +625,7 @@ class SECoP_Node_Device(StandardReadable):
             )
             await asyncio.wrap_future(future=disconn_future)
 
-    def class_from_instance(self,path_to_module:str|None = None):
+    def class_from_instance(self, path_to_module: str | None = None):
         """Dynamically generate python class file for the SECoP_Node_Device, this
         allows autocompletion in IDEs and eases working with the generated Ophyd
         devices
