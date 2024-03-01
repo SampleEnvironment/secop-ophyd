@@ -2,6 +2,7 @@ import inspect
 from importlib import import_module, reload
 from pathlib import Path
 
+
 class GenNodeCode:
     """Generates A Python Class for a given SECoP_Node_Device instance. This allows
     autocompletiion and type hinting in IDEs, this is needed since the attributes of
@@ -10,9 +11,6 @@ class GenNodeCode:
 
     ModName: str = "genNodeClass"
     node_mod = None
-
-    """relative path to the directory that the generated module is written to   
-    """
     module_folder_path: Path | None = None
 
     def __init__(self, path: str | None = None):
@@ -44,7 +42,6 @@ class GenNodeCode:
             str_path = str(self.module_folder_path)
             rep_slash = str_path.replace("/", ".").replace("\\", ".")
             mod_path = f"{rep_slash}.{self.ModName}"
-
 
         try:
             self.node_mod = import_module(mod_path)
@@ -180,7 +177,7 @@ class GenNodeCode:
         if self.module_folder_path is None:
             filep = Path(f"{self.ModName}.py")
         else:
-            filep = self.module_folder_path/f"{self.ModName}.py"
+            filep = self.module_folder_path / f"{self.ModName}.py"
         with open(filep, "w") as file:
             file.write(code)
 
