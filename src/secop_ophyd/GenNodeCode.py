@@ -19,8 +19,8 @@ class GenNodeCode:
         """
         # prevent circular import
         from secop_ophyd.SECoPDevices import (
-            SECoP_Node_Device,
             SECoPMoveableDevice,
+            SECoPNodeDevice,
             SECoPReadableDevice,
             SECoPWritableDevice,
         )
@@ -57,19 +57,28 @@ class GenNodeCode:
 
             if module == self.ModName:
                 # Node Classes
-                if issubclass(class_obj, SECoP_Node_Device):
 
-                    source = inspect.getsource(class_obj).split("\n")
+                def get_attrs(source: str) -> list[tuple[str, str]]:
+                    source_list: list[str] = source.split("\n")
                     # remove first line
-                    source.pop(0)
-
-                    bases = [base.__name__ for base in class_obj.__bases__]
+                    source_list.pop(0)
+                    source_list.pop()
 
                     # remove whitespace
-                    source = [attr.replace(" ", "") for attr in source]
+                    source_list = [attr.replace(" ", "") for attr in source_list]
                     # split at colon
-                    attrs = [tuple(attr.split(":")) for attr in source]
-                    attrs.pop()
+                    attrs: list[tuple[str, str]] = []
+                    for attr in source_list:
+                        parts = attr.split(":", maxsplit=1)
+                        if len(parts) == 2:
+                            attrs.append((parts[0], parts[1]))
+
+                    return attrs
+
+                if issubclass(class_obj, SECoPNodeDevice):
+                    attrs = get_attrs(inspect.getsource(class_obj))
+
+                    bases = [base.__name__ for base in class_obj.__bases__]
 
                     self.add_node_class(class_symbol, bases, attrs)
                     continue
@@ -79,17 +88,9 @@ class GenNodeCode:
                     (SECoPMoveableDevice, SECoPReadableDevice, SECoPWritableDevice),
                 ):
 
-                    source = inspect.getsource(class_obj).split("\n")
-                    # remove first line
-                    source.pop(0)
+                    attrs = get_attrs(inspect.getsource(class_obj))
 
                     bases = [base.__name__ for base in class_obj.__bases__]
-
-                    # remove whitespace
-                    source = [attr.replace(" ", "") for attr in source]
-                    # split at colon
-                    attrs = [tuple(attr.split(":")) for attr in source]
-                    attrs.pop()
 
                     self.add_mod_class(class_symbol, bases, attrs)
                     continue
@@ -110,7 +111,9 @@ class GenNodeCode:
         else:
             self.dimport[module] = {class_str}
 
-    def add_mod_class(self, module_cls: str, bases: list[str], attrs: tuple[str, str]):
+    def add_mod_class(
+        self, module_cls: str, bases: list[str], attrs: list[tuple[str, str]]
+    ):
         """adds module class to the module dict
 
         :param module_cls: name of the new Module class
@@ -122,7 +125,9 @@ class GenNodeCode:
         """
         self.dmodule[module_cls] = {"bases": bases, "attrs": attrs}
 
-    def add_node_class(self, node_cls: str, bases: list[str], attrs: tuple[str, str]):
+    def add_node_class(
+        self, node_cls: str, bases: list[str], attrs: list[tuple[str, str]]
+    ):
         self.dnode[node_cls] = {"bases": bases, "attrs": attrs}
 
     def _write_imports_string(self):
@@ -161,7 +166,7 @@ class GenNodeCode:
 
             self.node_cls_string += "\n\n"
 
-    def write_genNodeClass_file(self):
+    def write_gen_node_class_file(self):
         self._write_imports_string()
         self._write_mod_cls_string()
         self._write_node_cls_string()

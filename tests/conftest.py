@@ -17,7 +17,7 @@ from frappy.datatypes import (
 from xprocess import ProcessStarter
 
 from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient
-from secop_ophyd.SECoPDevices import SECoP_Node_Device
+from secop_ophyd.SECoPDevices import SECoPNodeDevice
 
 
 @pytest.fixture
@@ -149,32 +149,32 @@ def db():
 
 
 @pytest.fixture
-def RE(db):
-    RE = RunEngine({})
-    RE.subscribe(db.v1.insert)
-    return RE
+def run_engine(db):
+    re = RunEngine({})
+    re.subscribe(db.v1.insert)
+    return re
 
 
 @pytest.fixture
-def cryo_node(RE):
-    return SECoP_Node_Device.create(host="localhost", port="10769", loop=RE.loop)
+def cryo_node(run_engine):
+    return SECoPNodeDevice.create(host="localhost", port="10769", loop=run_engine.loop)
 
 
 @pytest.fixture
-def nested_node_RE(RE):
-    return SECoP_Node_Device.create(host="localhost", port="10771", loop=RE.loop)
+def nested_node_re(run_engine):
+    return SECoPNodeDevice.create(host="localhost", port="10771", loop=run_engine.loop)
 
 
 @pytest.fixture
 async def cryo_node_internal_loop():
-    return await SECoP_Node_Device.create_async(
+    return await SECoPNodeDevice.create_async(
         host="localhost", port="10769", loop=asyncio.get_running_loop()
     )
 
 
 @pytest.fixture
 async def nested_node():
-    return await SECoP_Node_Device.create_async(
+    return await SECoPNodeDevice.create_async(
         host="localhost", port="10771", loop=asyncio.get_running_loop()
     )
 
@@ -284,7 +284,7 @@ def array_ragged_dtype():
 
 
 @pytest.fixture
-def array_2D_dtype():
+def array_2d_dtype():
     dty = StructOf(
         flt=FloatRange(),
         testarr=ArrayOf(

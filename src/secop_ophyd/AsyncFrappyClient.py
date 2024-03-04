@@ -60,19 +60,19 @@ class AsyncFrappyClient:
     async def disconnect(self, shutdown=True):
         await asyncio.to_thread(self.client.disconnect, shutdown)
 
-    async def getParameter(self, module, parameter, trycache=False) -> CacheItem:
+    async def get_parameter(self, module, parameter, trycache=False) -> CacheItem:
         paramerter_reading = await asyncio.to_thread(
             self.client.getParameter, module, parameter, trycache
         )
         return paramerter_reading
 
-    async def setParameter(self, module, parameter, value) -> CacheItem:
+    async def set_parameter(self, module, parameter, value) -> CacheItem:
         paramerter_reading = await asyncio.to_thread(
             self.client.setParameter, module, parameter, value
         )
         return paramerter_reading
 
-    async def execCommand(self, module, command, argument=None) -> tuple[Any, dict]:
+    async def exec_command(self, module, command, argument=None) -> tuple[Any, dict]:
         return await asyncio.to_thread(
             self.client.execCommand, module, command, argument
         )

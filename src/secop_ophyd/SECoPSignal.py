@@ -32,14 +32,14 @@ atomic_dtypes = (
 )
 
 
-class SECoP_CMD_IO_Backend(SignalBackend):
+class LocalBackend(SignalBackend):
     """Class for the 'argument' and 'result' Signal backends of a SECoP_CMD_Device.
     These Signals act as a local cache for storing the command argument and result.
 
     """
 
     def __init__(
-        self, path: Path, SECoPdtype_obj: DataType, sig_datainfo: dict
+        self, path: Path, secop_dtype_obj: DataType, sig_datainfo: dict
     ) -> None:
         """Initialize SECoP_CMD_IO_Backend
 
@@ -52,7 +52,7 @@ class SECoP_CMD_IO_Backend(SignalBackend):
         by the signal
         :type sig_datainfo: dict
         """
-        self.SECoP_type_info: SECoPdtype = SECoPdtype(SECoPdtype_obj)
+        self.SECoP_type_info: SECoPdtype = SECoPdtype(secop_dtype_obj)
 
         self.reading: SECoPReading = SECoPReading(
             secop_dt=self.SECoP_type_info, entry=None
@@ -67,7 +67,7 @@ class SECoP_CMD_IO_Backend(SignalBackend):
 
         self.callback: Callable[[Reading, Any], None] | None = None
 
-        self.SECoPdtype_obj: DataType = SECoPdtype_obj
+        self.SECoPdtype_obj: DataType = secop_dtype_obj
 
         self.describe_dict: dict
 
@@ -88,7 +88,7 @@ class SECoP_CMD_IO_Backend(SignalBackend):
         pass
 
     async def put(self, value: Any | None, wait=True, timeout=None):
-        self.reading.set_reading(self.SECoP_type_info.Val2SECoP(value))
+        self.reading.set_reading(self.SECoP_type_info.val2secop(value))
 
         if self.callback is not None:
             self.callback(self.reading.get_reading(), self.reading.get_value())
@@ -107,7 +107,7 @@ class SECoP_CMD_IO_Backend(SignalBackend):
 
 
 # TODO add return of Asyncstatus
-class SECoP_CMD_X_Backend(SignalBackend):
+class SECoPXBackend(SignalBackend):
     """
     Signal backend for SignalX of a SECoP_CMD_Device, that handles command execution
 
@@ -117,8 +117,8 @@ class SECoP_CMD_X_Backend(SignalBackend):
         self,
         path: Path,
         secclient: AsyncFrappyClient,
-        argument: SECoP_CMD_IO_Backend | None,
-        result: SECoP_CMD_IO_Backend | None,
+        argument: LocalBackend | None,
+        result: LocalBackend | None,
     ) -> None:
         """Initializes SECoP_CMD_X_Backend
 
@@ -138,8 +138,8 @@ class SECoP_CMD_X_Backend(SignalBackend):
         self.path: Path = path
 
         self.callback: Callable
-        self.argument: SECoP_CMD_IO_Backend | None = argument
-        self.result: SECoP_CMD_IO_Backend | None = result
+        self.argument: LocalBackend | None = argument
+        self.result: LocalBackend | None = result
 
         self.source = self.path._module_name + ":" + self.path._accessible_name
 
@@ -154,7 +154,7 @@ class SECoP_CMD_X_Backend(SignalBackend):
             argument = await self.argument.get_value()
 
         res, qualifiers = await asyncio.wait_for(
-            fut=self._secclient.execCommand(
+            fut=self._secclient.exec_command(
                 module=self.path._module_name,
                 command=self.path._accessible_name,
                 argument=argument,
@@ -167,7 +167,7 @@ class SECoP_CMD_X_Backend(SignalBackend):
         if self.result is None:
             return
         else:
-            val = self.result.SECoP_type_info.SECoP2Val(res)
+            val = self.result.SECoP_type_info.secop2val(res)
 
             await self.result.put(val)
 
@@ -203,7 +203,7 @@ class SECoP_CMD_X_Backend(SignalBackend):
         pass
 
 
-class SECoP_Param_Backend(SignalBackend):
+class SECoPParamBackend(SignalBackend):
     """Standard backend for a Signal that represents SECoP Parameter"""
 
     def __init__(self, path: Path, secclient: AsyncFrappyClient) -> None:
@@ -271,10 +271,10 @@ class SECoP_Param_Backend(SignalBackend):
 
     async def put(self, value: Any | None, wait=True, timeout=None):
         # convert to frappy compatible Format
-        secop_val = self.SECoP_type_info.Val2SECoP(value)
+        secop_val = self.SECoP_type_info.val2secop(value)
 
         await asyncio.wait_for(
-            self._secclient.setParameter(**self.get_param_path(), value=secop_val),
+            self._secclient.set_parameter(**self.get_param_path(), value=secop_val),
             timeout=timeout,
         )
 
@@ -282,7 +282,7 @@ class SECoP_Param_Backend(SignalBackend):
         return self.describe_dict
 
     async def get_reading(self) -> Reading:
-        dataset = await self._secclient.getParameter(
+        dataset = await self._secclient.get_parameter(
             **self.get_param_path(), trycache=False
         )
 
@@ -305,7 +305,7 @@ class SECoP_Param_Backend(SignalBackend):
 
             return async_func
 
-        def updateItem(module, parameter, entry: CacheItem):
+        def updateItem(module, parameter, entry: CacheItem):  # noqa: N802
             data = SECoPReading(secop_dt=self.SECoP_type_info, entry=entry)
             async_callback = awaitify(callback)
 
@@ -333,7 +333,7 @@ class PropertyBackend(SignalBackend):
     """Readonly backend for static SECoP Properties of Nodes/Modules"""
 
     def __init__(
-        self, prop_key: str, propertyDict: Dict[str, T], secclient: AsyncFrappyClient
+        self, prop_key: str, property_dict: Dict[str, T], secclient: AsyncFrappyClient
     ) -> None:
         """Initializes PropertyBackend
 
@@ -346,7 +346,7 @@ class PropertyBackend(SignalBackend):
         """
         # secclient
 
-        self._property_dict = propertyDict
+        self._property_dict = property_dict
         self._prop_key = prop_key
         self._datatype = self._get_datatype()
         self._secclient: AsyncFrappyClient = secclient

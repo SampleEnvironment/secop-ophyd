@@ -1,5 +1,5 @@
-from secop_ophyd.SECoPDevices import SECoP_Node_Device, SECoP_CMD_Device, SECoPMoveableDevice 
-from ophyd_async.core.signal import SignalR, SignalRW 
+from secop_ophyd.SECoPDevices import SECoPMoveableDevice, SECoPNodeDevice, SECoPCMDDevice 
+from ophyd_async.core.signal import SignalRW, SignalR 
 
 
 class MassflowController(SECoPMoveableDevice):
@@ -14,8 +14,8 @@ class MassflowController(SECoPMoveableDevice):
     ramp: SignalRW
     gastype: SignalR
     tolerance: SignalR
-    stop_CMD: SECoP_CMD_Device
-    test_cmd_CMD: SECoP_CMD_Device
+    stop_CMD: SECoPCMDDevice
+    test_cmd_CMD: SECoPCMDDevice
 
 
 class PressureController(SECoPMoveableDevice):
@@ -29,10 +29,10 @@ class PressureController(SECoPMoveableDevice):
     target: SignalRW
     ramp: SignalRW
     tolerance: SignalR
-    stop_CMD: SECoP_CMD_Device
+    stop_CMD: SECoPCMDDevice
 
 
-class Gas_dosing(SECoP_Node_Device):
+class Gas_dosing(SECoPNodeDevice):
     equipment_id: SignalR
     firmware: SignalR
     version: SignalR

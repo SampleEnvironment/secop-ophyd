@@ -1,11 +1,10 @@
 import asyncio
 import re
 import threading
-import time
 import time as ttime
-import types
 from types import MethodType
-from typing import Dict, Iterator, Optional, Type
+from typing import Any, Callable, Dict, Iterator, Optional, Type
+import inspect
 
 import bluesky.plan_stubs as bps
 from bluesky.protocols import (
@@ -29,12 +28,12 @@ from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient
 from secop_ophyd.GenNodeCode import GenNodeCode
 from secop_ophyd.propertykeys import DATAINFO, EQUIPMENT_ID, INTERFACE_CLASSES
 from secop_ophyd.SECoPSignal import (
+    LocalBackend,
     PropertyBackend,
-    SECoP_CMD_IO_Backend,
-    SECoP_CMD_X_Backend,
-    SECoP_Param_Backend,
+    SECoPParamBackend,
+    SECoPXBackend,
 )
-from secop_ophyd.util import Path
+from secop_ophyd.util import Path, SECoPdtype
 
 # Predefined Status Codes
 DISABLED = 0
@@ -123,7 +122,7 @@ class SECoPBaseDevice(StandardReadable):
         :type readonly: bool
         """
         # Normal types + (struct and tuple as JSON object Strings)
-        paramb = SECoP_Param_Backend(path=path, secclient=self._secclient)
+        paramb = SECoPParamBackend(path=path, secclient=self._secclient)
 
         # construct signal
         if readonly:
@@ -131,7 +130,7 @@ class SECoPBaseDevice(StandardReadable):
         else:
             setattr(self, sig_name, SignalRW(paramb))
 
-    async def wait_for_IDLE(self):
+    async def wait_for_idle(self):
         """asynchronously waits until module is IDLE again. this is helpful,
         for running commands that are not done immediately
         """
@@ -152,7 +151,7 @@ class SECoPBaseDevice(StandardReadable):
                 break
 
 
-class SECoP_CMD_Device(StandardReadable, Flyable, Triggerable):
+class SECoPCMDDevice(StandardReadable, Flyable, Triggerable):
     """
     Command devices that have Signals for command args, return values and a signal
     for triggering command execution (SignalX). They themselves are triggerable.
@@ -202,9 +201,9 @@ class SECoP_CMD_Device(StandardReadable, Flyable, Triggerable):
         if self.arg_dtype is None:
             self.argument = None
         else:
-            arg_backend = SECoP_CMD_IO_Backend(
+            arg_backend = LocalBackend(
                 path=arg_path,
-                SECoPdtype_obj=self.arg_dtype,
+                secop_dtype_obj=self.arg_dtype,
                 sig_datainfo=datainfo["argument"],
             )
             self.argument = SignalRW(arg_backend)
@@ -216,16 +215,16 @@ class SECoP_CMD_Device(StandardReadable, Flyable, Triggerable):
         if self.res_dtype is None:
             self.result = None
         else:
-            res_backend = SECoP_CMD_IO_Backend(
+            res_backend = LocalBackend(
                 path=res_path,
-                SECoPdtype_obj=self.res_dtype,
+                secop_dtype_obj=self.res_dtype,
                 sig_datainfo=datainfo["result"],
             )
             self.result = SignalRW(res_backend)
             read.append(self.argument)
 
         # SignalX (signal that triggers execution of the Command)
-        exec_backend = SECoP_CMD_X_Backend(
+        exec_backend = SECoPXBackend(
             path=path,
             secclient=secclient,
             argument=None if self.argument is None else self.argument._backend,
@@ -282,10 +281,26 @@ class SECoP_CMD_Device(StandardReadable, Flyable, Triggerable):
         self,
         argument_type: Type | None = None,
         return_type: Type | None = None,
-    ) -> types.FunctionType:
-        def command_method(
-            self, arg=None, wait_for_IDLE: bool = False
-        ) -> Optional[return_type]:
+    ) -> Callable[[Any, bool], Any]:
+        
+        
+        def command_method_no_arg(self, wait_for_idle: bool = False):
+            # Trigger the Command device, meaning that the command gets sent to the
+            # SEC Node
+            yield from bps.trigger(self, wait=True)
+
+
+            if wait_for_idle:
+
+                def wait_for_idle_factory():
+                    return self.parent.wait_for_IDLE()
+
+                yield from bps.wait_for([wait_for_idle_factory])
+            
+            if return_type is not None:
+                return self.result._backend.reading.get_value()
+            
+        def command_method(self, arg, wait_for_idle: bool = False):
             # TODO  Type checking
 
             if arg is not None:
@@ -295,17 +310,29 @@ class SECoP_CMD_Device(StandardReadable, Flyable, Triggerable):
             # SEC Node
             yield from bps.trigger(self, wait=True)
 
-            retval = self.result._backend.reading.get_value()
-            if wait_for_IDLE:
 
-                def wait_for_IDLE_factory():
+            if wait_for_idle:
+
+                def wait_for_idle_factory():
                     return self.parent.wait_for_IDLE()
 
-                yield from bps.wait_for([wait_for_IDLE_factory])
+                yield from bps.wait_for([wait_for_idle_factory])
+            
+            if return_type is not None:
+                return self.result._backend.reading.get_value()
+        
+        
+        cmd_meth = command_method_no_arg if argument_type is None else command_method
 
-            return retval
+        anno_dict = cmd_meth.__annotations__
 
-        return command_method
+        if return_type is not None:
+            anno_dict["return"] = return_type
+        if argument_type is not None:
+            anno_dict["arg"] = argument_type
+
+
+        return cmd_meth
 
 
 class SECoPReadableDevice(SECoPBaseDevice):
@@ -361,28 +388,22 @@ class SECoPReadableDevice(SECoPBaseDevice):
             setattr(
                 self,
                 cmd_dev_name,
-                SECoP_CMD_Device(path=cmd_path, secclient=secclient),
+                SECoPCMDDevice(path=cmd_path, secclient=secclient),
             )
 
-            cmd_dev: SECoP_CMD_Device = getattr(self, cmd_dev_name)
+            cmd_dev: SECoPCMDDevice = getattr(self, cmd_dev_name)
             # Add Bluesky Plan Methods
 
-            def cmd_plan_method_no_arg(self, wait_for_IDLE: bool = False):
-                retval = cmd_dev.cmd_plan(None, wait_for_IDLE)
 
-                if retval is not None:
-                    return retval
+            # Stop is already an ophyd native command
+            if command == "stop":
+                continue
 
-            def cmd_plan_method(self, argument, wait_for_IDLE: bool = False):
-                retval = cmd_dev.cmd_plan(argument, wait_for_IDLE)
 
-                if retval is not None:
-                    return retval
 
-            if cmd_dev.argument is None:
-                setattr(self, command, MethodType(cmd_plan_method_no_arg, self))
-            else:
-                setattr(self, command, MethodType(cmd_plan_method, self))
+
+            setattr(self, command, MethodType(cmd_dev.cmd_plan, self))
+
 
         self.set_readable_signals(read=self._read, config=self._config)
 
@@ -493,11 +514,11 @@ class SECoPMoveableDevice(SECoPWritableDevice, Movable, Stoppable):
         """
         self._success = success
 
-        await self._secclient.execCommand(self._module, "stop")
+        await self._secclient.exec_command(self._module, "stop")
         self._stopped = True
 
 
-class SECoP_Node_Device(StandardReadable):
+class SECoPNodeDevice(StandardReadable):
     """
     Generates the root ophyd device from a Sec-node. Signals of this Device correspond
     to the Sec-node properties
@@ -513,7 +534,7 @@ class SECoP_Node_Device(StandardReadable):
         self._secclient: AsyncFrappyClient = secclient
 
         self._module_name: str = ""
-        self._node_cls_name = ""
+        self._node_cls_name: str = ""
         self.mod_devices: Dict[str, T] = {}
 
         self.genCode: GenNodeCode
@@ -529,9 +550,9 @@ class SECoP_Node_Device(StandardReadable):
             config.append(getattr(self, property))
 
         for module, module_desc in self._secclient.modules.items():
-            SECoPDeviceClass = class_from_interface(module_desc["properties"])
+            secop_dev_class = class_from_interface(module_desc["properties"])
 
-            setattr(self, module, SECoPDeviceClass(self._secclient, module))
+            setattr(self, module, secop_dev_class(self._secclient, module))
             self.mod_devices[module] = getattr(self, module)
 
         self.set_readable_signals(config=config)
@@ -566,7 +587,7 @@ class SECoP_Node_Device(StandardReadable):
                 "running in a seperate thread"
             )
 
-        return SECoP_Node_Device(secclient=secclient)
+        return SECoPNodeDevice(secclient=secclient)
 
     @classmethod
     async def create_async(cls, host: str, port: str, loop, log=Logger) -> Self:
@@ -591,7 +612,7 @@ class SECoP_Node_Device(StandardReadable):
             secclient = await asyncio.wrap_future(future=client_future)
             secclient.external = True
 
-        return SECoP_Node_Device(secclient=secclient)
+        return SECoPNodeDevice(secclient=secclient)
 
     def disconnect(self):
         """shuts down secclient, eventloop must be running in external thread"""
@@ -639,7 +660,7 @@ class SECoP_Node_Device(StandardReadable):
         node_dict = self.__dict__
 
         # NodeClass Name
-        self._node_cls_name: str = self.name.replace("-", "_").capitalize()
+        self._node_cls_name = self.name.replace("-", "_").capitalize()
 
         node_bases = [self.__class__.__name__]
 
@@ -652,7 +673,7 @@ class SECoP_Node_Device(StandardReadable):
                 (SECoPReadableDevice, SECoPWritableDevice, SECoPMoveableDevice),
             ):
                 attr_type = type(attr_value)
-                module = getattr(attr_type, "__module__", None)
+                module = str(getattr(attr_type, "__module__", None))
 
                 # add imports for module attributes
                 self.genCode.add_import(module, attr_type.__name__)
@@ -665,15 +686,15 @@ class SECoP_Node_Device(StandardReadable):
                 module_class_attrs = []
 
                 # Name for derived class
-                module_className = attr_name
+                module_class_name = attr_name
                 if attr_value.impl is not None:
-                    module_className = attr_value.impl.split(".").pop()
+                    module_class_name = attr_value.impl.split(".").pop()
 
                 # Module:Acessibles
                 for module_attr_name, module_attr_value in module_dict.items():
                     if isinstance(
                         module_attr_value,
-                        (SignalR, SignalX, SignalRW, SignalR, SECoP_CMD_Device),
+                        (SignalR, SignalX, SignalRW, SignalR, SECoPCMDDevice),
                     ):
                         # add imports for module attributes
                         self.genCode.add_import(
@@ -685,10 +706,10 @@ class SECoP_Node_Device(StandardReadable):
                             (module_attr_name, type(module_attr_value).__name__)
                         )
                 self.genCode.add_mod_class(
-                    module_className, mod_bases, module_class_attrs
+                    module_class_name, mod_bases, module_class_attrs
                 )
 
-                node_class_attrs.append((attr_name, module_className))
+                node_class_attrs.append((attr_name, module_class_name))
 
             # Poperty Signals
             if isinstance(attr_value, (SignalR)):
@@ -699,9 +720,9 @@ class SECoP_Node_Device(StandardReadable):
 
         self.genCode.add_node_class(self._node_cls_name, node_bases, node_class_attrs)
 
-        self.genCode.write_genNodeClass_file()
+        self.genCode.write_gen_node_class_file()
 
-    def descriptiveDataChange(self, module, description):
+    def descriptiveDataChange(self, module, description):  # noqa: N802
         """called when the description has changed
 
         this callback is called on the node with module=None
@@ -736,13 +757,13 @@ class SECoP_Node_Device(StandardReadable):
         else:
             # Refresh changed modules
             module_desc = self._secclient.modules[module]
-            SECoPDeviceClass = class_from_interface(module_desc["properties"])
+            secop_dev_class = class_from_interface(module_desc["properties"])
 
-            setattr(self, module, SECoPDeviceClass(self._secclient, module))
+            setattr(self, module, secop_dev_class(self._secclient, module))
 
             # TODO what about removing Modules during disconn
 
-    def nodeStateChange(self, online, state):
+    def nodeStateChange(self, online, state):  # noqa: N802
         """called when the state of the connection changes
 
         'online' is True when connected or reconnecting, False when disconnected
