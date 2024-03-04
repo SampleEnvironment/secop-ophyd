@@ -5,31 +5,29 @@ import xprocess
 from ophyd_async.core import SignalR, observe_value
 from xprocess import ProcessStarter, XProcessInfo
 
-from secop_ophyd.SECoPDevices import SECoP_Node_Device, SECoPMoveableDevice
+from secop_ophyd.SECoPDevices import SECoPMoveableDevice, SECoPNodeDevice
 
 
-async def test_node_structure(cryo_sim, cryo_node_internal_loop: SECoP_Node_Device):
-    assert isinstance(cryo_node_internal_loop, SECoP_Node_Device)
+async def test_node_structure(cryo_sim, cryo_node_internal_loop: SECoPNodeDevice):
+    assert isinstance(cryo_node_internal_loop, SECoPNodeDevice)
     await cryo_node_internal_loop.disconnect_async()
 
 
-async def test_node_read(cryo_sim, cryo_node_internal_loop: SECoP_Node_Device):
+async def test_node_read(cryo_sim, cryo_node_internal_loop: SECoPNodeDevice):
     # Node device has no read value, it has to return an empty dict
     val_read = await cryo_node_internal_loop.read()
     assert val_read == {}
     await cryo_node_internal_loop.disconnect_async()
 
 
-async def test_node_describe(cryo_sim, cryo_node_internal_loop: SECoP_Node_Device):
+async def test_node_describe(cryo_sim, cryo_node_internal_loop: SECoPNodeDevice):
     # Node device has no read value, it has to return an empty dict
     val_desc = await cryo_node_internal_loop.describe()
     assert val_desc == {}
     await cryo_node_internal_loop.disconnect_async()
 
 
-async def test_node_module_describe(
-    cryo_sim, cryo_node_internal_loop: SECoP_Node_Device
-):
+async def test_node_module_describe(cryo_sim, cryo_node_internal_loop: SECoPNodeDevice):
     # Node device has no read value, it has to return an empty dict
     val_desc = await cryo_node_internal_loop.cryo.describe_configuration()
     conf = await cryo_node_internal_loop.cryo.read_configuration()
@@ -39,7 +37,7 @@ async def test_node_module_describe(
     await cryo_node_internal_loop.disconnect_async()
 
 
-async def test_dev_read(cryo_sim, cryo_node_internal_loop: SECoP_Node_Device):
+async def test_dev_read(cryo_sim, cryo_node_internal_loop: SECoPNodeDevice):
     # Node device has no read value, it has to return an empty dict
     cryo_dev: SECoPMoveableDevice = cryo_node_internal_loop.cryo
     cryo_val = await cryo_dev.read()
@@ -48,7 +46,7 @@ async def test_dev_read(cryo_sim, cryo_node_internal_loop: SECoP_Node_Device):
     await cryo_node_internal_loop.disconnect_async()
 
 
-async def test_status(cryo_sim, cryo_node_internal_loop: SECoP_Node_Device):
+async def test_status(cryo_sim, cryo_node_internal_loop: SECoPNodeDevice):
     # Node device has no read value, it has to return an empty dict
     cryo_dev: SECoPMoveableDevice = cryo_node_internal_loop.cryo
     status: SignalR = cryo_dev.status
@@ -71,7 +69,7 @@ async def test_status(cryo_sim, cryo_node_internal_loop: SECoP_Node_Device):
 #    assert  val_desc == {}
 
 
-async def test_node_drive(cryo_sim, cryo_node_internal_loop: SECoP_Node_Device):
+async def test_node_drive(cryo_sim, cryo_node_internal_loop: SECoPNodeDevice):
     cryo_dev: SECoPMoveableDevice = cryo_node_internal_loop.cryo
 
     target_old = await cryo_dev.target.read()
@@ -98,7 +96,7 @@ async def test_node_drive(cryo_sim, cryo_node_internal_loop: SECoP_Node_Device):
 
 
 async def test_node_reconn(
-    cryo_sim: xprocess, cryo_node_internal_loop: SECoP_Node_Device, env_vars
+    cryo_sim: xprocess, cryo_node_internal_loop: SECoPNodeDevice, env_vars
 ):
     frappy_dir, env_dict = env_vars
 

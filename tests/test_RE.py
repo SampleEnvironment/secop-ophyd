@@ -2,7 +2,7 @@ import warnings
 
 from bluesky.plans import count
 
-from secop_ophyd.SECoPDevices import SECoP_Node_Device
+from secop_ophyd.SECoPDevices import SECoPNodeDevice
 
 warnings.filterwarnings(
     "ignore",
@@ -11,8 +11,8 @@ warnings.filterwarnings(
 )
 
 
-async def test_RE_count(cryo_sim, RE, cryo_node: SECoP_Node_Device, db):
-    p = RE(count([cryo_node.cryo], num=5, delay=1))
+async def test_run_engine_count(cryo_sim, run_engine, cryo_node: SECoPNodeDevice, db):
+    p = run_engine(count([cryo_node.cryo], num=5, delay=1))
 
     run = db[p]
 
@@ -26,8 +26,8 @@ async def test_RE_count(cryo_sim, RE, cryo_node: SECoP_Node_Device, db):
     cryo_node.disconnect()
 
 
-async def test_RE_String_value(
-    nested_struct_sim, RE, nested_node_RE: SECoP_Node_Device, db
+async def test_run_engine_string_value(
+    nested_struct_sim, run_engine, nested_node_re: SECoPNodeDevice, db
 ):
     # p = RE(read(nested_node_RE.str_test))
-    nested_node_RE.disconnect()
+    nested_node_re.disconnect()

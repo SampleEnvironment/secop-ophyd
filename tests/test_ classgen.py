@@ -1,10 +1,12 @@
 import os
 
-from secop_ophyd.SECoPDevices import SECoP_Node_Device
+from secop_ophyd.SECoPDevices import SECoPNodeDevice
 
 
-async def test_class_gen(nested_struct_sim, nested_node: SECoP_Node_Device):
+async def test_class_gen(nested_struct_sim, nested_node: SECoPNodeDevice):
     nested_node.class_from_instance()
+
+
 
     if os.path.exists("genNodeClass.py"):
         os.remove("genNodeClass.py")
@@ -12,7 +14,7 @@ async def test_class_gen(nested_struct_sim, nested_node: SECoP_Node_Device):
     await nested_node.disconnect_async()
 
 
-async def test_class_gen_path(nested_struct_sim, nested_node: SECoP_Node_Device):
+async def test_class_gen_path(nested_struct_sim, nested_node: SECoPNodeDevice):
     nested_node.class_from_instance("tests/testgen")
 
     if os.path.exists("tests/testgen/genNodeClass.py"):

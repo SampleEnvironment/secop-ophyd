@@ -81,7 +81,7 @@ class Path:
         k = "members"
 
         # insert after every other element
-        N = 1
+        n = 1
 
         # using itertool.chain()
         # inserting K after every Nth number
@@ -89,11 +89,11 @@ class Path:
             chain(
                 *[
                     (
-                        [k] + self._dev_path[i : i + N]
-                        if len(self._dev_path[i : i + N]) == N
-                        else self._dev_path[i : i + N]
+                        [k] + self._dev_path[i : i + n]
+                        if len(self._dev_path[i : i + n]) == n
+                        else self._dev_path[i : i + n]
                     )
-                    for i in range(0, len(self._dev_path), N)
+                    for i in range(0, len(self._dev_path), n)
                 ]
             )
         )
@@ -148,11 +148,11 @@ class Path:
         return dic
 
 
-def parseStructOf(dtype: StructOf) -> list[bool]:
-    return [is_Scalar_or_ArrayOf_scalar(val) for val in dtype.members.values()]
+def parse_structof(dtype: StructOf) -> list[bool]:
+    return [is_scalar_or_arrayof_scalar(val) for val in dtype.members.values()]
 
 
-def is_Scalar_or_ArrayOf_scalar(type: DataType):
+def is_scalar_or_arrayof_scalar(type: DataType):
     if isinstance(type, SCALAR_DATATYPES):
         return True
     elif isinstance(type, ArrayOf):
@@ -161,7 +161,7 @@ def is_Scalar_or_ArrayOf_scalar(type: DataType):
         return False
 
 
-class dt_NP(ABC):
+class DtypeNP(ABC):
     secop_dtype: DataType
     name: str | None
 
@@ -178,10 +178,10 @@ class dt_NP(ABC):
         """make a make an SECoP Compatible Object"""
 
 
-def dt_factory(secop_dt: DataType, name: str = "") -> dt_NP:
+def dt_factory(secop_dt: DataType, name: str = "") -> DtypeNP:
     dt_class = secop_dt.__class__
 
-    dt_Converters = {
+    dt_converters = {
         StructOf: StructNP,
         TupleOf: TupleNP,
         ArrayOf: ArrayNP,
@@ -194,13 +194,13 @@ def dt_factory(secop_dt: DataType, name: str = "") -> dt_NP:
         StringType: StringNP,
     }
 
-    return dt_Converters[dt_class](secop_dt, name)  # type: ignore
+    return dt_converters[dt_class](secop_dt, name)  # type: ignore
 
 
 STR_LEN_DEFAULT = 100
 
 
-class BLOBNP(dt_NP):
+class BLOBNP(DtypeNP):
     def __init__(self, blob_dt: BLOBType, name: str = "") -> None:
         self.name: str = name
         self.secop_dtype: BLOBType = blob_dt
@@ -215,7 +215,7 @@ class BLOBNP(dt_NP):
         return value
 
 
-class BoolNP(dt_NP):
+class BoolNP(DtypeNP):
     def __init__(self, bool_dt: BoolType, name: str = "") -> None:
         self.name: str = name
         self.secop_dtype: BoolType = bool_dt
@@ -230,7 +230,7 @@ class BoolNP(dt_NP):
         return value
 
 
-class EnumNP(dt_NP):
+class EnumNP(DtypeNP):
     def __init__(self, enum_dt: EnumType, name: str = "") -> None:
         self.name: str = name
         self.secop_dtype: EnumType = enum_dt
@@ -245,7 +245,7 @@ class EnumNP(dt_NP):
         return value
 
 
-class FloatNP(dt_NP):
+class FloatNP(DtypeNP):
     def __init__(self, float_dt: FloatRange, name: str = "") -> None:
         self.name: str = name
         self.secop_dtype: FloatRange = float_dt
@@ -260,7 +260,7 @@ class FloatNP(dt_NP):
         return value
 
 
-class IntNP(dt_NP):
+class IntNP(DtypeNP):
     def __init__(self, int_dt: IntRange, name: str = "") -> None:
         self.name: str = name
         self.secop_dtype: IntRange = int_dt
@@ -275,7 +275,7 @@ class IntNP(dt_NP):
         return value
 
 
-class ScaledIntNP(dt_NP):
+class ScaledIntNP(DtypeNP):
     def __init__(self, scaled_int_dt: ScaledInteger, name: str = "") -> None:
         self.name: str = name
         self.secop_dtype: ScaledInteger = scaled_int_dt
@@ -290,7 +290,7 @@ class ScaledIntNP(dt_NP):
         return value
 
 
-class StringNP(dt_NP):
+class StringNP(DtypeNP):
     def __init__(self, string_dt: StringType, name: str = "") -> None:
         self.name: str = name
         self.secop_dtype: StringType = string_dt
@@ -313,11 +313,11 @@ class StringNP(dt_NP):
         return value
 
 
-class StructNP(dt_NP):
+class StructNP(DtypeNP):
     def __init__(self, struct_dt: StructOf, name: str = "") -> None:
         self.name: str = name
         self.secop_dtype: StructOf = struct_dt
-        self.members: dict[str, dt_NP] = {
+        self.members: dict[str, DtypeNP] = {
             name: dt_factory(member, name)
             for (name, member) in struct_dt.members.items()
         }
@@ -344,11 +344,13 @@ class StructNP(dt_NP):
         }
 
 
-class TupleNP(dt_NP):
+class TupleNP(DtypeNP):
     def __init__(self, tuple_dt: TupleOf, name: str = "") -> None:
         self.name: str = name
         self.secop_dtype = tuple_dt
-        self.members: list[dt_NP] = [dt_factory(member) for member in tuple_dt.members]
+        self.members: list[DtypeNP] = [
+            dt_factory(member) for member in tuple_dt.members
+        ]
 
     def make_numpy_dtype(self) -> tuple:
         dt_list = []
@@ -374,15 +376,15 @@ class TupleNP(dt_NP):
         )
 
 
-class ArrayNP(dt_NP):
+class ArrayNP(DtypeNP):
     def __init__(self, array_dt: ArrayOf, name: str = "") -> None:
         self.name: str = name
         self.secop_dtype = array_dt
         self.maxlen = array_dt.maxlen
         self.shape = [self.maxlen]
 
-        self.members: dt_NP = dt_factory(array_dt.members)
-        self.root_type: dt_NP
+        self.members: DtypeNP = dt_factory(array_dt.members)
+        self.root_type: DtypeNP
 
         if isinstance(self.members, ArrayNP):
             self.shape.extend(self.members.shape)
@@ -432,7 +434,7 @@ class SECoPdtype:
 
         self.numpy_dtype: np.dtype
 
-        self.dtype_tree: dt_NP
+        self.dtype_tree: DtypeNP
 
         self._is_composite: bool = False
 
@@ -485,19 +487,19 @@ class SECoPdtype:
         self.describe_dict["shape"] = self.shape
         self.describe_dict["SECOP_datainfo"] = self.secop_dtype_str
 
-    def _SECoP2NumpyArr(self, value) -> np.ndarray:
+    def _secop2numpy_array(self, value) -> np.ndarray:
         np_list = self.dtype_tree.make_numpy_compatible_list(value)
 
         return np.array(np_list, dtype=self.numpy_dtype)
 
-    def SECoP2Val(self, reading_val) -> Any:
+    def secop2val(self, reading_val) -> Any:
         if self._is_composite:
-            return self._SECoP2NumpyArr(reading_val)
+            return self._secop2numpy_array(reading_val)
 
         else:
             return reading_val
 
-    def Val2SECoP(self, input_val) -> Any:
+    def val2secop(self, input_val) -> Any:
         # TODO check input_Val for conformity with datatype
         # TODO check if it is already in SECoP Format
 
@@ -527,7 +529,7 @@ class SECoPReading:
 
         exported_val = secop_dt.raw_dtype.export_value(entry.value)
 
-        self.value = secop_dt.SECoP2Val(exported_val)
+        self.value = secop_dt.secop2val(exported_val)
         self.secop_val = exported_val
 
         self.timestamp = entry.timestamp
@@ -543,7 +545,7 @@ class SECoPReading:
 
     def set_reading(self, value) -> None:
         self.value = value
-        self.secop_val = self.secop_dt.Val2SECoP(value)
+        self.secop_val = self.secop_dt.val2secop(value)
         self.timestamp = time.time()
 
 

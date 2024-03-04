@@ -25,6 +25,7 @@ dev = [
     'black',
     'flake8',
     "flake8-isort == 6.1.1",
+    'pep8-naming',
     "Flake8-pyproject",
     'mypy',
     'wheel',
@@ -41,7 +42,8 @@ dev = [
     'mlzlog',
     'python-dotenv',
     'bluesky',
-    'sphinx'
+    'sphinx',
+    'snakefmt'
 ]
 
 

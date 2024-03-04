@@ -5,13 +5,13 @@ from frappy.errors import ImpossibleError
 from ophyd_async.core.signal import SignalR, SignalX
 
 from secop_ophyd.SECoPDevices import (
-    SECoP_CMD_Device,
-    SECoP_Node_Device,
+    SECoPCMDDevice,
     SECoPMoveableDevice,
+    SECoPNodeDevice,
 )
 
 
-async def test_stop_cmd(cryo_sim, cryo_node_internal_loop: SECoP_Node_Device):
+async def test_stop_cmd(cryo_sim, cryo_node_internal_loop: SECoPNodeDevice):
     cryo: SECoPMoveableDevice = cryo_node_internal_loop.cryo
 
     stat = cryo.set(15)
@@ -27,7 +27,7 @@ async def test_stop_cmd(cryo_sim, cryo_node_internal_loop: SECoP_Node_Device):
     await cryo_node_internal_loop.disconnect_async()
 
 
-async def test_stop_no_sucess_cmd(cryo_sim, cryo_node_internal_loop: SECoP_Node_Device):
+async def test_stop_no_sucess_cmd(cryo_sim, cryo_node_internal_loop: SECoPNodeDevice):
     cryo: SECoPMoveableDevice = cryo_node_internal_loop.cryo
 
     stat = cryo.set(15)
@@ -49,8 +49,8 @@ async def test_stop_no_sucess_cmd(cryo_sim, cryo_node_internal_loop: SECoP_Node_
     await cryo_node_internal_loop.disconnect_async()
 
 
-async def test_struct_inp_cmd(nested_struct_sim, nested_node: SECoP_Node_Device):
-    test_cmd: SECoP_CMD_Device = nested_node.ophy_struct.test_cmd_CMD
+async def test_struct_inp_cmd(nested_struct_sim, nested_node: SECoPNodeDevice):
+    test_cmd: SECoPCMDDevice = nested_node.ophy_struct.test_cmd_CMD
 
     input_dict = {"name": "test_name", "id": 900, "sort": False}
 
@@ -71,14 +71,14 @@ async def test_struct_inp_cmd(nested_struct_sim, nested_node: SECoP_Node_Device)
     await nested_node.disconnect_async()
 
 
-def test_triggerable(nested_struct_sim, nested_node: SECoP_Node_Device):
-    test_cmd: SECoP_CMD_Device = nested_node.ophy_struct.test_cmd_CMD
+def test_triggerable(nested_struct_sim, nested_node: SECoPNodeDevice):
+    test_cmd: SECoPCMDDevice = nested_node.ophy_struct.test_cmd_CMD
 
     assert isinstance(test_cmd, Triggerable)
 
 
-async def test_SECoP_Error_on_CMD(nested_struct_sim, nested_node: SECoP_Node_Device):
-    test_cmd: SECoP_CMD_Device = nested_node.ophy_struct.test_cmd_CMD
+async def test_secop_error_on_cmd(nested_struct_sim, nested_node: SECoPNodeDevice):
+    test_cmd: SECoPCMDDevice = nested_node.ophy_struct.test_cmd_CMD
 
     error_triggered = False
     # Triggers SECoP Error
@@ -105,10 +105,10 @@ async def test_SECoP_Error_on_CMD(nested_struct_sim, nested_node: SECoP_Node_Dev
     await nested_node.disconnect_async()
 
 
-async def test_SECoP_triggering_CMD_Dev(
-    nested_struct_sim, nested_node: SECoP_Node_Device
+async def test_secop_triggering_cmd_dev(
+    nested_struct_sim, nested_node: SECoPNodeDevice
 ):
-    test_cmd: SECoP_CMD_Device = nested_node.ophy_struct.test_cmd_CMD
+    test_cmd: SECoPCMDDevice = nested_node.ophy_struct.test_cmd_CMD
 
     input_dict = {"name": "test_name", "id": 900, "sort": False}
 

@@ -2,11 +2,11 @@ import numpy as np
 from ophyd_async.core.signal import SignalR, SignalRW
 
 from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient
-from secop_ophyd.SECoPDevices import SECoP_Node_Device, SECoPReadableDevice
+from secop_ophyd.SECoPDevices import SECoPNodeDevice, SECoPReadableDevice
 
 
-async def test_nested_connect(nested_struct_sim, nested_node: SECoP_Node_Device):
-    assert isinstance(nested_node, SECoP_Node_Device)
+async def test_nested_connect(nested_struct_sim, nested_node: SECoPNodeDevice):
+    assert isinstance(nested_node, SECoPNodeDevice)
     await nested_node.disconnect_async()
 
 
@@ -45,7 +45,7 @@ async def test_struct_dev(nested_client: AsyncFrappyClient):
 
 
 async def test_nested_dtype_str_signal_generation(
-    nested_struct_sim, nested_node: SECoP_Node_Device
+    nested_struct_sim, nested_node: SECoPNodeDevice
 ):
     struct_mod = nested_node.ophy_struct
 
@@ -65,7 +65,7 @@ async def test_nested_dtype_str_signal_generation(
 
 
 async def test_nested_dtype_set_str_struct(
-    nested_struct_sim, nested_node: SECoP_Node_Device
+    nested_struct_sim, nested_node: SECoPNodeDevice
 ):
     struct_mod = nested_node.ophy_struct
 
@@ -98,7 +98,7 @@ async def test_nested_dtype_set_str_struct(
 
 
 async def test_nested_dtype_set_str_tuple(
-    nested_struct_sim, nested_node: SECoP_Node_Device
+    nested_struct_sim, nested_node: SECoPNodeDevice
 ):
     struct_mod = nested_node.ophy_struct
 
@@ -132,9 +132,7 @@ async def test_nested_dtype_set_str_tuple(
     await nested_node.disconnect_async()
 
 
-async def test_nested_struct_of_arrays(
-    nested_struct_sim, nested_node: SECoP_Node_Device
-):
+async def test_nested_struct_of_arrays(nested_struct_sim, nested_node: SECoPNodeDevice):
     str_of_arr_mod: SECoPReadableDevice = nested_node.struct_of_arrays
 
     reading = await str_of_arr_mod.read()
@@ -144,26 +142,26 @@ async def test_nested_struct_of_arrays(
     assert isinstance(val, np.ndarray)
 
     # Write testing
-    RW_str_of_arr: SignalRW = str_of_arr_mod.writable_strct_of_arr
+    rw_str_of_arr: SignalRW = str_of_arr_mod.writable_strct_of_arr
 
-    RW_reading = await RW_str_of_arr.read()
+    rw_reading = await rw_str_of_arr.read()
 
-    RW_val: np.ndarray = RW_reading[RW_str_of_arr.name]["value"]
+    rw_val: np.ndarray = rw_reading[rw_str_of_arr.name]["value"]
 
-    RW_old = RW_val.copy()
+    rw_old = rw_val.copy()
 
-    RW_val["ints"] += 20
-    RW_val["floats"] += 0.2
+    rw_val["ints"] += 20
+    rw_val["floats"] += 0.2
 
-    await RW_str_of_arr.set(RW_val)
+    await rw_str_of_arr.set(rw_val)
 
-    RW_reading = await RW_str_of_arr.read()
+    rw_reading = await rw_str_of_arr.read()
 
-    RW_val = RW_reading[RW_str_of_arr.name]["value"]
+    rw_val = rw_reading[rw_str_of_arr.name]["value"]
 
-    assert np.equal(RW_val["ints"], RW_old["ints"] + 20).all()
+    assert np.equal(rw_val["ints"], rw_old["ints"] + 20).all()
 
-    assert np.equal(RW_val["floats"], RW_old["floats"] + 0.2).all()
+    assert np.equal(rw_val["floats"], rw_old["floats"] + 0.2).all()
 
     await nested_node.disconnect_async()
 
