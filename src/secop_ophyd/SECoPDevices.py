@@ -233,9 +233,6 @@ class SECoPCMDDevice(StandardReadable, Flyable, Triggerable):
 
         self.commandx = SignalX(exec_backend)
 
-        self.cmd_plan = MethodType(
-            self.generate_cmd_method(self.arg_dtype, self.res_dtype), self
-        )
 
         self.set_readable_signals(read=read, config=config)
 
@@ -277,63 +274,7 @@ class SECoPCMDDevice(StandardReadable, Flyable, Triggerable):
     async def describe_collect(self) -> SyncOrAsync[Dict[str, Dict[str, Descriptor]]]:
         return await self.describe()
 
-    def generate_cmd_method(
-        self,
-        argument_type: Type | None = None,
-        return_type: Type | None = None,
-    ) -> Callable[[Any, bool], Any]:
-        
-        
-        def command_method_no_arg(self, wait_for_idle: bool = False):
-            # Trigger the Command device, meaning that the command gets sent to the
-            # SEC Node
-            yield from bps.trigger(self, wait=True)
-
-
-            if wait_for_idle:
-
-                def wait_for_idle_factory():
-                    return self.parent.wait_for_IDLE()
-
-                yield from bps.wait_for([wait_for_idle_factory])
-            
-            if return_type is not None:
-                return self.result._backend.reading.get_value()
-            
-        def command_method(self, arg, wait_for_idle: bool = False):
-            # TODO  Type checking
-
-            if arg is not None:
-                yield from bps.abs_set(self.argument, arg)
-
-            # Trigger the Command device, meaning that the command gets sent to the
-            # SEC Node
-            yield from bps.trigger(self, wait=True)
-
-
-            if wait_for_idle:
-
-                def wait_for_idle_factory():
-                    return self.parent.wait_for_IDLE()
-
-                yield from bps.wait_for([wait_for_idle_factory])
-            
-            if return_type is not None:
-                return self.result._backend.reading.get_value()
-        
-        
-        cmd_meth = command_method_no_arg if argument_type is None else command_method
-
-        anno_dict = cmd_meth.__annotations__
-
-        if return_type is not None:
-            anno_dict["return"] = return_type
-        if argument_type is not None:
-            anno_dict["arg"] = argument_type
-
-
-        return cmd_meth
-
+    
 
 class SECoPReadableDevice(SECoPBaseDevice):
     """
@@ -395,19 +336,82 @@ class SECoPReadableDevice(SECoPBaseDevice):
             # Add Bluesky Plan Methods
 
 
-            # Stop is already an ophyd native command
+            # Stop is already an ophyd native operation
             if command == "stop":
                 continue
 
 
+            cmd_plan = self.generate_cmd_plan(
+                cmd_dev,
+                cmd_dev.arg_dtype,
+                cmd_dev.res_dtype
+            )
 
-
-            setattr(self, command, MethodType(cmd_dev.cmd_plan, self))
+            setattr(self, command, MethodType(cmd_plan, self))
 
 
         self.set_readable_signals(read=self._read, config=self._config)
 
         self.set_name(module_name)
+
+    def generate_cmd_plan(
+        self,
+        cmd_dev:SECoPCMDDevice,
+        argument_type: Type | None = None,
+        return_type: Type | None = None,
+    ) -> Callable[[Any, bool], Any]:
+        
+        
+        def command_plan_no_arg(self, wait_for_idle: bool = False):
+            # Trigger the Command device, meaning that the command gets sent to the
+            # SEC Node
+            yield from bps.trigger(cmd_dev, wait=True)
+
+
+            if wait_for_idle:
+
+                def wait_for_idle_factory(self):
+                    return self.wait_for_idle()
+
+                yield from bps.wait_for([wait_for_idle_factory])
+            
+            if return_type is not None:
+                return cmd_dev.result._backend.reading.get_value()
+            
+        def command_plan(self, arg, wait_for_idle: bool = False):
+            # TODO  Type checking
+
+            if arg is not None:
+                yield from bps.abs_set(cmd_dev.argument, arg)
+
+            # Trigger the Command device, meaning that the command gets sent to the
+            # SEC Node
+            yield from bps.trigger(cmd_dev, wait=True)
+
+
+            if wait_for_idle:
+
+                def wait_for_idle_factory():
+                    return self.wait_for_idle()
+
+                yield from bps.wait_for([wait_for_idle_factory])
+            
+            if return_type is not None:
+                return cmd_dev.result._backend.reading.get_value()
+        
+        
+        cmd_meth = command_plan_no_arg if argument_type is None else command_plan
+
+        anno_dict = cmd_meth.__annotations__
+
+        if return_type is not None:
+            anno_dict["return"] = return_type
+        if argument_type is not None:
+            anno_dict["arg"] = argument_type
+
+
+        return cmd_meth
+
 
     def _signal_from_parameter(self, path: Path, sig_name: str, readonly: bool):
         """Generates an Ophyd Signal from a Module Parameter
