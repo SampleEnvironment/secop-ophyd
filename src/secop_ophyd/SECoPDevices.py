@@ -1,10 +1,10 @@
 import asyncio
+import inspect
 import re
 import threading
 import time as ttime
 from types import MethodType
-from typing import Any, Callable, Dict, Iterator, Optional, Type
-import inspect
+from typing import Any, Dict, Iterator, Optional, Type
 
 import bluesky.plan_stubs as bps
 from bluesky.protocols import (
@@ -17,7 +17,18 @@ from bluesky.protocols import (
     Triggerable,
 )
 from frappy.client import Logger
-from frappy.datatypes import CommandType
+from frappy.datatypes import (
+    ArrayOf,
+    BLOBType,
+    BoolType,
+    CommandType,
+    FloatRange,
+    IntRange,
+    ScaledInteger,
+    StringType,
+    StructOf,
+    TupleOf,
+)
 from ophyd_async.core.async_status import AsyncStatus
 from ophyd_async.core.signal import SignalR, SignalRW, SignalX, observe_value
 from ophyd_async.core.standard_readable import StandardReadable
@@ -25,7 +36,7 @@ from ophyd_async.core.utils import T
 from typing_extensions import Self
 
 from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient
-from secop_ophyd.GenNodeCode import GenNodeCode
+from secop_ophyd.GenNodeCode import GenNodeCode, Method
 from secop_ophyd.propertykeys import DATAINFO, EQUIPMENT_ID, INTERFACE_CLASSES
 from secop_ophyd.SECoPSignal import (
     LocalBackend,
@@ -33,7 +44,7 @@ from secop_ophyd.SECoPSignal import (
     SECoPParamBackend,
     SECoPXBackend,
 )
-from secop_ophyd.util import Path, SECoPdtype
+from secop_ophyd.util import Path
 
 # Predefined Status Codes
 DISABLED = 0
@@ -233,7 +244,6 @@ class SECoPCMDDevice(StandardReadable, Flyable, Triggerable):
 
         self.commandx = SignalX(exec_backend)
 
-
         self.set_readable_signals(read=read, config=config)
 
         super().__init__(name=dev_name)
@@ -274,7 +284,6 @@ class SECoPCMDDevice(StandardReadable, Flyable, Triggerable):
     async def describe_collect(self) -> SyncOrAsync[Dict[str, Dict[str, Descriptor]]]:
         return await self.describe()
 
-    
 
 class SECoPReadableDevice(SECoPBaseDevice):
     """
@@ -296,6 +305,7 @@ class SECoPReadableDevice(SECoPBaseDevice):
 
         self._module = module_name
         module_desc = secclient.modules[module_name]
+        self.plans: list[Method] = []
 
         # generate Signals from Module Properties
         for property in module_desc["properties"]:
@@ -335,20 +345,23 @@ class SECoPReadableDevice(SECoPBaseDevice):
             cmd_dev: SECoPCMDDevice = getattr(self, cmd_dev_name)
             # Add Bluesky Plan Methods
 
-
             # Stop is already an ophyd native operation
             if command == "stop":
                 continue
 
-
             cmd_plan = self.generate_cmd_plan(
-                cmd_dev,
-                cmd_dev.arg_dtype,
-                cmd_dev.res_dtype
+                cmd_dev, cmd_dev.arg_dtype, cmd_dev.res_dtype
             )
 
             setattr(self, command, MethodType(cmd_plan, self))
 
+            plan = Method(
+                cmd_name=command,
+                description="test description",
+                cmd_sign=inspect.signature(getattr(self, command)),
+            )
+
+            self.plans.append(plan)
 
         self.set_readable_signals(read=self._read, config=self._config)
 
@@ -356,28 +369,26 @@ class SECoPReadableDevice(SECoPBaseDevice):
 
     def generate_cmd_plan(
         self,
-        cmd_dev:SECoPCMDDevice,
+        cmd_dev: SECoPCMDDevice,
         argument_type: Type | None = None,
         return_type: Type | None = None,
-    ) -> Callable[[Any, bool], Any]:
-        
-        
+    ):
+
         def command_plan_no_arg(self, wait_for_idle: bool = False):
             # Trigger the Command device, meaning that the command gets sent to the
             # SEC Node
             yield from bps.trigger(cmd_dev, wait=True)
 
-
             if wait_for_idle:
 
-                def wait_for_idle_factory(self):
+                def wait_for_idle_factory():
                     return self.wait_for_idle()
 
                 yield from bps.wait_for([wait_for_idle_factory])
-            
-            if return_type is not None:
+
+            if return_type is not None and cmd_dev.result is not None:
                 return cmd_dev.result._backend.reading.get_value()
-            
+
         def command_plan(self, arg, wait_for_idle: bool = False):
             # TODO  Type checking
 
@@ -388,30 +399,38 @@ class SECoPReadableDevice(SECoPBaseDevice):
             # SEC Node
             yield from bps.trigger(cmd_dev, wait=True)
 
-
             if wait_for_idle:
 
                 def wait_for_idle_factory():
                     return self.wait_for_idle()
 
                 yield from bps.wait_for([wait_for_idle_factory])
-            
-            if return_type is not None:
+
+            if return_type is not None and cmd_dev.result is not None:
                 return cmd_dev.result._backend.reading.get_value()
-        
-        
+
         cmd_meth = command_plan_no_arg if argument_type is None else command_plan
 
         anno_dict = cmd_meth.__annotations__
 
-        if return_type is not None:
-            anno_dict["return"] = return_type
-        if argument_type is not None:
-            anno_dict["arg"] = argument_type
+        dtype_mapping = {
+            StructOf: dict[str, Any],
+            ArrayOf: list[Any],
+            TupleOf: tuple[Any],
+            BLOBType: str,
+            BoolType: bool,
+            FloatRange: float,
+            IntRange: int,
+            ScaledInteger: int,
+            StringType: str,
+        }
 
+        if return_type is not None:
+            anno_dict["return"] = dtype_mapping[return_type.__class__]
+        if argument_type is not None:
+            anno_dict["arg"] = dtype_mapping[argument_type.__class__]
 
         return cmd_meth
-
 
     def _signal_from_parameter(self, path: Path, sig_name: str, readonly: bool):
         """Generates an Ophyd Signal from a Module Parameter
@@ -666,7 +685,7 @@ class SECoPNodeDevice(StandardReadable):
         # NodeClass Name
         self._node_cls_name = self.name.replace("-", "_").capitalize()
 
-        node_bases = [self.__class__.__name__]
+        node_bases = [self.__class__.__name__, "ABC"]
 
         node_class_attrs = []
 
@@ -685,7 +704,7 @@ class SECoPNodeDevice(StandardReadable):
                 module_dict = attr_value.__dict__
 
                 # modclass is baseclass of derived class
-                mod_bases = [attr_value.__class__.__name__]
+                mod_bases = [attr_value.__class__.__name__, "ABC"]
 
                 module_class_attrs = []
 
@@ -710,7 +729,7 @@ class SECoPNodeDevice(StandardReadable):
                             (module_attr_name, type(module_attr_value).__name__)
                         )
                 self.genCode.add_mod_class(
-                    module_class_name, mod_bases, module_class_attrs
+                    module_class_name, mod_bases, module_class_attrs, attr_value.plans
                 )
 
                 node_class_attrs.append((attr_name, module_class_name))

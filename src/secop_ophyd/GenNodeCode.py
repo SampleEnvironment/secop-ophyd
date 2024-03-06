@@ -1,6 +1,32 @@
 import inspect
+import re
 from importlib import import_module, reload
+from inspect import Signature
 from pathlib import Path
+
+
+class Method:
+    def __init__(self, cmd_name: str, description: str, cmd_sign: Signature) -> None:
+        self.sig_str: str
+
+        raw_sig_str: str = str(cmd_sign)
+
+        raw_sig_str = raw_sig_str.replace("typing.", "")
+
+        if "self" in raw_sig_str:
+            self.sig_str = raw_sig_str
+        else:
+            self.sig_str = "(self, " + raw_sig_str[1:]
+        self.name: str = cmd_name
+        self.description: str = description
+
+    def __str__(self) -> str:
+        code = ""
+        code += "    @abstractmethod \n"
+        code += f"    def {self.name}{self.sig_str}:\n"
+        code += f'      """{self.description}"""'
+
+        return code
 
 
 class GenNodeCode:
@@ -35,6 +61,11 @@ class GenNodeCode:
 
         if path is not None:
             self.module_folder_path = Path(path)
+
+        # resulting Class is supposed to be abstract
+        self.add_import("abc", "ABC")
+        self.add_import("abc", "abstractmethod")
+        self.add_import("typing", "Any")
 
         mod_path = self.ModName
 
@@ -88,11 +119,37 @@ class GenNodeCode:
                     (SECoPMoveableDevice, SECoPReadableDevice, SECoPWritableDevice),
                 ):
 
-                    attrs = get_attrs(inspect.getsource(class_obj))
+                    attributes = []
+
+                    for attr_name, attr in class_obj.__annotations__.items():
+                        attributes.append((attr_name, attr.__name__))
+
+                    methods = []
+
+                    for method_name, method in class_obj.__dict__.items():
+                        if callable(method) and not method_name.startswith("__"):
+
+                            method_source = inspect.getsource(method)
+
+                            match = re.search(
+                                r"\s*def\s+\w+\s*\(.*\).*:\s*", method_source
+                            )
+                            if match:
+                                description = method_source[match.end() :]
+                            else:
+                                raise Exception(
+                                    "could not extract description function body"
+                                )
+
+                            methods.append(
+                                Method(
+                                    method_name, description, inspect.signature(method)
+                                )
+                            )
 
                     bases = [base.__name__ for base in class_obj.__bases__]
 
-                    self.add_mod_class(class_symbol, bases, attrs)
+                    self.add_mod_class(class_symbol, bases, attributes, methods)
                     continue
 
             else:
@@ -112,7 +169,11 @@ class GenNodeCode:
             self.dimport[module] = {class_str}
 
     def add_mod_class(
-        self, module_cls: str, bases: list[str], attrs: list[tuple[str, str]]
+        self,
+        module_cls: str,
+        bases: list[str],
+        attrs: list[tuple[str, str]],
+        cmd_plans: list[Method],
     ):
         """adds module class to the module dict
 
@@ -123,7 +184,7 @@ class GenNodeCode:
         :param attrs: list of attributes of the class
         :type attrs: tuple[str, str]
         """
-        self.dmodule[module_cls] = {"bases": bases, "attrs": attrs}
+        self.dmodule[module_cls] = {"bases": bases, "attrs": attrs, "plans": cmd_plans}
 
     def add_node_class(
         self, node_cls: str, bases: list[str], attrs: list[tuple[str, str]]
@@ -135,6 +196,10 @@ class GenNodeCode:
 
         # Collect imports required for type hints (Node)
         for mod, cls_set in self.dimport.items():
+            if len(cls_set) == 1 and list(cls_set)[0] == "":
+                self.import_string += f"import {mod} \n"
+                continue
+
             cls_string = ", ".join(cls_set)
 
             self.import_string += f"from {mod} import {cls_string} \n"
@@ -148,8 +213,13 @@ class GenNodeCode:
             bases = ", ".join(cls_dict["bases"])
 
             self.mod_cls_string += f"class {mod_cls}({bases}):\n"
+            # write Attributes
             for attr_name, attr_type in cls_dict["attrs"]:
                 self.mod_cls_string += f"    {attr_name}: {attr_type}\n"
+            self.mod_cls_string += "\n"
+            # write abstract methods
+            for plan in cls_dict["plans"]:
+                self.mod_cls_string += str(plan)
 
             self.mod_cls_string += "\n\n"
 
