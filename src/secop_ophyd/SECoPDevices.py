@@ -191,6 +191,7 @@ class SECoPCMDDevice(StandardReadable, Flyable, Triggerable):
         cmd_datatype: CommandType = cmd_props["datatype"]
         datainfo = cmd_props[DATAINFO]
 
+        self.description: str = cmd_props["description"]
         self.arg_dtype = cmd_datatype.argument
         self.res_dtype = cmd_datatype.result
 
@@ -355,9 +356,14 @@ class SECoPReadableDevice(SECoPBaseDevice):
 
             setattr(self, command, MethodType(cmd_plan, self))
 
+            description: str = ""
+            description += f"{cmd_dev.description}\n"
+            description += f"argument: {str(cmd_dev.arg_dtype)}\n"
+            description += f"result: {str(cmd_dev.res_dtype)}"
+
             plan = Method(
                 cmd_name=command,
-                description="test description",
+                description=description,
                 cmd_sign=inspect.signature(getattr(self, command)),
             )
 
