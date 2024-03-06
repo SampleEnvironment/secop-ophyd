@@ -6,8 +6,6 @@ from secop_ophyd.SECoPDevices import SECoPNodeDevice
 async def test_class_gen(nested_struct_sim, nested_node: SECoPNodeDevice):
     nested_node.class_from_instance()
 
-
-
     if os.path.exists("genNodeClass.py"):
         os.remove("genNodeClass.py")
 
