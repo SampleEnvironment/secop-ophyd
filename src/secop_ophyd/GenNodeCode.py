@@ -135,9 +135,9 @@ class GenNodeCode:
                                 r"\s*def\s+\w+\s*\(.*\).*:\s*", method_source
                             )
                             if match:
-                                description = method_source[match.end() :]
-                                description = description.split('"""',2)
-                                description = description[1]
+                                function_body = method_source[match.end() :]
+                                description_list = function_body.split('"""', 2)
+                                description = description_list[1]
                             else:
                                 raise Exception(
                                     "could not extract description function body"
