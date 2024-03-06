@@ -358,8 +358,8 @@ class SECoPReadableDevice(SECoPBaseDevice):
 
             description: str = ""
             description += f"{cmd_dev.description}\n"
-            description += f"argument: {str(cmd_dev.arg_dtype)}\n"
-            description += f"result: {str(cmd_dev.res_dtype)}"
+            description += f"       argument: {str(cmd_dev.arg_dtype)}\n"
+            description += f"       result: {str(cmd_dev.res_dtype)}"
 
             plan = Method(
                 cmd_name=command,
