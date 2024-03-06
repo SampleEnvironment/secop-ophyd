@@ -136,6 +136,8 @@ class GenNodeCode:
                             )
                             if match:
                                 description = method_source[match.end() :]
+                                description = description.split('"""',2)
+                                description = description[1]
                             else:
                                 raise Exception(
                                     "could not extract description function body"
