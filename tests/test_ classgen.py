@@ -13,7 +13,7 @@ async def test_class_gen(nested_struct_sim, nested_node: SECoPNodeDevice):
 
 
 async def test_class_gen_path(nested_struct_sim, nested_node: SECoPNodeDevice):
-    nested_node.class_from_instance("tests/testgen")
+    nested_node.class_from_instance("tests")
 
     if os.path.exists("tests/testgen/genNodeClass.py"):
         os.remove("tests/testgen/genNodeClass.py")
