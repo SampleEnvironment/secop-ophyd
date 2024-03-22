@@ -39,7 +39,7 @@ class GenNodeCode:
     node_mod = None
     module_folder_path: Path | None = None
 
-    def __init__(self, path: str | None = None,log = None):
+    def __init__(self, path: str | None = None, log=None):
         """Instantiates GenNodeCode, internally all atrribues on a node and module level
         are collected. Additionally all the needed imports are collected in a dict
         """
@@ -59,7 +59,7 @@ class GenNodeCode:
         self.mod_cls_string: str = ""
         self.node_cls_string: str = ""
 
-        self.log= log
+        self.log = log
 
         if path is not None:
             self.module_folder_path = Path(path)
@@ -82,7 +82,7 @@ class GenNodeCode:
             if self.log is None:
                 print("no code generated yet, building from scratch")
             else:
-                self.log.info('no code generated yet, building from scratch')
+                self.log.info("no code generated yet, building from scratch")
             return
 
         modules = inspect.getmembers(self.node_mod)

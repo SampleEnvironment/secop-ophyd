@@ -568,8 +568,6 @@ class SECoPNodeDevice(StandardReadable):
 
         self.genCode: GenNodeCode
 
-        
-
         # Name is set to sec-node equipment_id
         name = self._secclient.properties[EQUIPMENT_ID].replace(".", "-")
 
@@ -684,7 +682,7 @@ class SECoPNodeDevice(StandardReadable):
         """
 
         # parse genClass file if already present
-        self.genCode = GenNodeCode(path=path_to_module,log = self._secclient.log)
+        self.genCode = GenNodeCode(path=path_to_module, log=self._secclient.log)
 
         self.genCode.add_import(self.__module__, self.__class__.__name__)
 
