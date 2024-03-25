@@ -7,7 +7,7 @@ This package allows seamless itegration of hardware that provides a SECoP interf
 
 
 ## Getting Started 
-A demo repository that shows the full functionality of the integration provided here:
+A demo repository that shows the full functionality of the integration is provided here:
 
 [secop-sim](https://codebase.helmholtz.cloud/rock-it-secop/secop-sim)
 
