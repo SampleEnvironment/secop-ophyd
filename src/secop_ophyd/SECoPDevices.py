@@ -553,7 +553,7 @@ class SECoPMoveableDevice(SECoPWritableDevice, Locatable, Stoppable):
         self._stopped = True
 
     async def locate(self) -> Location:
-        # return current location of the device (setpoint and readback). 
+        # return current location of the device (setpoint and readback).
         # Only locally cached values are returned
         location: Location = {
             "setpoint": await self.target.get_value(True),
