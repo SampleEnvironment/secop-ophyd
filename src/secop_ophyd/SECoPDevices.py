@@ -10,7 +10,8 @@ import bluesky.plan_stubs as bps
 from bluesky.protocols import (
     Descriptor,
     Flyable,
-    Movable,
+    Locatable,
+    Location,
     PartialEvent,
     Stoppable,
     SyncOrAsync,
@@ -302,6 +303,8 @@ class SECoPReadableDevice(SECoPBaseDevice):
         :type module_name: str
         """
 
+        self.value: SignalR
+
         super().__init__(secclient=secclient)
 
         self._module = module_name
@@ -471,7 +474,7 @@ class SECoPWritableDevice(SECoPReadableDevice):
     pass
 
 
-class SECoPMoveableDevice(SECoPWritableDevice, Movable, Stoppable):
+class SECoPMoveableDevice(SECoPWritableDevice, Locatable, Stoppable):
     """
     Standard movable SECoP device, corresponding to a SECoP module with the
     interface class "Drivable"
@@ -486,6 +489,9 @@ class SECoPMoveableDevice(SECoPWritableDevice, Movable, Stoppable):
             this device
         :type module_name: str
         """
+
+        self.target: SignalRW
+
         super().__init__(secclient, module_name)
         self._success = True
         self._stopped = False
@@ -545,6 +551,15 @@ class SECoPMoveableDevice(SECoPWritableDevice, Movable, Stoppable):
 
         await self._secclient.exec_command(self._module, "stop")
         self._stopped = True
+
+    async def locate(self) -> Location:
+        # return current location of the device (setpoint and readback). 
+        # Only locally cached values are returned
+        location: Location = {
+            "setpoint": await self.target.get_value(True),
+            "readback": await self.value.get_value(True),
+        }
+        return location
 
 
 class SECoPNodeDevice(StandardReadable):
