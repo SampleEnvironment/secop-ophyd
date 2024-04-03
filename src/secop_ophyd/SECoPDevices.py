@@ -142,6 +142,12 @@ class SECoPBaseDevice(StandardReadable):
         else:
             setattr(self, sig_name, SignalRW(paramb))
 
+        def noop():
+            pass
+
+        sig: SignalR = getattr(self, sig_name)
+        sig.subscribe(noop)
+
     async def wait_for_idle(self):
         """asynchronously waits until module is IDLE again. this is helpful,
         for running commands that are not done immediately
