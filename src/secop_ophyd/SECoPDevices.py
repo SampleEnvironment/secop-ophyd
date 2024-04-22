@@ -359,12 +359,20 @@ class SECoPReadableDevice(SECoPBaseDevice):
             if command == "stop":
                 continue
 
-            cmd_plan = self.generate_cmd_plan(
-                cmd_dev, cmd_dev.arg_dtype, cmd_dev.res_dtype
-            )
+            if command == "go":
+                
 
-            setattr(self, command, MethodType(cmd_plan, self))
+                async def go_coro():
+                    await self._secclient.exec_command(module=module_name,command="go")
+                    await self.wait_for_idle()
 
+
+                def trigger(self) -> AsyncStatus:
+                    return AsyncStatus(go_coro)
+
+                self.trigger = MethodType(trigger, None, SECoPReadableDevice)
+
+            
             description: str = ""
             description += f"{cmd_dev.description}\n"
             description += f"       argument: {str(cmd_dev.arg_dtype)}\n"
@@ -377,6 +385,11 @@ class SECoPReadableDevice(SECoPBaseDevice):
             )
 
             self.plans.append(plan)
+
+
+            
+
+
 
         self.set_readable_signals(read=self._read, config=self._config)
 
