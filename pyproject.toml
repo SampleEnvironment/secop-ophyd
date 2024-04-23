@@ -9,7 +9,7 @@ version = "0.0.1"
 description = "An Interface between bluesky and SECoP, using ophyd and frappy-client"
 
 dependencies = [
-    'ophyd-async == 0.2.0',  
+    'ophyd-async',  
     
 ]
 
