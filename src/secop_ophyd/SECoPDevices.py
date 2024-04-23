@@ -359,9 +359,12 @@ class SECoPReadableDevice(SECoPBaseDevice):
             if command == "stop":
                 continue
 
+            cmd_plan = self.generate_cmd_plan(
+                cmd_dev, cmd_dev.arg_dtype, cmd_dev.res_dtype
+            )
 
+            setattr(self, command, MethodType(cmd_plan, self))
 
-            
             description: str = ""
             description += f"{cmd_dev.description}\n"
             description += f"       argument: {str(cmd_dev.arg_dtype)}\n"
@@ -375,6 +378,7 @@ class SECoPReadableDevice(SECoPBaseDevice):
 
             self.plans.append(plan)
 
+       
             if command == "go":              
 
                 async def go_coro():
