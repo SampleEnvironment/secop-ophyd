@@ -380,14 +380,8 @@ class SECoPReadableDevice(SECoPBaseDevice):
 
        
             if command == "go":              
-
-                async def go_coro():
-                    await self._secclient.exec_command(module=module_name,command="go")
-                    await self.wait_for_idle()
-
-
-                def trigger(self) -> AsyncStatus:
-                    return AsyncStatus(go_coro)
+                def trigger() -> AsyncStatus:
+                    return AsyncStatus(self.go_coro)
 
                 self.trigger = MethodType(trigger, self )
 
@@ -395,6 +389,11 @@ class SECoPReadableDevice(SECoPBaseDevice):
         self.set_readable_signals(read=self._read, config=self._config)
 
         self.set_name(module_name)
+
+    
+    async def go_coro(self):
+        await self._secclient.exec_command(module=self._module,command="go")
+        await self.wait_for_idle()
 
     def generate_cmd_plan(
         self,
