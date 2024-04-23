@@ -381,7 +381,8 @@ class SECoPReadableDevice(SECoPBaseDevice):
        
             if command == "go":              
                 def trigger(self) -> AsyncStatus:
-                    return AsyncStatus(self.go_coro)
+                    coro = self.go_coro
+                    return AsyncStatus(awaitable=coro)
 
                 self.trigger = MethodType(trigger, self )
 
