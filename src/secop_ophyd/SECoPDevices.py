@@ -370,7 +370,7 @@ class SECoPReadableDevice(SECoPBaseDevice):
                 def trigger(self) -> AsyncStatus:
                     return AsyncStatus(go_coro)
 
-                self.trigger = MethodType(trigger, None, SECoPReadableDevice)
+                self.trigger = MethodType(trigger, self )
 
             
             description: str = ""
