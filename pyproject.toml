@@ -9,7 +9,8 @@ version = "0.0.1"
 description = "An Interface between bluesky and SECoP, using ophyd and frappy-client"
 
 dependencies = [
-    'ophyd-async == 0.2.0',  
+    'ophyd-async == 0.3.4',
+    'frappy-core@git+https://github.com/SampleEnvironment/frappy@v0.19.2'
     
 ]
 
@@ -21,7 +22,6 @@ requires-python = ">=3.10"
 dev = [
     'isort',
     'pytest == 7.4.2',
-    'frappy-core@git+https://github.com/SampleEnvironment/frappy',
     'black',
     'flake8',
     "flake8-isort == 6.1.1",
