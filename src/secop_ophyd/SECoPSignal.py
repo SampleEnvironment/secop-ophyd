@@ -75,7 +75,7 @@ class LocalBackend(SignalBackend):
 
         self.describe_dict = {}
 
-        self.describe_dict["source"] = self.source()
+        self.describe_dict["source"] = self.source("")
 
         self.describe_dict.update(self.SECoP_type_info.describe_dict)
 
@@ -84,7 +84,6 @@ class LocalBackend(SignalBackend):
                 property_name = "SECoP_dtype"
             self.describe_dict[property_name] = prop_val
 
-    
     def source(self, name: str) -> str:
         return self.source_name
 
@@ -150,7 +149,6 @@ class SECoPXBackend(SignalBackend):
     def source(self, name: str) -> str:
         return self.source_name
 
-
     async def connect(self):
         pass
 
@@ -183,7 +181,7 @@ class SECoPXBackend(SignalBackend):
 
         res = {}
 
-        res["source"] = self.source()
+        res["source"] = self.source("")
 
         # ophyd datatype (some SECoP datatypeshaveto be converted)
         # signalx has no datatype and is never read
@@ -274,11 +272,8 @@ class SECoPParamBackend(SignalBackend):
                 property_name = "SECoP_dtype"
             self.describe_dict[property_name] = prop_val
 
-
-
     def source(self, name: str) -> str:
         return self.source_name
-        
 
     async def connect(self):
         pass
@@ -367,7 +362,6 @@ class PropertyBackend(SignalBackend):
         # TODO full property path
         self.source_name = prop_key
 
-
     def source(self, name: str) -> str:
         return str(self.source_name)
 
@@ -400,7 +394,7 @@ class PropertyBackend(SignalBackend):
         """Metadata like source, dtype, shape, precision, units"""
         description = {}
 
-        description["source"] = self.source()
+        description["source"] = self.source("")
         description["dtype"] = self._get_datatype()
         description["shape"] = []  # type: ignore
 
