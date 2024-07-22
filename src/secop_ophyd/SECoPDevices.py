@@ -32,7 +32,11 @@ from frappy.datatypes import (
 )
 from ophyd_async.core.async_status import AsyncStatus
 from ophyd_async.core.signal import SignalR, SignalRW, SignalX, observe_value
-from ophyd_async.core.standard_readable import StandardReadable
+from ophyd_async.core.standard_readable import (
+    ConfigSignal,
+    HintedSignal,
+    StandardReadable,
+)
 from ophyd_async.core.utils import T
 from typing_extensions import Self
 
@@ -252,7 +256,8 @@ class SECoPCMDDevice(StandardReadable, Flyable, Triggerable):
 
         self.commandx = SignalX(exec_backend)
 
-        self.set_readable_signals(read=read, config=config)
+        self.add_readables(read, wrapper=HintedSignal)
+        self.add_readables(config, wrapper=ConfigSignal)
 
         super().__init__(name=dev_name)
 
@@ -378,7 +383,8 @@ class SECoPReadableDevice(SECoPBaseDevice):
 
             self.plans.append(plan)
 
-        self.set_readable_signals(read=self._read, config=self._config)
+        self.add_readables(self._read, wrapper=HintedSignal)
+        self.add_readables(self._config, wrapper=ConfigSignal)
 
         self.set_name(module_name)
 
@@ -605,7 +611,7 @@ class SECoPNodeDevice(StandardReadable):
             setattr(self, module, secop_dev_class(self._secclient, module))
             self.mod_devices[module] = getattr(self, module)
 
-        self.set_readable_signals(config=config)
+        self.add_readables(config, wrapper=ConfigSignal)
 
         # register secclient callbacks (these are useful if sec node description
         # changes after a reconnect)
@@ -803,7 +809,7 @@ class SECoPNodeDevice(StandardReadable):
                 setattr(self, property, SignalR(backend=propb))
                 config.append(getattr(self, property))
 
-            self.set_readable_signals(config=config)
+            self.add_readables(config, wrapper=ConfigSignal)
         else:
             # Refresh changed modules
             module_desc = self._secclient.modules[module]

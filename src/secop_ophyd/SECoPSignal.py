@@ -3,7 +3,7 @@ import collections.abc
 from functools import wraps
 from typing import Any, Callable, Dict, Optional
 
-from bluesky.protocols import Descriptor, Reading
+from bluesky.protocols import DataKey, Reading
 from frappy.client import CacheItem
 from frappy.datatypes import (
     ArrayOf,
@@ -96,7 +96,8 @@ class LocalBackend(SignalBackend):
         if self.callback is not None:
             self.callback(self.reading.get_reading(), self.reading.get_value())
 
-    async def get_descriptor(self) -> Descriptor:
+    async def get_datakey(self, source: str) -> DataKey:
+        """Metadata like source, dtype, shape, precision, units"""
         return self.describe_dict
 
     async def get_reading(self) -> Reading:
@@ -177,8 +178,8 @@ class SECoPXBackend(SignalBackend):
 
             await self.result.put(val)
 
-    async def get_descriptor(self) -> Descriptor:
-
+    async def get_datakey(self, source: str) -> DataKey:
+        """Metadata like source, dtype, shape, precision, units"""
         res = {}
 
         res["source"] = self.source("")
@@ -287,7 +288,8 @@ class SECoPParamBackend(SignalBackend):
             timeout=timeout,
         )
 
-    async def get_descriptor(self) -> Descriptor:
+    async def get_datakey(self, source: str) -> DataKey:
+        """Metadata like source, dtype, shape, precision, units"""
         return self.describe_dict
 
     async def get_reading(self) -> Reading:
@@ -390,7 +392,7 @@ class PropertyBackend(SignalBackend):
         # Properties are readonly
         pass
 
-    async def get_descriptor(self) -> Descriptor:
+    async def get_datakey(self, source: str) -> DataKey:
         """Metadata like source, dtype, shape, precision, units"""
         description = {}
 
