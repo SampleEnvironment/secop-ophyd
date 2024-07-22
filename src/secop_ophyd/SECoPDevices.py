@@ -271,14 +271,14 @@ class SECoPCMDDevice(StandardReadable, Flyable, Triggerable):
         :rtype: AsyncStatus
         """
         coro = asyncio.wait_for(fut=self._exec_cmd(), timeout=None)
-        return AsyncStatus(awaitable=coro, watchers=None)
+        return AsyncStatus(awaitable=coro)
 
     def kickoff(self) -> AsyncStatus:
         # trigger execution of secop command, wait until Device is Busy
 
         self._start_time = ttime.time()
         coro = asyncio.wait_for(fut=asyncio.sleep(1), timeout=None)
-        return AsyncStatus(coro, watchers=None)
+        return AsyncStatus(coro)
 
     async def _exec_cmd(self):
         stat = self.commandx.trigger()
@@ -287,7 +287,7 @@ class SECoPCMDDevice(StandardReadable, Flyable, Triggerable):
 
     def complete(self) -> AsyncStatus:
         coro = asyncio.wait_for(fut=self._exec_cmd(), timeout=None)
-        return AsyncStatus(awaitable=coro, watchers=None)
+        return AsyncStatus(awaitable=coro)
 
     def collect(self) -> Iterator[PartialEvent]:
         yield dict(
