@@ -10,7 +10,7 @@ description = "An Interface between bluesky and SECoP, using ophyd and frappy-cl
 
 dependencies = [
     'ophyd-async == 0.3.4',
-    'frappy-core@git+https://github.com/SampleEnvironment/frappy@v0.19.2'
+    'frappy-core@git+https://github.com/SampleEnvironment/frappy@v0.17.0'
     
 ]
 
