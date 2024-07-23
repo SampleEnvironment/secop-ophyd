@@ -46,6 +46,48 @@ async def test_dev_read(cryo_sim, cryo_node_internal_loop: SECoPNodeDevice):
     await cryo_node_internal_loop.disconnect_async()
 
 
+async def test_signal_read(cryo_sim, cryo_node_internal_loop: SECoPNodeDevice):
+    # Node device has no read value, it has to return an empty dict
+    cryo_dev: SECoPMoveableDevice = cryo_node_internal_loop.cryo
+
+    p = await cryo_dev.p.get_value(cached=False)
+    assert p == 40.0
+
+    await cryo_node_internal_loop.disconnect_async()
+
+
+async def test_signal_read_cached(cryo_sim, cryo_node_internal_loop: SECoPNodeDevice):
+    # Node device has no read value, it has to return an empty dict
+    cryo_dev: SECoPMoveableDevice = cryo_node_internal_loop.cryo
+
+    p = await cryo_dev.p.get_value(cached=True)
+
+    assert p == 40.0
+
+    await cryo_node_internal_loop.disconnect_async()
+
+
+async def test_signal_stage_unstage_read_cached(
+    cryo_sim, cryo_node_internal_loop: SECoPNodeDevice
+):
+    # Node device has no read value, it has to return an empty dict
+    cryo_dev: SECoPMoveableDevice = cryo_node_internal_loop.cryo
+
+    await cryo_dev.value.stage()
+
+    await asyncio.sleep(1)
+
+    await cryo_dev.value.unstage()
+
+    await asyncio.sleep(1)
+
+    p = await cryo_dev.p.get_value(cached=True)
+
+    assert p == 40.0
+
+    await cryo_node_internal_loop.disconnect_async()
+
+
 async def test_status(cryo_sim, cryo_node_internal_loop: SECoPNodeDevice):
     # Node device has no read value, it has to return an empty dict
     cryo_dev: SECoPMoveableDevice = cryo_node_internal_loop.cryo

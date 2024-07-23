@@ -3,7 +3,7 @@ import collections.abc
 from functools import wraps
 from typing import Any, Callable, Dict, Optional
 
-from bluesky.protocols import Descriptor, Reading
+from bluesky.protocols import DataKey, Reading
 from frappy.client import CacheItem
 from frappy.datatypes import (
     ArrayOf,
@@ -71,11 +71,11 @@ class LocalBackend(SignalBackend):
 
         self.describe_dict: dict
 
-        self.source = self.path._module_name + ":" + self.path._accessible_name
+        self.source_name = self.path._module_name + ":" + self.path._accessible_name
 
         self.describe_dict = {}
 
-        self.describe_dict["source"] = self.source
+        self.describe_dict["source"] = self.source("")
 
         self.describe_dict.update(self.SECoP_type_info.describe_dict)
 
@@ -83,6 +83,9 @@ class LocalBackend(SignalBackend):
             if property_name == "type":
                 property_name = "SECoP_dtype"
             self.describe_dict[property_name] = prop_val
+
+    def source(self, name: str) -> str:
+        return self.source_name
 
     async def connect(self):
         pass
@@ -93,7 +96,8 @@ class LocalBackend(SignalBackend):
         if self.callback is not None:
             self.callback(self.reading.get_reading(), self.reading.get_value())
 
-    async def get_descriptor(self) -> Descriptor:
+    async def get_datakey(self, source: str) -> DataKey:
+        """Metadata like source, dtype, shape, precision, units"""
         return self.describe_dict
 
     async def get_reading(self) -> Reading:
@@ -141,7 +145,10 @@ class SECoPXBackend(SignalBackend):
         self.argument: LocalBackend | None = argument
         self.result: LocalBackend | None = result
 
-        self.source = self.path._module_name + ":" + self.path._accessible_name
+        self.source_name = self.path._module_name + ":" + self.path._accessible_name
+
+    def source(self, name: str) -> str:
+        return self.source_name
 
     async def connect(self):
         pass
@@ -171,11 +178,11 @@ class SECoPXBackend(SignalBackend):
 
             await self.result.put(val)
 
-    async def get_descriptor(self) -> Descriptor:
-
+    async def get_datakey(self, source: str) -> DataKey:
+        """Metadata like source, dtype, shape, precision, units"""
         res = {}
 
-        res["source"] = self.source
+        res["source"] = self.source("")
 
         # ophyd datatype (some SECoP datatypeshaveto be converted)
         # signalx has no datatype and is never read
@@ -237,7 +244,7 @@ class SECoPParamBackend(SignalBackend):
 
         self.describe_dict: dict = {}
 
-        self.source = (
+        self.source_name = (
             secclient.uri
             + ":"
             + secclient.nodename
@@ -250,7 +257,7 @@ class SECoPParamBackend(SignalBackend):
         # SECoP metadata is static and can only change when connection is reset
         self.describe_dict = {}
 
-        self.describe_dict["source"] = self.source
+        self.describe_dict["source"] = self.source_name
 
         # add gathered keys from SECoPdtype:
         self.describe_dict.update(self.SECoP_type_info.describe_dict)
@@ -266,6 +273,9 @@ class SECoPParamBackend(SignalBackend):
                 property_name = "SECoP_dtype"
             self.describe_dict[property_name] = prop_val
 
+    def source(self, name: str) -> str:
+        return self.source_name
+
     async def connect(self):
         pass
 
@@ -278,7 +288,8 @@ class SECoPParamBackend(SignalBackend):
             timeout=timeout,
         )
 
-    async def get_descriptor(self) -> Descriptor:
+    async def get_datakey(self, source: str) -> DataKey:
+        """Metadata like source, dtype, shape, precision, units"""
         return self.describe_dict
 
     async def get_reading(self) -> Reading:
@@ -351,7 +362,10 @@ class PropertyBackend(SignalBackend):
         self._datatype = self._get_datatype()
         self._secclient: AsyncFrappyClient = secclient
         # TODO full property path
-        self.source = prop_key
+        self.source_name = prop_key
+
+    def source(self, name: str) -> str:
+        return str(self.source_name)
 
     def _get_datatype(self) -> str:
         prop_val = self._property_dict[self._prop_key]
@@ -378,11 +392,11 @@ class PropertyBackend(SignalBackend):
         # Properties are readonly
         pass
 
-    async def get_descriptor(self) -> Descriptor:
+    async def get_datakey(self, source: str) -> DataKey:
         """Metadata like source, dtype, shape, precision, units"""
         description = {}
 
-        description["source"] = str(self.source)
+        description["source"] = self.source("")
         description["dtype"] = self._get_datatype()
         description["shape"] = []  # type: ignore
 

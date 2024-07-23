@@ -56,6 +56,9 @@ async def test_async_secopclient_reconn(
     while async_frappy_client.state == "reconnecting":
         await asyncio.sleep(0.001)
 
+    while async_frappy_client.state == "activating":
+        await asyncio.sleep(0.001)
+
     assert async_frappy_client.state == "connected"
 
     # ensures we are connected and getting fresh data again
