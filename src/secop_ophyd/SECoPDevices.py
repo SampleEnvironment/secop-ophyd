@@ -862,7 +862,7 @@ class SECoPNodeDevice(StandardReadable):
 
 
 IF_CLASSES = {
-    "Triggerable" : SECoPTriggerableDevice,
+    "Triggerable": SECoPTriggerableDevice,
     "Drivable": SECoPMoveableDevice,
     "Writable": SECoPWritableDevice,
     "Readable": SECoPReadableDevice,
