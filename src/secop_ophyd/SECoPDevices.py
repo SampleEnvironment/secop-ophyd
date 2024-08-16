@@ -501,15 +501,11 @@ class SECoPTriggerableDevice(SECoPReadableDevice, Triggerable):
         super().__init__(secclient, module_name)
 
     def trigger(self) -> AsyncStatus:
-        trigger_stat: AsyncStatus = self.go_CMD.trigger()
+        async def go_coro(self):
+            await self._secclient.exec_command(module=self._module, command="go")
+            await self.wait_for_idle()
 
-        while not trigger_stat.done:
-            pass
-
-        if not trigger_stat.success:
-            raise Exception("Error sending while the go command")
-
-        return AsyncStatus(self.wait_for_idle())
+        return AsyncStatus(awaitable=self.go_coro())
 
 
 class SECoPWritableDevice(SECoPReadableDevice):
@@ -758,7 +754,12 @@ class SECoPNodeDevice(StandardReadable):
             # Modules
             if isinstance(
                 attr_value,
-                (SECoPReadableDevice, SECoPWritableDevice, SECoPMoveableDevice),
+                (
+                    SECoPReadableDevice,
+                    SECoPWritableDevice,
+                    SECoPMoveableDevice,
+                    SECoPTriggerableDevice,
+                ),
             ):
                 attr_type = type(attr_value)
                 module = str(getattr(attr_type, "__module__", None))
