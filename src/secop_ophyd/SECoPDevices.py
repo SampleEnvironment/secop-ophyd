@@ -505,7 +505,7 @@ class SECoPTriggerableDevice(SECoPReadableDevice, Triggerable):
             await self._secclient.exec_command(module=self._module, command="go")
             await self.wait_for_idle()
 
-        return AsyncStatus(awaitable=self.go_coro())
+        return AsyncStatus(awaitable=go_coro())
 
 
 class SECoPWritableDevice(SECoPReadableDevice):
