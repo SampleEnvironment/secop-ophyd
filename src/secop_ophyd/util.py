@@ -630,7 +630,10 @@ class SECoPReading:
 
         exported_val = secop_dt.raw_dtype.export_value(entry.value)
 
+        self.secop_dt.update_dtype(exported_val)
+
         self.value = secop_dt.secop2val(exported_val)
+
         self.secop_val = exported_val
 
         self.timestamp = entry.timestamp
