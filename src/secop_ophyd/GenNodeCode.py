@@ -48,8 +48,8 @@ class GenNodeCode:
             SECoPMoveableDevice,
             SECoPNodeDevice,
             SECoPReadableDevice,
+            SECoPTriggerableDevice,
             SECoPWritableDevice,
-            SECoPTriggerableDevice
         )
 
         self.dimport: dict[str, set[str]] = {}
@@ -122,7 +122,12 @@ class GenNodeCode:
 
                 if issubclass(
                     class_obj,
-                    (SECoPMoveableDevice, SECoPReadableDevice, SECoPWritableDevice,SECoPTriggerableDevice),
+                    (
+                        SECoPMoveableDevice,
+                        SECoPReadableDevice,
+                        SECoPWritableDevice,
+                        SECoPTriggerableDevice,
+                    ),
                 ):
 
                     attributes = []

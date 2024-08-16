@@ -315,7 +315,6 @@ class SECoPReadableDevice(SECoPBaseDevice):
         """
 
         self.value: SignalR
-        
 
         super().__init__(secclient=secclient)
 
@@ -481,9 +480,8 @@ class SECoPReadableDevice(SECoPBaseDevice):
             self._config.append(getattr(self, sig_name))
 
 
-
-class SECoPTriggerableDevice(SECoPReadableDevice,Triggerable):
-    """    
+class SECoPTriggerableDevice(SECoPReadableDevice, Triggerable):
+    """
     Standard triggerable SECoP device, corresponding to a SECoP module with the0s
     interface class "Triggerable"
     """
@@ -497,30 +495,28 @@ class SECoPTriggerableDevice(SECoPReadableDevice,Triggerable):
             this device
         :type module_name: str
         """
-        
-        self.go_CMD:SECoPCMDDevice
 
-        
+        self.go_CMD: SECoPCMDDevice
+
         super().__init__(secclient, module_name)
 
     def trigger(self) -> AsyncStatus:
-        trigger_stat:AsyncStatus = self.go_CMD.trigger()
+        trigger_stat: AsyncStatus = self.go_CMD.trigger()
 
         while not trigger_stat.done:
             pass
 
         if not trigger_stat.success:
-            raise Exception('Error sending while the go command')
-
+            raise Exception("Error sending while the go command")
 
         return AsyncStatus(self.wait_for_idle())
-        
-        
+
 
 class SECoPWritableDevice(SECoPReadableDevice):
     """Fast settable device target"""
 
     pass
+
 
 class SECoPMoveableDevice(SECoPWritableDevice, Locatable, Stoppable):
     """
@@ -539,8 +535,6 @@ class SECoPMoveableDevice(SECoPWritableDevice, Locatable, Stoppable):
         """
 
         self.target: SignalRW
-
-        
 
         super().__init__(secclient, module_name)
         self._success = True
