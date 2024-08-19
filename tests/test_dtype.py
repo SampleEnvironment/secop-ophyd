@@ -1,5 +1,16 @@
 import pytest
-from frappy.datatypes import ArrayOf, FloatRange, StringType, IntRange,StructOf, TupleOf,BoolType,BLOBType,ScaledInteger,EnumType
+from frappy.datatypes import (
+    ArrayOf,
+    BLOBType,
+    BoolType,
+    EnumType,
+    FloatRange,
+    IntRange,
+    ScaledInteger,
+    StringType,
+    StructOf,
+    TupleOf,
+)
 
 from secop_ophyd.util import NestedRaggedArray, SECoPdtype
 
@@ -42,52 +53,30 @@ def test_nested_arrays():
         StringType(),
         BoolType(),
         BLOBType(),
-        EnumType('test',bla =0,blub = 1)
+        EnumType("test", bla=0, blub=1),
     ]
 
-    dtype_list =[
-        'number',
-        'number',
-        'number',
-        'string',
-        'boolean',
-        'string',
-        'number'
-    ]
+    dtype_list = ["number", "number", "number", "string", "boolean", "string", "number"]
 
-    for innner_dt, dtype in zip(inner_dt_list,dtype_list):
+    for innner_dt, dtype in zip(inner_dt_list, dtype_list):
 
         arr_dt = ArrayOf(
-                    ArrayOf(
-                        ArrayOf(
-                            innner_dt,
-                            minlen=5,
-                            maxlen=5),
-                        minlen=5,
-                        maxlen=5),
-                    minlen=0,
-                    maxlen=5)
-        
+            ArrayOf(ArrayOf(innner_dt, minlen=5, maxlen=5), minlen=5, maxlen=5),
+            minlen=0,
+            maxlen=5,
+        )
+
         sdtype = SECoPdtype(arr_dt)
 
         assert sdtype.dtype == dtype
 
-
-
-    
-
-
-
     ragged_arr = ArrayOf(
-            ArrayOf(
-                ArrayOf(
-                    IntRange(min=0 ,max=100),
-                    minlen=0,
-                    maxlen=5),
-                minlen=5,
-                maxlen=5),
-            minlen=5,
-            maxlen=5) 
+        ArrayOf(
+            ArrayOf(IntRange(min=0, max=100), minlen=0, maxlen=5), minlen=5, maxlen=5
+        ),
+        minlen=5,
+        maxlen=5,
+    )
 
     with pytest.raises(NestedRaggedArray):
-        SECoPdtype(ragged_arr)                                      
+        SECoPdtype(ragged_arr)
