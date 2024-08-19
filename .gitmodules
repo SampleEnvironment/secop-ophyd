@@ -1,4 +1,0 @@
-[submodule "frappy"]
-	path = frappy
-	url = https://github.com/Bilchreis/frappy.git
-	branch = secop-ophyd-pytest
