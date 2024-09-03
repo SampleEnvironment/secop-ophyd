@@ -31,7 +31,7 @@ from frappy.datatypes import (
     TupleOf,
 )
 from ophyd_async.core.async_status import AsyncStatus
-from ophyd_async.core.signal import SignalR, SignalRW, SignalX, observe_value
+from ophyd_async.core.signal import Signal, SignalR, SignalRW, SignalX, observe_value
 from ophyd_async.core.standard_readable import (
     ConfigSignal,
     HintedSignal,
@@ -315,12 +315,15 @@ class SECoPReadableDevice(SECoPBaseDevice):
         """
 
         self.value: SignalR
+        self.descriptiom: SignalR
 
         super().__init__(secclient=secclient)
 
         self._module = module_name
         module_desc = secclient.modules[module_name]
         self.plans: list[Method] = []
+        self.mod_prop_devices: Dict[str, SignalR] = {}
+        self.param_devices: Dict[str, T] = {}
 
         # generate Signals from Module Properties
         for property in module_desc["properties"]:
@@ -330,6 +333,7 @@ class SECoPReadableDevice(SECoPBaseDevice):
 
             setattr(self, property, SignalR(backend=propb))
             self._config.append(getattr(self, property))
+            self.mod_prop_devices[property] = getattr(self, property)
 
         # generate Signals from Module parameters eiter r or rw
         for parameter, properties in module_desc["parameters"].items():
@@ -345,6 +349,7 @@ class SECoPReadableDevice(SECoPBaseDevice):
                 sig_name=parameter,
                 readonly=readonly,
             )
+            self.param_devices[parameter] = getattr(self, parameter)
 
         # Initialize Command Devices
         for command, properties in module_desc["commands"].items():
@@ -478,6 +483,67 @@ class SECoPReadableDevice(SECoPBaseDevice):
         # config
         else:
             self._config.append(getattr(self, sig_name))
+
+    async def generate_nexus_parameter_log(self, param_name: str) -> str:
+
+        sig: Signal = getattr(self, param_name)
+
+        sig_backend: SECoPParamBackend = sig._backend
+
+        # check if vlaue is numeric (NXlog only supports mumerical values)
+        if not sig_backend.is_number():
+            return ""
+
+        param_unit = f'"{sig_backend.get_unit()}"'
+
+        unit_line = (
+            f"\n\t\t@units = {param_unit}" if sig_backend.get_unit() is not None else ""
+        )
+
+        log_name = "value_log" if param_name == "value" else param_name
+
+        text = f"""
+{log_name}:NXlog
+\t@NX_class = NXlog
+\tvalue:NX = {self.value.name}{unit_line}
+\t\t@type = "{sig_backend.describe_dict['SECoP_dtype']}"
+\ttime:NX_NUMBER = {self.value.name}-timestamp
+\t\t@start = /:NXentry/start_time
+\t\t@units = "s"
+
+"""
+
+        return text
+
+    async def generate_nexus_struct(self) -> str:
+
+        implementation: str = str(await self.implementation.get_value())
+        description: str = str(await self.description.get_value())
+
+        text = f"""
+{self._module}:NXsensor
+\t@NX_class = NXsensor
+\tname:NX_CHAR = "{self._module}"
+\tmeasurement:NX_CHAR = "TODO"
+\t\t@secop_importance:NX_INT= 0
+\tmodel:NX_CHAR = "{implementation}"
+\tdescription:NX_CHAR = "{description}"
+
+"""
+        value_log: str = await self.generate_nexus_parameter_log("value")
+
+        text += "\t".join(value_log.splitlines(True))
+
+        text += "\tparameters:NXcollection"
+        for parameter in self.param_devices.keys():
+            if parameter == "value":
+                continue
+
+            param_log: str = await self.generate_nexus_parameter_log(parameter)
+
+            text += "\t".join(param_log.splitlines(True))
+
+        return text
 
 
 class SECoPTriggerableDevice(SECoPReadableDevice, Triggerable):
@@ -617,11 +683,17 @@ class SECoPNodeDevice(StandardReadable):
         :param secclient: SECoP client providing communication to the SEC Node
         :type secclient: AsyncFrappyClient
         """
+
+        self.equipment_id: SignalR
+        self.description: SignalR
+        self.version: SignalR
+
         self._secclient: AsyncFrappyClient = secclient
 
         self._module_name: str = ""
         self._node_cls_name: str = ""
-        self.mod_devices: Dict[str, T] = {}
+        self.mod_devices: Dict[str, SECoPReadableDevice] = {}
+        self.node_prop_devices: Dict[str, SignalR] = {}
 
         self.genCode: GenNodeCode
 
@@ -634,6 +706,7 @@ class SECoPNodeDevice(StandardReadable):
             propb = PropertyBackend(property, self._secclient.properties, secclient)
             setattr(self, property, SignalR(backend=propb))
             config.append(getattr(self, property))
+            self.node_prop_devices[property] = getattr(self, property)
 
         for module, module_desc in self._secclient.modules.items():
             secop_dev_class = class_from_interface(module_desc["properties"])
@@ -735,7 +808,7 @@ class SECoPNodeDevice(StandardReadable):
     def class_from_instance(self, path_to_module: str | None = None):
         """Dynamically generate python class file for the SECoP_Node_Device, this
         allows autocompletion in IDEs and eases working with the generated Ophyd
-        devices
+        devices24246316.542
         """
 
         # parse genClass file if already present
@@ -863,6 +936,34 @@ class SECoPNodeDevice(StandardReadable):
         if state == "connected" and online is True:
             self._secclient.conn_timestamp = ttime.time()
 
+    async def generate_nexus_struct(self) -> str:
+
+        equipment_id: str = str(await self.equipment_id.get_value())
+
+        if hasattr(self, "firmware"):
+            firmware: str = str(await self.firmware.get_value())
+        else:
+            firmware = ""
+
+        version: str = str(await self.version.get_value())
+        description: str = str(await self.description.get_value())
+
+        text = f"""
+{equipment_id}:NXenvironment
+\t@NX_class = NXenvironment
+\tname:NX_CHAR = "{equipment_id}"
+\tshort_name:NX_CHAR = {equipment_id.split('.')[0]}
+\ttype:NX_CHAR = "{firmware} ({version})"
+\tdescription:NX_CHAR = "{description}"
+
+"""
+        for module in self.mod_devices.values():
+            mod_str: str = await module.generate_nexus_struct()
+
+            text += "\t".join(mod_str.splitlines(True))
+
+        return text
+
 
 IF_CLASSES = {
     "Triggerable": SECoPTriggerableDevice,
@@ -871,6 +972,12 @@ IF_CLASSES = {
     "Readable": SECoPReadableDevice,
     "Module": SECoPReadableDevice,
     "Communicator": SECoPReadableDevice,
+}
+
+SECOP_TO_NEXUS_TYPE = {
+    "double": "NX_FLOAT64",
+    "int": "NX_INT64",
+    "scaled": "NX_FLOAT64",
 }
 
 
