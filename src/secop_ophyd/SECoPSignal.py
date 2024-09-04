@@ -15,8 +15,8 @@ from frappy.datatypes import (
     ScaledInteger,
     StringType,
 )
-from ophyd_async.core.signal_backend import SignalBackend
-from ophyd_async.core.utils import T
+from ophyd_async.core import SignalBackend
+from ophyd_async.core import T
 
 from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient
 from secop_ophyd.util import Path, SECoPdtype, SECoPReading, deep_get

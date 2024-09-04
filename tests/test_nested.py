@@ -1,5 +1,5 @@
 import numpy as np
-from ophyd_async.core.signal import SignalR, SignalRW
+from ophyd_async.core import SignalR, SignalRW
 
 from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient
 from secop_ophyd.SECoPDevices import SECoPNodeDevice, SECoPReadableDevice

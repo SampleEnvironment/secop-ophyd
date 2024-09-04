@@ -7,6 +7,7 @@ from types import MethodType
 from typing import Any, Dict, Iterator, Optional, Type
 
 import bluesky.plan_stubs as bps
+
 from bluesky.protocols import (
     Descriptor,
     Flyable,
@@ -30,14 +31,14 @@ from frappy.datatypes import (
     StructOf,
     TupleOf,
 )
-from ophyd_async.core.async_status import AsyncStatus
-from ophyd_async.core.signal import Signal, SignalR, SignalRW, SignalX, observe_value
-from ophyd_async.core.standard_readable import (
+from ophyd_async.core import AsyncStatus
+from ophyd_async.core import Signal, SignalR, SignalRW, SignalX, observe_value
+from ophyd_async.core import (
     ConfigSignal,
     HintedSignal,
     StandardReadable,
 )
-from ophyd_async.core.utils import T
+from ophyd_async.core import T
 from typing_extensions import Self
 
 from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient
@@ -917,7 +918,7 @@ class SECoPNodeDevice(StandardReadable):
 {equipment_id}:NXenvironment
 \t@NX_class = NXenvironment
 \tname:NX_CHAR = "{equipment_id}"
-\tshort_name:NX_CHAR = {equipment_id.split('.')[0]}
+\tshort_name:NX_CHAR = "{equipment_id.split('.')[0]}"
 \ttype:NX_CHAR = "{firmware} ({version})"
 \tdescription:NX_CHAR = "{description}"
 
