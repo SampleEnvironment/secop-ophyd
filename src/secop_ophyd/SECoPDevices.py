@@ -521,6 +521,9 @@ class SECoPReadableDevice(SECoPBaseDevice):
         implementation: str = str(await self.implementation.get_value())
         description: str = str(await self.description.get_value())
 
+        ## remove new line chars
+        description = ''.join(description.splitlines())
+
         text = f"""
 {self._module}:NXsensor
 \t@NX_class = NXsensor
@@ -913,6 +916,8 @@ class SECoPNodeDevice(StandardReadable):
 
         version: str = str(await self.version.get_value())
         description: str = str(await self.description.get_value())
+        ## remove newline chars
+        description = ''.join(description.splitlines())
 
         text = f"""
 {equipment_id}:NXenvironment
