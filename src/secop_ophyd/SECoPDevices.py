@@ -509,7 +509,7 @@ class SECoPReadableDevice(SECoPBaseDevice):
 \tvalue:NX = {self.value.name}{unit_line}
 \t\t@type = "{sig_backend.describe_dict['SECoP_dtype']}"
 \ttime:NX_NUMBER = {self.value.name}-timestamp
-\t\t@start = /:NXentry/start_time
+\t\t@start = 0
 \t\t@units = "s"
 
 """
