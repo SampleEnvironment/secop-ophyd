@@ -508,7 +508,7 @@ class SECoPReadableDevice(SECoPBaseDevice):
 \t@NX_class = NXlog
 \tvalue:NX_FLOAT64 = {self.value.name}{unit_line}
 \t\t@type = "{sig_backend.describe_dict['SECoP_dtype']}"
-\ttime:NX_FLOAT = {self.value.name}-timestamp
+\ttime:NX_FLOAT64 = {self.value.name}-timestamp
 \t\t@start = 0
 \t\t@units = "s"
 
