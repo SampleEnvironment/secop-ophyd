@@ -545,7 +545,7 @@ class SECoPReadableDevice(SECoPBaseDevice):
 
             param_log: str = await self.generate_nexus_parameter_log(parameter)
 
-            text += "\t".join(param_log.splitlines(True))
+            text += "\t\t".join(param_log.splitlines(True))
 
         return text
 
