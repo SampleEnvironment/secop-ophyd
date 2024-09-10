@@ -521,14 +521,36 @@ class SECoPReadableDevice(SECoPBaseDevice):
         implementation: str = str(await self.implementation.get_value())
         description: str = str(await self.description.get_value())
 
+        measurement_line = ""
+        importance_line = ""
+        key_line = ""
+        link_line = ""
+
+        if self.meaning is not None:
+            meaning:dict = self.meaning.get_value() 
+
+            if meaning.get('function'):
+                function:str = self.meaning.get_value().get('function')
+                measurement_line =  f"\n\tmeasurement:NX_CHAR = {function}"
+
+                importance_line = f"\n\t\t@secop_importance:NX_INT32 = {meaning.get('importance')}" if meaning.get('importance') else ""
+                key_line = f"\n\t\t@secop_key:NX_CHAR = {meaning.get('key')}" if meaning.get('key') else ""
+                link_line = f"\n\t\t@secop_link:NX_CHAR = {meaning.get('link')}" if meaning.get('link') else ""
+
+
+                 
+
+        
+
+
+
         ## remove new line chars
         description = ''.join(description.splitlines())
 
         text = f"""
 {self._module}:NXsensor
 \t@NX_class = NXsensor
-\tname:NX_CHAR = "{self._module}"
-\tmeasurement:NX_CHAR = "TODO"
+\tname:NX_CHAR = "{self._module}"{measurement_line}{importance_line}{key_line}{link_line}
 \t\t@secop_importance:NX_INT= 0
 \tmodel:NX_CHAR = "{implementation}"
 \tdescription:NX_CHAR = "{description}"
