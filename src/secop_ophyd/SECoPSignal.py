@@ -424,7 +424,7 @@ class PropertyBackend(SignalBackend):
         """The current value, timestamp and severity"""
         
         return {
-            "value": self.get_value(),
+            "value": await self.get_value(),
             "timestamp": self._secclient.conn_timestamp,
         }
 
