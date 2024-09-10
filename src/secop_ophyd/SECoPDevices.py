@@ -534,20 +534,16 @@ class SECoPReadableDevice(SECoPBaseDevice):
 
             if meaning.get('function'):
                 function:str = meaning.get('function')
-                measurement_line =  f"\n\tmeasurement:NX_CHAR = {function}"
+                measurement_line =  f"\n\tmeasurement:NX_CHAR = \"{function}\""
 
-                importance_line = f"\n\t\t@secop_importance:NX_INT32 = {meaning.get('importance')}" if meaning.get('importance') else ""
-                key_line = f"\n\t\t@secop_key:NX_CHAR = {meaning.get('key')}" if meaning.get('key') else ""
-                link_line = f"\n\t\t@secop_link:NX_CHAR = {meaning.get('link')}" if meaning.get('link') else ""
+                importance_line = f"\n\t\t@secop_importance:NX_INT32 = \"{meaning.get('importance')}\"" if meaning.get('importance') else ""
+                key_line = f"\n\t\t@secop_key:NX_CHAR = \"{meaning.get('key')}\"" if meaning.get('key') else ""
+                link_line = f"\n\t\t@secop_link:NX_CHAR = \"{meaning.get('link')}\"" if meaning.get('link') else ""
 
 
                  
 
-        
-
-
-
-        ## remove new line chars
+                ## remove new line chars
         description = ''.join(description.splitlines())
 
         text = f"""
