@@ -533,7 +533,7 @@ class SECoPReadableDevice(SECoPBaseDevice):
             meaning:dict  = meaning_arr.item() 
 
             if meaning.get('function'):
-                function:str = await self.meaning.get_value().get('function')
+                function:str = meaning.get('function')
                 measurement_line =  f"\n\tmeasurement:NX_CHAR = {function}"
 
                 importance_line = f"\n\t\t@secop_importance:NX_INT32 = {meaning.get('importance')}" if meaning.get('importance') else ""
