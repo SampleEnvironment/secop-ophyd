@@ -554,7 +554,6 @@ class SECoPReadableDevice(SECoPBaseDevice):
 {self._module}:NXsensor
 \t@NX_class = NXsensor
 \tname:NX_CHAR = "{self._module}"{measurement_line}{importance_line}{key_line}{link_line}
-\t\t@secop_importance:NX_INT= 0
 \tmodel:NX_CHAR = "{implementation}"
 \tdescription:NX_CHAR = "{description}"
 
