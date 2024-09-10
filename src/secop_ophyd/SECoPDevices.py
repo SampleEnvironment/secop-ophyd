@@ -527,10 +527,10 @@ class SECoPReadableDevice(SECoPBaseDevice):
         link_line = ""
 
         if self.meaning is not None:
-            meaning:dict = self.meaning.get_value() 
+            meaning:dict = await self.meaning.get_value() 
 
             if meaning.get('function'):
-                function:str = self.meaning.get_value().get('function')
+                function:str = await self.meaning.get_value().get('function')
                 measurement_line =  f"\n\tmeasurement:NX_CHAR = {function}"
 
                 importance_line = f"\n\t\t@secop_importance:NX_INT32 = {meaning.get('importance')}" if meaning.get('importance') else ""
