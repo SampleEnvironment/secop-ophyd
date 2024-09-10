@@ -526,8 +526,11 @@ class SECoPReadableDevice(SECoPBaseDevice):
         key_line = ""
         link_line = ""
 
+        #TODO handle legacy meaning correctly
         if self.meaning is not None:
-            meaning:dict = await self.meaning.get_value() 
+            meaning_arr = await self.meaning.get_value()
+
+            meaning:dict  = meaning_arr.item() 
 
             if meaning.get('function'):
                 function:str = await self.meaning.get_value().get('function')
