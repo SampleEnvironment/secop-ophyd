@@ -34,7 +34,6 @@ from ophyd_async.core import (
     AsyncStatus,
     ConfigSignal,
     HintedSignal,
-    Signal,
     SignalR,
     SignalRW,
     SignalX,
@@ -488,7 +487,6 @@ class SECoPReadableDevice(SECoPBaseDevice):
         else:
             self._config.append(getattr(self, sig_name))
 
- 
 
 class SECoPTriggerableDevice(SECoPReadableDevice, Triggerable):
     """
@@ -880,7 +878,7 @@ class SECoPNodeDevice(StandardReadable):
         if state == "connected" and online is True:
             self._secclient.conn_timestamp = ttime.time()
 
-  
+
 IF_CLASSES = {
     "Triggerable": SECoPTriggerableDevice,
     "Drivable": SECoPMoveableDevice,
