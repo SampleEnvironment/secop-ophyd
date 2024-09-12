@@ -7,7 +7,6 @@ from types import MethodType
 from typing import Any, Dict, Iterator, Optional, Type
 
 import bluesky.plan_stubs as bps
-
 from bluesky.protocols import (
     Descriptor,
     Flyable,
@@ -31,14 +30,18 @@ from frappy.datatypes import (
     StructOf,
     TupleOf,
 )
-from ophyd_async.core import AsyncStatus
-from ophyd_async.core import Signal, SignalR, SignalRW, SignalX, observe_value
 from ophyd_async.core import (
+    AsyncStatus,
     ConfigSignal,
     HintedSignal,
+    Signal,
+    SignalR,
+    SignalRW,
+    SignalX,
     StandardReadable,
+    T,
+    observe_value,
 )
-from ophyd_async.core import T
 from typing_extensions import Self
 
 from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient
@@ -526,30 +529,39 @@ class SECoPReadableDevice(SECoPBaseDevice):
         key_line = ""
         link_line = ""
 
-        #TODO handle legacy meaning correctly
+        # TODO handle legacy meaning correctly
         if self.meaning is not None:
             meaning_arr = await self.meaning.get_value()
 
-            meaning:dict  = meaning_arr.item() 
+            meaning: dict = meaning_arr.item()
 
-            if meaning.get('function'):
-                function:str = meaning.get('function')
-                measurement_line =  f"\n\tmeasurement:NX_CHAR = \"{function}\""
+            if meaning.get("function"):
+                function: str = meaning.get("function", "")
+                measurement_line = f'\n\tmeasurement:NX_CHAR = "{function}"'
 
-                importance_line = f"\n\t\t@secop_importance = {meaning.get('importance')}" if meaning.get('importance') else ""
-                key_line = f"\n\t\t@secop_key = \"{meaning.get('key')}\"" if meaning.get('key') else ""
-                link_line = f"\n\t\t@secop_link = \"{meaning.get('link')}\"" if meaning.get('link') else ""
+                importance_line = (
+                    f"\n\t\t@secop_importance = {meaning.get('importance')}"
+                    if meaning.get("importance")
+                    else ""
+                )
+                key_line = (
+                    f"\n\t\t@secop_key = \"{meaning.get('key')}\""
+                    if meaning.get("key")
+                    else ""
+                )
+                link_line = (
+                    f"\n\t\t@secop_link = \"{meaning.get('link')}\""
+                    if meaning.get("link")
+                    else ""
+                )
 
-
-                 
-
-                ## remove new line chars
-        description = ''.join(description.splitlines())
+                # remove new line chars
+        description = "".join(description.splitlines())
 
         text = f"""
 {self._module}:NXsensor
 \t@NX_class = NXsensor
-\tname:NX_CHAR = "{self._module}"{measurement_line}{importance_line}{key_line}{link_line}
+\tname:NX_CHAR = "{self._module}"{measurement_line}{importance_line}{key_line}{link_line} # noqa: E501
 \tmodel:NX_CHAR = "{implementation}"
 \tdescription:NX_CHAR = "{description}"
 
@@ -936,8 +948,8 @@ class SECoPNodeDevice(StandardReadable):
 
         version: str = str(await self.version.get_value())
         description: str = str(await self.description.get_value())
-        ## remove newline chars
-        description = ''.join(description.splitlines())
+        # remove newline chars
+        description = "".join(description.splitlines())
 
         text = f"""
 {equipment_id}:NXenvironment
