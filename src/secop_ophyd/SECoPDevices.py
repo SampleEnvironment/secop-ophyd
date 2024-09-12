@@ -488,99 +488,7 @@ class SECoPReadableDevice(SECoPBaseDevice):
         else:
             self._config.append(getattr(self, sig_name))
 
-    async def generate_nexus_parameter_log(self, param_name: str) -> str:
-
-        sig: Signal = getattr(self, param_name)
-
-        sig_backend: SECoPParamBackend = sig._backend
-
-        # check if vlaue is numeric (NXlog only supports mumerical values)
-        if not sig_backend.is_number():
-            return ""
-
-        param_unit = f'"{sig_backend.get_unit()}"'
-
-        unit_line = (
-            f"\n\t\t@units = {param_unit}" if sig_backend.get_unit() is not None else ""
-        )
-
-        log_name = "value_log" if param_name == "value" else param_name
-
-        text = f"""
-{log_name}:NXlog
-\t@NX_class = NXlog
-\tvalue:NX_FLOAT64 = {self.value.name}{unit_line}
-\t\t@type = "{sig_backend.describe_dict['SECoP_dtype']}"
-\ttime:NX_FLOAT64 = {self.value.name}-timestamp
-\t\t@start = 0
-\t\t@units = "s"
-
-"""
-
-        return text
-
-    async def generate_nexus_struct(self) -> str:
-
-        implementation: str = str(await self.implementation.get_value())
-        description: str = str(await self.description.get_value())
-
-        measurement_line = ""
-        importance_line = ""
-        key_line = ""
-        link_line = ""
-
-        # TODO handle legacy meaning correctly
-        if self.meaning is not None:
-            meaning_arr = await self.meaning.get_value()
-
-            meaning: dict = meaning_arr.item()
-
-            if meaning.get("function"):
-                function: str = meaning.get("function", "")
-                measurement_line = f'\n\tmeasurement:NX_CHAR = "{function}"'
-
-                importance_line = (
-                    f"\n\t\t@secop_importance = {meaning.get('importance')}"
-                    if meaning.get("importance")
-                    else ""
-                )
-                key_line = (
-                    f"\n\t\t@secop_key = \"{meaning.get('key')}\""
-                    if meaning.get("key")
-                    else ""
-                )
-                link_line = (
-                    f"\n\t\t@secop_link = \"{meaning.get('link')}\""
-                    if meaning.get("link")
-                    else ""
-                )
-
-                # remove new line chars
-        description = "".join(description.splitlines())
-
-        text = f"""
-{self._module}:NXsensor
-\t@NX_class = NXsensor
-\tname:NX_CHAR = "{self._module}"{measurement_line}{importance_line}{key_line}{link_line} # noqa: E501
-\tmodel:NX_CHAR = "{implementation}"
-\tdescription:NX_CHAR = "{description}"
-
-"""
-        value_log: str = await self.generate_nexus_parameter_log("value")
-
-        text += "\t".join(value_log.splitlines(True))
-
-        text += "\tparameters:NXcollection"
-        for parameter in self.param_devices.keys():
-            if parameter == "value":
-                continue
-
-            param_log: str = await self.generate_nexus_parameter_log(parameter)
-
-            text += "\t\t".join(param_log.splitlines(True))
-
-        return text
-
+ 
 
 class SECoPTriggerableDevice(SECoPReadableDevice, Triggerable):
     """
@@ -844,7 +752,7 @@ class SECoPNodeDevice(StandardReadable):
     def class_from_instance(self, path_to_module: str | None = None):
         """Dynamically generate python class file for the SECoP_Node_Device, this
         allows autocompletion in IDEs and eases working with the generated Ophyd
-        devices24246316.542
+        devices
         """
 
         # parse genClass file if already present
@@ -972,37 +880,7 @@ class SECoPNodeDevice(StandardReadable):
         if state == "connected" and online is True:
             self._secclient.conn_timestamp = ttime.time()
 
-    async def generate_nexus_struct(self) -> str:
-
-        equipment_id: str = str(await self.equipment_id.get_value())
-
-        if hasattr(self, "firmware"):
-            firmware: str = str(await self.firmware.get_value())
-        else:
-            firmware = ""
-
-        version: str = str(await self.version.get_value())
-        description: str = str(await self.description.get_value())
-        # remove newline chars
-        description = "".join(description.splitlines())
-
-        text = f"""
-{equipment_id}:NXenvironment
-\t@NX_class = NXenvironment
-\tname:NX_CHAR = "{equipment_id}"
-\tshort_name:NX_CHAR = "{equipment_id.split('.')[0]}"
-\ttype:NX_CHAR = "{firmware} ({version})"
-\tdescription:NX_CHAR = "{description}"
-
-"""
-        for module in self.mod_devices.values():
-            mod_str: str = await module.generate_nexus_struct()
-
-            text += "\t".join(mod_str.splitlines(True))
-
-        return text
-
-
+  
 IF_CLASSES = {
     "Triggerable": SECoPTriggerableDevice,
     "Drivable": SECoPMoveableDevice,
