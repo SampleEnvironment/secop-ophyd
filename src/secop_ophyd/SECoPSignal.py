@@ -16,8 +16,7 @@ from frappy.datatypes import (
     ScaledInteger,
     StringType,
 )
-from ophyd_async.core.signal_backend import SignalBackend
-from ophyd_async.core.utils import T
+from ophyd_async.core import SignalBackend, T
 
 from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient
 from secop_ophyd.util import Path, SECoPdtype, SECoPReading, deep_get
@@ -272,6 +271,8 @@ class SECoPParamBackend(SignalBackend):
         for property_name, prop_val in self.datainfo.items():
             if property_name == "type":
                 property_name = "SECoP_dtype"
+            if property_name == "unit":
+                property_name = "units"
             self.describe_dict[property_name] = prop_val
 
     def source(self, name: str) -> str:
@@ -340,6 +341,18 @@ class SECoPParamBackend(SignalBackend):
     def get_path_tuple(self):
         return self.path.get_path_tuple()
 
+    def get_unit(self):
+        return self.describe_dict.get("units", None)
+
+    def is_number(self) -> bool:
+        if (
+            self.describe_dict["dtype"] == "number"
+            or self.describe_dict["dtype"] == "integer"
+        ):
+            return True
+
+        return False
+
 
 class PropertyBackend(SignalBackend):
     """Readonly backend for static SECoP Properties of Nodes/Modules"""
@@ -398,6 +411,9 @@ class PropertyBackend(SignalBackend):
                 return "number"
             if isinstance(prop_val[0], bool):
                 return "bool"
+
+        if isinstance(prop_val, dict):
+            return "array"
 
         raise Exception(
             "unsupported datatype in Node Property: " + str(prop_val.__class__.__name__)

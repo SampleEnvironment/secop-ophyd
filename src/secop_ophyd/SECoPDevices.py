@@ -30,14 +30,17 @@ from frappy.datatypes import (
     StructOf,
     TupleOf,
 )
-from ophyd_async.core.async_status import AsyncStatus
-from ophyd_async.core.signal import SignalR, SignalRW, SignalX, observe_value
-from ophyd_async.core.standard_readable import (
+from ophyd_async.core import (
+    AsyncStatus,
     ConfigSignal,
     HintedSignal,
+    SignalR,
+    SignalRW,
+    SignalX,
     StandardReadable,
+    T,
+    observe_value,
 )
-from ophyd_async.core.utils import T
 from typing_extensions import Self
 
 from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient
@@ -315,12 +318,15 @@ class SECoPReadableDevice(SECoPBaseDevice):
         """
 
         self.value: SignalR
+        self.descriptiom: SignalR
 
         super().__init__(secclient=secclient)
 
         self._module = module_name
         module_desc = secclient.modules[module_name]
         self.plans: list[Method] = []
+        self.mod_prop_devices: Dict[str, SignalR] = {}
+        self.param_devices: Dict[str, T] = {}
 
         # generate Signals from Module Properties
         for property in module_desc["properties"]:
@@ -330,6 +336,7 @@ class SECoPReadableDevice(SECoPBaseDevice):
 
             setattr(self, property, SignalR(backend=propb))
             self._config.append(getattr(self, property))
+            self.mod_prop_devices[property] = getattr(self, property)
 
         # generate Signals from Module parameters eiter r or rw
         for parameter, properties in module_desc["parameters"].items():
@@ -345,6 +352,7 @@ class SECoPReadableDevice(SECoPBaseDevice):
                 sig_name=parameter,
                 readonly=readonly,
             )
+            self.param_devices[parameter] = getattr(self, parameter)
 
         # Initialize Command Devices
         for command, properties in module_desc["commands"].items():
@@ -480,6 +488,36 @@ class SECoPReadableDevice(SECoPBaseDevice):
             self._config.append(getattr(self, sig_name))
 
 
+class SECoPTriggerableDevice(SECoPReadableDevice, Triggerable):
+    """
+    Standard triggerable SECoP device, corresponding to a SECoP module with the0s
+    interface class "Triggerable"
+    """
+
+    def __init__(self, secclient: AsyncFrappyClient, module_name: str):
+        """Initialize SECoPTriggerableDevice
+
+        :param secclient: SECoP client providing communication to the SEC Node
+        :type secclient: AsyncFrappyClient
+        :param module_name: ame of the SEC Node module that is represented by
+            this device
+        :type module_name: str
+        """
+
+        self.go_CMD: SECoPCMDDevice
+
+        super().__init__(secclient, module_name)
+
+    async def __go_coro(self):
+        await self._secclient.exec_command(module=self._module, command="go")
+
+        await asyncio.sleep(0.2)
+        await self.wait_for_idle()
+
+    def trigger(self) -> AsyncStatus:
+        return AsyncStatus(awaitable=self.__go_coro())
+
+
 class SECoPWritableDevice(SECoPReadableDevice):
     """Fast settable device target"""
 
@@ -587,11 +625,17 @@ class SECoPNodeDevice(StandardReadable):
         :param secclient: SECoP client providing communication to the SEC Node
         :type secclient: AsyncFrappyClient
         """
+
+        self.equipment_id: SignalR
+        self.description: SignalR
+        self.version: SignalR
+
         self._secclient: AsyncFrappyClient = secclient
 
         self._module_name: str = ""
         self._node_cls_name: str = ""
-        self.mod_devices: Dict[str, T] = {}
+        self.mod_devices: Dict[str, SECoPReadableDevice] = {}
+        self.node_prop_devices: Dict[str, SignalR] = {}
 
         self.genCode: GenNodeCode
 
@@ -604,6 +648,7 @@ class SECoPNodeDevice(StandardReadable):
             propb = PropertyBackend(property, self._secclient.properties, secclient)
             setattr(self, property, SignalR(backend=propb))
             config.append(getattr(self, property))
+            self.node_prop_devices[property] = getattr(self, property)
 
         for module, module_desc in self._secclient.modules.items():
             secop_dev_class = class_from_interface(module_desc["properties"])
@@ -726,7 +771,12 @@ class SECoPNodeDevice(StandardReadable):
             # Modules
             if isinstance(
                 attr_value,
-                (SECoPReadableDevice, SECoPWritableDevice, SECoPMoveableDevice),
+                (
+                    SECoPReadableDevice,
+                    SECoPWritableDevice,
+                    SECoPMoveableDevice,
+                    SECoPTriggerableDevice,
+                ),
             ):
                 attr_type = type(attr_value)
                 module = str(getattr(attr_type, "__module__", None))
@@ -830,11 +880,18 @@ class SECoPNodeDevice(StandardReadable):
 
 
 IF_CLASSES = {
+    "Triggerable": SECoPTriggerableDevice,
     "Drivable": SECoPMoveableDevice,
     "Writable": SECoPWritableDevice,
     "Readable": SECoPReadableDevice,
     "Module": SECoPReadableDevice,
     "Communicator": SECoPReadableDevice,
+}
+
+SECOP_TO_NEXUS_TYPE = {
+    "double": "NX_FLOAT64",
+    "int": "NX_INT64",
+    "scaled": "NX_FLOAT64",
 }
 
 
