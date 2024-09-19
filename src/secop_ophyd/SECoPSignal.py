@@ -1,8 +1,9 @@
 import asyncio
-import collections.abc
 from functools import wraps
+from itertools import groupby
 from typing import Any, Callable, Dict, Optional
 
+import numpy as np
 from bluesky.protocols import DataKey, Reading
 from frappy.client import CacheItem
 from frappy.datatypes import (
@@ -363,6 +364,7 @@ class PropertyBackend(SignalBackend):
         self._secclient: AsyncFrappyClient = secclient
         # TODO full property path
         self.source_name = prop_key
+        self.shape: list = []
 
     def source(self, name: str) -> str:
         return str(self.source_name)
@@ -374,10 +376,28 @@ class PropertyBackend(SignalBackend):
             return "string"
         if isinstance(prop_val, (int, float)):
             return "number"
-        if isinstance(prop_val, collections.abc.Sequence):
-            return "array"
         if isinstance(prop_val, bool):
             return "bool"
+        if isinstance(
+            prop_val, (dict, tuple)
+        ):  # SECoP Structs/tuples --> numpy ndarray
+            return "array"
+        if isinstance(prop_val, list):
+            self.shape = [len(prop_val)]
+            if prop_val.__len__ == 0:
+                # empty list
+                return "number"
+
+            # checkk if list contains multiple types --> SECoP tuple
+            if len(list(groupby(prop_val, lambda i: type(i)))) != 1:
+                return "array"
+
+            if isinstance(prop_val[0], str):
+                return "string"
+            if isinstance(prop_val[0], (int, float)):
+                return "number"
+            if isinstance(prop_val[0], bool):
+                return "bool"
 
         raise Exception(
             "unsupported datatype in Node Property: " + str(prop_val.__class__.__name__)
@@ -398,19 +418,24 @@ class PropertyBackend(SignalBackend):
 
         description["source"] = self.source("")
         description["dtype"] = self._get_datatype()
-        description["shape"] = []  # type: ignore
+        description["shape"] = self.shape  # type: ignore
 
         return description
 
     async def get_reading(self) -> Reading:
         """The current value, timestamp and severity"""
+
         return {
-            "value": self._property_dict[self._prop_key],
+            "value": await self.get_value(),
             "timestamp": self._secclient.conn_timestamp,
         }
 
     async def get_value(self) -> T:
         """The current value"""
+
+        if self._get_datatype() == "array":
+            return np.array(self._property_dict[self._prop_key])
+
         return self._property_dict[self._prop_key]
 
     def set_callback(self, callback: Callable[[Reading, Any], None] | None) -> None:
