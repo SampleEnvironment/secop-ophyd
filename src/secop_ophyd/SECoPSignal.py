@@ -3,7 +3,6 @@ import collections.abc
 from functools import wraps
 from typing import Any, Callable, Dict, Optional
 
-import numpy as np
 from bluesky.protocols import DataKey, Reading
 from frappy.client import CacheItem
 from frappy.datatypes import (
@@ -16,7 +15,8 @@ from frappy.datatypes import (
     ScaledInteger,
     StringType,
 )
-from ophyd_async.core import SignalBackend, T
+from ophyd_async.core.signal_backend import SignalBackend
+from ophyd_async.core.utils import T
 
 from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient
 from secop_ophyd.util import Path, SECoPdtype, SECoPReading, deep_get
@@ -271,8 +271,6 @@ class SECoPParamBackend(SignalBackend):
         for property_name, prop_val in self.datainfo.items():
             if property_name == "type":
                 property_name = "SECoP_dtype"
-            if property_name == "unit":
-                property_name = "units"
             self.describe_dict[property_name] = prop_val
 
     def source(self, name: str) -> str:
@@ -341,18 +339,6 @@ class SECoPParamBackend(SignalBackend):
     def get_path_tuple(self):
         return self.path.get_path_tuple()
 
-    def get_unit(self):
-        return self.describe_dict.get("units", None)
-
-    def is_number(self) -> bool:
-        if (
-            self.describe_dict["dtype"] == "number"
-            or self.describe_dict["dtype"] == "integer"
-        ):
-            return True
-
-        return False
-
 
 class PropertyBackend(SignalBackend):
     """Readonly backend for static SECoP Properties of Nodes/Modules"""
@@ -393,9 +379,6 @@ class PropertyBackend(SignalBackend):
         if isinstance(prop_val, bool):
             return "bool"
 
-        if isinstance(prop_val, dict):
-            return "array"
-
         raise Exception(
             "unsupported datatype in Node Property: " + str(prop_val.__class__.__name__)
         )
@@ -421,18 +404,13 @@ class PropertyBackend(SignalBackend):
 
     async def get_reading(self) -> Reading:
         """The current value, timestamp and severity"""
-
         return {
-            "value": await self.get_value(),
+            "value": self._property_dict[self._prop_key],
             "timestamp": self._secclient.conn_timestamp,
         }
 
     async def get_value(self) -> T:
         """The current value"""
-
-        if self._get_datatype() == "array":
-            return np.array(self._property_dict[self._prop_key])
-
         return self._property_dict[self._prop_key]
 
     def set_callback(self, callback: Callable[[Reading, Any], None] | None) -> None:

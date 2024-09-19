@@ -48,7 +48,6 @@ class GenNodeCode:
             SECoPMoveableDevice,
             SECoPNodeDevice,
             SECoPReadableDevice,
-            SECoPTriggerableDevice,
             SECoPWritableDevice,
         )
 
@@ -122,12 +121,7 @@ class GenNodeCode:
 
                 if issubclass(
                     class_obj,
-                    (
-                        SECoPMoveableDevice,
-                        SECoPReadableDevice,
-                        SECoPWritableDevice,
-                        SECoPTriggerableDevice,
-                    ),
+                    (SECoPMoveableDevice, SECoPReadableDevice, SECoPWritableDevice),
                 ):
 
                     attributes = []
