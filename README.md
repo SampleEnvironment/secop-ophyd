@@ -1,4 +1,4 @@
-secop-ophyd
+#secop-ophyd
 
 This package allows seamless itegration of hardware that provides a SECoP interface into bluesky.
 
