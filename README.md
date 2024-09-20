@@ -1,8 +1,9 @@
-# secop-ophyd
+secop-ophyd
 
 This package allows seamless itegration of hardware that provides a SECoP interface into bluesky.
 
-![arch_standalone](https://github.com/SampleEnvironment/secop-ophyd/assets/85115389/f916898f-f402-4134-b650-4614ea9c92fe)
+
+![secop-ophyd-arch](https://github.com/user-attachments/assets/cd82cfbe-68dc-4b3c-b872-5b1b7c7db82a)
 
 
 
