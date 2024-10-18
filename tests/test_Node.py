@@ -14,16 +14,17 @@ async def test_node_structure(cryo_sim, cryo_node_internal_loop: SECoPNodeDevice
 
 
 async def test_node_read(cryo_sim, cryo_node_internal_loop: SECoPNodeDevice):
-    # Node device has no read value, it has to return an empty dict
+    # Node device should return the readbacks of the read signals of the child devices
     val_read = await cryo_node_internal_loop.read()
-    assert val_read == {}
+    assert val_read != {}
     await cryo_node_internal_loop.disconnect_async()
 
 
 async def test_node_describe(cryo_sim, cryo_node_internal_loop: SECoPNodeDevice):
-    # Node device has no read value, it has to return an empty dict
+    # Node device should return the descriptions of the read signals of the child
+    # devices
     val_desc = await cryo_node_internal_loop.describe()
-    assert val_desc == {}
+    assert val_desc != {}
     await cryo_node_internal_loop.disconnect_async()
 
 

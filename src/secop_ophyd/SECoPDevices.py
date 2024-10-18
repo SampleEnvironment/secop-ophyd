@@ -331,7 +331,6 @@ class SECoPReadableDevice(SECoPBaseDevice):
                     self.impl = module_desc["properties"]["implementation"]
 
                 setattr(self, property, SignalR(backend=propb))
-                self._config.append(getattr(self, property))
                 self.mod_prop_devices[property] = getattr(self, property)
 
             # generate Signals from Module parameters eiter r or rw
@@ -407,9 +406,6 @@ class SECoPReadableDevice(SECoPBaseDevice):
             )
 
             self.plans.append(plan)
-
-        self.add_readables(self._read, wrapper=HintedSignal)
-        self.add_readables(self._config, wrapper=ConfigSignal)
 
         self.set_name(module_name)
 
