@@ -666,6 +666,8 @@ class SECoPNodeDevice(StandardReadable):
 
         super().__init__(name=name)
 
+        self.add_children_as_readables()
+
     @classmethod
     def create(cls, host: str, port: str, loop, log=Logger) -> Self:
 
