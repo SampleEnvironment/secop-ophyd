@@ -644,19 +644,19 @@ class SECoPNodeDevice(StandardReadable):
 
         config = []
 
-        for property in self._secclient.properties:
-            propb = PropertyBackend(property, self._secclient.properties, secclient)
-            setattr(self, property, SignalR(backend=propb))
-            config.append(getattr(self, property))
-            self.node_prop_devices[property] = getattr(self, property)
+        with self.add_children_as_readables(ConfigSignal):
+            for property in self._secclient.properties:
+                propb = PropertyBackend(property, self._secclient.properties, secclient)
+                setattr(self, property, SignalR(backend=propb))
+                config.append(getattr(self, property))
+                self.node_prop_devices[property] = getattr(self, property)
 
-        for module, module_desc in self._secclient.modules.items():
-            secop_dev_class = class_from_interface(module_desc["properties"])
+        with self.add_children_as_readables(HintedSignal):
+            for module, module_desc in self._secclient.modules.items():
+                secop_dev_class = class_from_interface(module_desc["properties"])
 
-            setattr(self, module, secop_dev_class(self._secclient, module))
-            self.mod_devices[module] = getattr(self, module)
-
-        self.add_readables(config, wrapper=ConfigSignal)
+                setattr(self, module, secop_dev_class(self._secclient, module))
+                self.mod_devices[module] = getattr(self, module)
 
         # register secclient callbacks (these are useful if sec node description
         # changes after a reconnect)
@@ -665,8 +665,6 @@ class SECoPNodeDevice(StandardReadable):
         )
 
         super().__init__(name=name)
-
-        self.add_children_as_readables(HintedSignal)
 
     @classmethod
     def create(cls, host: str, port: str, loop, log=Logger) -> Self:
