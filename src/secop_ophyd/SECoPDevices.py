@@ -651,12 +651,11 @@ class SECoPNodeDevice(StandardReadable):
                 config.append(getattr(self, property))
                 self.node_prop_devices[property] = getattr(self, property)
 
-        with self.add_children_as_readables(HintedSignal):
-            for module, module_desc in self._secclient.modules.items():
-                secop_dev_class = class_from_interface(module_desc["properties"])
+        for module, module_desc in self._secclient.modules.items():
+            secop_dev_class = class_from_interface(module_desc["properties"])
 
-                setattr(self, module, secop_dev_class(self._secclient, module))
-                self.mod_devices[module] = getattr(self, module)
+            setattr(self, module, secop_dev_class(self._secclient, module))
+            self.mod_devices[module] = getattr(self, module)
 
         # register secclient callbacks (these are useful if sec node description
         # changes after a reconnect)
