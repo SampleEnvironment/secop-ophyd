@@ -295,7 +295,7 @@ class SECoPCMDDevice(StandardReadable, Flyable, Triggerable):
         return await self.describe()
 
 
-class SECoPReadableDevice(SECoPBaseDevice):
+class SECoPReadableDevice(SECoPBaseDevice, Triggerable):
     """
     Standard readable SECoP device, corresponding to a SECoP module with the
     interface class "Readable"
@@ -473,6 +473,9 @@ class SECoPReadableDevice(SECoPBaseDevice):
             anno_dict["arg"] = dtype_mapping[argument_type.__class__]
 
         return cmd_meth
+
+    def trigger(self) -> bps.Status:
+        return AsyncStatus(awaitable=self.value.read(cached=False))
 
 
 class SECoPTriggerableDevice(SECoPReadableDevice, Triggerable):
