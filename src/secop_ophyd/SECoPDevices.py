@@ -120,12 +120,6 @@ class SECoPBaseDevice(StandardReadable):
 
         self._secclient: AsyncFrappyClient = secclient
 
-        # list for config signals
-        self._config: list = []
-
-        # list for read signals
-        self._read: list = []
-
         self.status: SignalR = None
 
         self.impl: str | None = None
@@ -328,23 +322,45 @@ class SECoPReadableDevice(SECoPBaseDevice):
         self.mod_prop_devices: Dict[str, SignalR] = {}
         self.param_devices: Dict[str, T] = {}
 
-        # generate Signals from Module Properties
-        for property in module_desc["properties"]:
-            propb = PropertyBackend(property, module_desc["properties"], secclient)
-            if property == "implementation":
-                self.impl = module_desc["properties"]["implementation"]
+        # Add configuration Signal
+        with self.add_children_as_readables(ConfigSignal):
+            # generate Signals from Module Properties
+            for property in module_desc["properties"]:
+                propb = PropertyBackend(property, module_desc["properties"], secclient)
+                if property == "implementation":
+                    self.impl = module_desc["properties"]["implementation"]
 
-            setattr(self, property, SignalR(backend=propb))
-            self._config.append(getattr(self, property))
-            self.mod_prop_devices[property] = getattr(self, property)
+                setattr(self, property, SignalR(backend=propb))
+                self.mod_prop_devices[property] = getattr(self, property)
 
-        # generate Signals from Module parameters eiter r or rw
-        for parameter, properties in module_desc["parameters"].items():
+            # generate Signals from Module parameters eiter r or rw
+            for parameter, properties in module_desc["parameters"].items():
+                if parameter == "value":
+                    continue
+                # generate new root path
+                param_path = Path(parameter_name=parameter, module_name=module_name)
+
+                # readonly propertyns to plans and plan stubs.
+                readonly: bool = properties.get("readonly", None)
+
+                # Normal types + (struct and tuple as JSON object Strings)
+                self._signal_from_parameter(
+                    path=param_path,
+                    sig_name=parameter,
+                    readonly=readonly,
+                )
+                self.param_devices[parameter] = getattr(self, parameter)
+
+        # Add readables Signals
+        with self.add_children_as_readables(HintedSignal):
+            parameter = "value"
+            properties = module_desc["parameters"][parameter]
+
             # generate new root path
             param_path = Path(parameter_name=parameter, module_name=module_name)
 
             # readonly propertyns to plans and plan stubs.
-            readonly: bool = properties.get("readonly", None)
+            readonly = properties.get("readonly", None)
 
             # Normal types + (struct and tuple as JSON object Strings)
             self._signal_from_parameter(
@@ -390,9 +406,6 @@ class SECoPReadableDevice(SECoPBaseDevice):
             )
 
             self.plans.append(plan)
-
-        self.add_readables(self._read, wrapper=HintedSignal)
-        self.add_readables(self._config, wrapper=ConfigSignal)
 
         self.set_name(module_name)
 
@@ -460,32 +473,6 @@ class SECoPReadableDevice(SECoPBaseDevice):
             anno_dict["arg"] = dtype_mapping[argument_type.__class__]
 
         return cmd_meth
-
-    def _signal_from_parameter(self, path: Path, sig_name: str, readonly: bool):
-        """Generates an Ophyd Signal from a Module Parameter
-
-        :param path: Path to the Parameter in the secclient module dict
-        :type path: Path
-        :param sig_name: Name of the new Signal
-        :type sig_name: str
-        :param readonly: Signal is R or RW
-        :type readonly: bool
-        """
-
-        super(SECoPReadableDevice, self)._signal_from_parameter(
-            path=path, sig_name=sig_name, readonly=readonly
-        )
-
-        # In SECoP only the 'value' parameter is the primary read prameter, but
-        # if the value is a SECoP-tuple all elements belonging to the tuple are
-        # appended to the read list
-        if path._accessible_name == "value":
-            self._read.append(getattr(self, sig_name))
-
-        # target should only be set through the set method. And is not part of
-        # config
-        else:
-            self._config.append(getattr(self, sig_name))
 
 
 class SECoPTriggerableDevice(SECoPReadableDevice, Triggerable):
@@ -644,19 +631,19 @@ class SECoPNodeDevice(StandardReadable):
 
         config = []
 
-        for property in self._secclient.properties:
-            propb = PropertyBackend(property, self._secclient.properties, secclient)
-            setattr(self, property, SignalR(backend=propb))
-            config.append(getattr(self, property))
-            self.node_prop_devices[property] = getattr(self, property)
+        with self.add_children_as_readables(ConfigSignal):
+            for property in self._secclient.properties:
+                propb = PropertyBackend(property, self._secclient.properties, secclient)
+                setattr(self, property, SignalR(backend=propb))
+                config.append(getattr(self, property))
+                self.node_prop_devices[property] = getattr(self, property)
 
-        for module, module_desc in self._secclient.modules.items():
-            secop_dev_class = class_from_interface(module_desc["properties"])
+        with self.add_children_as_readables():
+            for module, module_desc in self._secclient.modules.items():
+                secop_dev_class = class_from_interface(module_desc["properties"])
 
-            setattr(self, module, secop_dev_class(self._secclient, module))
-            self.mod_devices[module] = getattr(self, module)
-
-        self.add_readables(config, wrapper=ConfigSignal)
+                setattr(self, module, secop_dev_class(self._secclient, module))
+                self.mod_devices[module] = getattr(self, module)
 
         # register secclient callbacks (these are useful if sec node description
         # changes after a reconnect)
