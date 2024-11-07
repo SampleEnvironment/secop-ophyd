@@ -2,7 +2,7 @@ import asyncio
 
 import numpy as np
 import xprocess
-from ophyd_async.core import SignalR, observe_value
+from ophyd_async.core import AsyncStatus, SignalR, observe_value
 from xprocess import ProcessStarter, XProcessInfo
 
 from secop_ophyd.SECoPDevices import SECoPMoveableDevice, SECoPNodeDevice
@@ -103,6 +103,32 @@ async def test_status(cryo_sim, cryo_node_internal_loop: SECoPNodeDevice):
             break
 
     print(stat_val["f0"])
+    await cryo_node_internal_loop.disconnect_async()
+
+
+async def test_trigger(cryo_sim, cryo_node_internal_loop: SECoPNodeDevice):
+    # Node device has no read value, it has to return an empty dict
+    cryo_dev: SECoPMoveableDevice = cryo_node_internal_loop.cryo
+
+    val_old = await cryo_dev.read()
+
+    val_cached = await cryo_dev.read()
+
+    assert (
+        val_old[cryo_dev.value.name]["value"]
+        == val_cached[cryo_dev.value.name]["value"]
+    )
+
+    stat: AsyncStatus = cryo_dev.trigger()
+
+    await stat
+
+    val_new = await cryo_dev.read()
+
+    assert (
+        val_old[cryo_dev.value.name]["value"] != val_new[cryo_dev.value.name]["value"]
+    )
+
     await cryo_node_internal_loop.disconnect_async()
 
 
