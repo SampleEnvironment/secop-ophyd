@@ -10,14 +10,14 @@ repos:
     hooks:
       - id: black
         name: Run black
-        stages: [commit]
+        stages: [pre-commit]
         language: system
         entry: black --check --diff src tests
         types: [python]
 
       - id: flake8
         name: Run flake8
-        stages: [commit]
+        stages: [pre-commit]
         language: system
         entry: flake8 src tests
         types: [python]
