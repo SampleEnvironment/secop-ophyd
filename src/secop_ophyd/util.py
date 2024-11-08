@@ -522,7 +522,7 @@ class SECoPdtype:
         self.dtype_str: str
 
         # String representation of the numpy structured array dtype
-        self.dtype_descr: str
+        self.dtype_descr: list
 
         # string representation of the original secop datatype
         self.secop_dtype_str = datatype.export_datatype()
@@ -569,7 +569,7 @@ class SECoPdtype:
             self.dtype_str = self.numpy_dtype.str
             self.describe_dict["dtype_str"] = self.dtype_str
 
-            self.dtype_descr = str(self.numpy_dtype.descr)
+            self.dtype_descr = self.numpy_dtype.descr
             self.describe_dict["dtype_descr"] = self.dtype_descr
 
         # Scalar atomic Datatypes and arrays of atomic dataypes
