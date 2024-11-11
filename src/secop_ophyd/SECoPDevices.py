@@ -330,6 +330,9 @@ class SECoPReadableDevice(SECoPBaseDevice, Triggerable):
                 if property == "implementation":
                     self.impl = module_desc["properties"]["implementation"]
 
+                if property == "meaning":
+                    continue
+
                 setattr(self, property, SignalR(backend=propb))
                 self.mod_prop_devices[property] = getattr(self, property)
 
