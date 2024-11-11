@@ -436,6 +436,11 @@ class PropertyBackend(SignalBackend):
         description["dtype"] = self._get_datatype()
         description["shape"] = self.shape  # type: ignore
 
+        if self._prop_key == "meaning":
+            description["dtype_descr"] = get_meaning_np_dtype(
+                self._property_dict[self._prop_key]
+            )  # type: ignore
+
         return description
 
     async def get_reading(self) -> Reading:
@@ -456,3 +461,21 @@ class PropertyBackend(SignalBackend):
 
     def set_callback(self, callback: Callable[[Reading, Any], None] | None) -> None:
         pass
+
+
+def get_meaning_np_dtype(meaning: dict[str, Any]) -> list:
+    dtype_descr = []
+    for key in meaning.keys():
+        match key:
+            case "function":
+                dtype_descr.append(("function", "U50"))
+            case "belongs_to":
+                dtype_descr.append(("belongs_to", "U50"))
+            case "importance":
+                dtype_descr.append(("importance", "i4"))
+            case "key":
+                dtype_descr.append(("key", "U100"))
+            case "link":
+                dtype_descr.append(("link", "U200"))
+
+    return dtype_descr
