@@ -505,7 +505,18 @@ class SECoPTriggerableDevice(SECoPReadableDevice, Triggerable):
         await self.wait_for_idle()
 
     def trigger(self) -> AsyncStatus:
-        return AsyncStatus(awaitable=self.__go_coro())
+
+        async def go_or_read_on_busy():
+            module_status = self.status.get_value(False)
+            stat_code = module_status["f0"]
+
+            if BUSY <= stat_code <= ERROR:
+                self.status.get_value(False)
+                return
+
+            await self.__go_coro()
+
+        return AsyncStatus(awaitable=go_or_read_on_busy())
 
 
 class SECoPWritableDevice(SECoPReadableDevice):
