@@ -437,9 +437,10 @@ class PropertyBackend(SignalBackend):
         description["shape"] = self.shape  # type: ignore
 
         if self._prop_key == "meaning":
-            description["dtype_descr"] = get_meaning_np_dtype(
+            self.dtype_descr = get_meaning_np_dtype(
                 self._property_dict[self._prop_key]
             )  # type: ignore
+            description["dtype_descr"] = self.dtype_descr  # type:ignore
 
         return description
 
@@ -455,7 +456,7 @@ class PropertyBackend(SignalBackend):
         """The current value"""
 
         if self._get_datatype() == "array":
-            return np.array(self._property_dict[self._prop_key])
+            return np.array(self._property_dict[self._prop_key], self.dtype_descr)
 
         return self._property_dict[self._prop_key]
 
