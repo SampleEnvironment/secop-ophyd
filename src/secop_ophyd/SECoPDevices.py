@@ -77,6 +77,9 @@ ERROR_PREPARED = 450
 UNKNOWN = 401  # not in SECoP standard (yet)
 
 
+READABLE_PARAMS = ["value", "target"]
+
+
 def clean_identifier(anystring):
     return str(re.sub(r"\W+|^(?=\d)", "_", anystring))
 
@@ -338,7 +341,7 @@ class SECoPReadableDevice(SECoPBaseDevice, Triggerable):
 
             # generate Signals from Module parameters eiter r or rw
             for parameter, properties in module_desc["parameters"].items():
-                if parameter == "value":
+                if parameter in READABLE_PARAMS:
                     continue
                 # generate new root path
                 param_path = Path(parameter_name=parameter, module_name=module_name)
@@ -356,22 +359,25 @@ class SECoPReadableDevice(SECoPBaseDevice, Triggerable):
 
         # Add readables Signals
         with self.add_children_as_readables(HintedSignal):
-            parameter = "value"
-            properties = module_desc["parameters"][parameter]
+            for parameter in READABLE_PARAMS:
+                if parameter not in module_desc["parameters"].keys():
+                    continue
+                parameter = "value"
+                properties = module_desc["parameters"][parameter]
 
-            # generate new root path
-            param_path = Path(parameter_name=parameter, module_name=module_name)
+                # generate new root path
+                param_path = Path(parameter_name=parameter, module_name=module_name)
 
-            # readonly propertyns to plans and plan stubs.
-            readonly = properties.get("readonly", None)
+                # readonly propertyns to plans and plan stubs.
+                readonly = properties.get("readonly", None)
 
-            # Normal types + (struct and tuple as JSON object Strings)
-            self._signal_from_parameter(
-                path=param_path,
-                sig_name=parameter,
-                readonly=readonly,
-            )
-            self.param_devices[parameter] = getattr(self, parameter)
+                # Normal types + (struct and tuple as JSON object Strings)
+                self._signal_from_parameter(
+                    path=param_path,
+                    sig_name=parameter,
+                    readonly=readonly,
+                )
+                self.param_devices[parameter] = getattr(self, parameter)
 
         # Initialize Command Devices
         for command, properties in module_desc["commands"].items():
@@ -547,6 +553,7 @@ class SECoPMoveableDevice(SECoPWritableDevice, Locatable, Stoppable):
         self.target: SignalRW
 
         super().__init__(secclient, module_name)
+
         self._success = True
         self._stopped = False
 
