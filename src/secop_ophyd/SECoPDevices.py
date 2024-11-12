@@ -362,7 +362,6 @@ class SECoPReadableDevice(SECoPBaseDevice, Triggerable):
             for parameter in READABLE_PARAMS:
                 if parameter not in module_desc["parameters"].keys():
                     continue
-                parameter = "value"
                 properties = module_desc["parameters"][parameter]
 
                 # generate new root path
