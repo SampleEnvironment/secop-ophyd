@@ -373,6 +373,7 @@ class PropertyBackend(SignalBackend):
 
         self._property_dict = property_dict
         self._prop_key = prop_key
+        self._prop_value = self._property_dict[self._prop_key]
         self._datatype = self._get_datatype()
         self._secclient: AsyncFrappyClient = secclient
         # TODO full property path
