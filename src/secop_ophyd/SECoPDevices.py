@@ -85,12 +85,11 @@ def clean_identifier(anystring):
 
 
 def class_from_interface(mod_properties: Dict[str, Dict[str, str]]):
-    interface_classes: dict = mod_properties[INTERFACE_CLASSES]
-    for interface_class in interface_classes:
-        try:
+    module_interface_classes: dict = mod_properties[INTERFACE_CLASSES]
+    for interface_class in IF_CLASSES.keys():
+        if interface_class in module_interface_classes:
             return IF_CLASSES[interface_class]
-        except KeyError:
-            continue
+
     raise Exception(
         "no compatible Interfaceclass found in: "
         + str(mod_properties.get(INTERFACE_CLASSES))
@@ -515,11 +514,11 @@ class SECoPTriggerableDevice(SECoPReadableDevice, Triggerable):
     def trigger(self) -> AsyncStatus:
 
         async def go_or_read_on_busy():
-            module_status = self.status.get_value(False)
+            module_status = await self.status.get_value(False)
             stat_code = module_status["f0"]
 
             if BUSY <= stat_code <= ERROR:
-                self.status.get_value(False)
+                await self.status.get_value(False)
                 return
 
             await self.__go_coro()
