@@ -171,6 +171,16 @@ class SECoPBaseDevice(StandardReadable):
             if IDLE <= stat_code < BUSY:
                 break
 
+            if hasattr(self, "_stopped"):
+                if self._stopped is True:
+                    break
+
+            # Error State or DISABLED
+            if hasattr(self, "_success"):
+                if stat_code >= ERROR or stat_code < IDLE:
+                    self._success = False
+                    break
+
 
 class SECoPCMDDevice(StandardReadable, Flyable, Triggerable):
     """
@@ -485,7 +495,7 @@ class SECoPReadableDevice(SECoPBaseDevice, Triggerable):
         return AsyncStatus(awaitable=self.value.read(cached=False))
 
 
-class SECoPTriggerableDevice(SECoPReadableDevice, Triggerable):
+class SECoPTriggerableDevice(SECoPReadableDevice, Triggerable, Stoppable):
     """
     Standard triggerable SECoP device, corresponding to a SECoP module with the0s
     interface class "Triggerable"
@@ -503,13 +513,19 @@ class SECoPTriggerableDevice(SECoPReadableDevice, Triggerable):
 
         self.go_CMD: SECoPCMDDevice
 
+        self._success = True
+        self._stopped = False
+
         super().__init__(secclient, module_name)
 
-    async def __go_coro(self):
+    async def __go_coro(self, wait_for_idle: bool):
         await self._secclient.exec_command(module=self._module, command="go")
 
+        self._success = True
+        self._stopped = False
         await asyncio.sleep(0.2)
-        await self.wait_for_idle()
+        if wait_for_idle:
+            await self.wait_for_idle()
 
     def trigger(self) -> AsyncStatus:
 
@@ -521,9 +537,23 @@ class SECoPTriggerableDevice(SECoPReadableDevice, Triggerable):
                 await self.status.get_value(False)
                 return
 
-            await self.__go_coro()
+            await self.__go_coro(False)
 
         return AsyncStatus(awaitable=go_or_read_on_busy())
+
+    async def stop(self, success=True):
+        """Calls stop command on the SEC Node module
+
+        :param success:
+            True: device is stopped as planned
+            False: something has gone wrong
+            (defaults to True)
+        :type success: bool, optional
+        """
+        self._success = success
+
+        await self._secclient.exec_command(self._module, "stop")
+        self._stopped = True
 
 
 class SECoPWritableDevice(SECoPReadableDevice):
