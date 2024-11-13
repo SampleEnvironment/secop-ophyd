@@ -1,9 +1,7 @@
 import asyncio
 from functools import wraps
-from itertools import groupby
 from typing import Any, Callable, Dict, Optional
 
-import numpy as np
 from bluesky.protocols import DataKey, Reading
 from frappy.client import CacheItem
 from frappy.datatypes import (
@@ -15,6 +13,8 @@ from frappy.datatypes import (
     IntRange,
     ScaledInteger,
     StringType,
+    StructOf,
+    TupleOf,
 )
 from ophyd_async.core import SignalBackend, T
 
@@ -373,51 +373,23 @@ class PropertyBackend(SignalBackend):
 
         self._property_dict = property_dict
         self._prop_key = prop_key
-        self._datatype = self._get_datatype()
+        self._prop_value = self._property_dict[self._prop_key]
+        self.SECoPdtype_obj: DataType = secop_dtype_obj_from_json(self._prop_value)
+        self.SECoP_type_info: SECoPdtype = SECoPdtype(self.SECoPdtype_obj)
+
+        # SECoP metadata is static and can only change when connection is reset
+        self.describe_dict = {}
+        self.source_name = prop_key
+        self.describe_dict["source"] = self.source_name
+
+        # add gathered keys from SECoPdtype:
+        self.describe_dict.update(self.SECoP_type_info.describe_dict)
+
         self._secclient: AsyncFrappyClient = secclient
         # TODO full property path
-        self.source_name = prop_key
-        self.shape: list = []
 
     def source(self, name: str) -> str:
         return str(self.source_name)
-
-    def _get_datatype(self) -> str:
-        prop_val = self._property_dict[self._prop_key]
-
-        if isinstance(prop_val, str):
-            return "string"
-        if isinstance(prop_val, (int, float)):
-            return "number"
-        if isinstance(prop_val, bool):
-            return "bool"
-        if isinstance(
-            prop_val, (dict, tuple)
-        ):  # SECoP Structs/tuples --> numpy ndarray
-            return "array"
-        if isinstance(prop_val, list):
-            self.shape = [len(prop_val)]
-            if prop_val.__len__ == 0:
-                # empty list
-                return "number"
-
-            # checkk if list contains multiple types --> SECoP tuple
-            if len(list(groupby(prop_val, lambda i: type(i)))) != 1:
-                return "array"
-
-            if isinstance(prop_val[0], str):
-                return "string"
-            if isinstance(prop_val[0], (int, float)):
-                return "number"
-            if isinstance(prop_val[0], bool):
-                return "bool"
-
-        if isinstance(prop_val, dict):
-            return "array"
-
-        raise Exception(
-            "unsupported datatype in Node Property: " + str(prop_val.__class__.__name__)
-        )
 
     async def connect(self):
         """Connect to underlying hardware"""
@@ -430,29 +402,58 @@ class PropertyBackend(SignalBackend):
 
     async def get_datakey(self, source: str) -> DataKey:
         """Metadata like source, dtype, shape, precision, units"""
-        description = {}
-
-        description["source"] = self.source("")
-        description["dtype"] = self._get_datatype()
-        description["shape"] = self.shape  # type: ignore
-
-        return description
+        return self.describe_dict
 
     async def get_reading(self) -> Reading:
-        """The current value, timestamp and severity"""
+        dataset = CacheItem(
+            value=self._prop_value, timestamp=self._secclient.conn_timestamp
+        )
 
-        return {
-            "value": await self.get_value(),
-            "timestamp": self._secclient.conn_timestamp,
-        }
+        sec_reading = SECoPReading(entry=dataset, secop_dt=self.SECoP_type_info)
+
+        return sec_reading.get_reading()
 
     async def get_value(self) -> T:
-        """The current value"""
+        dataset: Reading = await self.get_reading()
 
-        if self._get_datatype() == "array":
-            return np.array(self._property_dict[self._prop_key])
-
-        return self._property_dict[self._prop_key]
+        return dataset["value"]  # type: ignore
 
     def set_callback(self, callback: Callable[[Reading, Any], None] | None) -> None:
         pass
+
+
+def secop_dtype_obj_from_json(prop_val):
+    if isinstance(prop_val, str):
+        return StringType()
+
+    if isinstance(prop_val, (int, float)):
+        return FloatRange()
+
+    if isinstance(prop_val, bool):
+        return BoolType()
+
+    if isinstance(prop_val, dict):  # SECoP Structs/tuples --> numpy ndarray
+        members = {}
+        for key, elem in prop_val.items():
+            members[key] = secop_dtype_obj_from_json(elem)
+
+        return StructOf(**members)
+
+    if isinstance(prop_val, list):
+        # empty list, cannot infer proper type
+        if not prop_val:
+            return ArrayOf(FloatRange())
+        # check if all elements have same Type:
+        if all(isinstance(elem, type(prop_val[0])) for elem in prop_val):
+            members = secop_dtype_obj_from_json(prop_val[0])
+            return ArrayOf(members)
+        else:
+            members = []
+            for elem in prop_val:
+                members.append(secop_dtype_obj_from_json(elem))
+            return TupleOf(*members)
+
+    raise Exception(
+        f"""unsupported datatype in Property:  {str(prop_val.__class__.__name__)}\n
+        propval: {prop_val}"""
+    )
