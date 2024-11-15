@@ -625,7 +625,7 @@ class SECoPdtype:
         self.dtype_str = self.numpy_dtype.str
         self.describe_dict["dtype_str"] = self.dtype_str
 
-        self.dtype_descr = str(self.numpy_dtype.descr)
+        self.dtype_descr = self.numpy_dtype.descr
         self.describe_dict["dtype_descr"] = self.dtype_descr
 
         self.describe_dict["dtype"] = self.dtype
