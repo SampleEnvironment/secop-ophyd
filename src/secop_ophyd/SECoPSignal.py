@@ -292,12 +292,19 @@ class SECoPParamBackend(SignalBackend):
 
     async def get_datakey(self, source: str) -> DataKey:
         """Metadata like source, dtype, shape, precision, units"""
-        # getlast cached value
-        dataset = await self._secclient.get_parameter(
-            **self.get_param_path(), trycache=True
-        )
-        # tis ensures the datakey is updated to the latest cahced value
-        SECoPReading(entry=dataset, secop_dt=self.SECoP_type_info)
+
+        if self.SECoP_type_info._is_composite or isinstance(
+            self.SECoPdtype_obj, ArrayOf
+        ):
+            # getlast cached value
+            dataset = await self._secclient.get_parameter(
+                **self.get_param_path(), trycache=True
+            )
+
+            # this ensures the datakey is updated to the latest cached value
+            SECoPReading(entry=dataset, secop_dt=self.SECoP_type_info)
+            self.describe_dict.update(self.SECoP_type_info.describe_dict)
+
         return self.describe_dict
 
     async def get_reading(self) -> Reading:
