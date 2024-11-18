@@ -464,18 +464,20 @@ class ArrayNP(DtypeNP):
             self.root_type = self.members.root_type
             self.members.shape = []
             if self.members.ragged:
-                raise NestedRaggedArray(
-                    "ragged arrays with more than a single dimension are not supported"
-                )
+                pass
+                # raise NestedRaggedArray(
+                #    "ragged arrays with more than a single dimension are not supported"
+                # )
 
         else:
             self.root_type = self.members
 
         if self.array_element and self.ragged:
-            raise NestedRaggedArray(
-                "ragged arrays inside of arrays of copmposite datatypes (struct/tuple) "
-                "are not supported"
-            )
+            pass
+            # raise NestedRaggedArray(
+            #    "ragged arrays inside of arrays of copmposite datatypes (struct/tuple)"
+            #    "are not supported"
+            # )
 
     def make_numpy_dtype(self) -> tuple:
         if self.shape == []:
