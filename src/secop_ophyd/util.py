@@ -335,10 +335,10 @@ class StringNP(DtypeNP):
         self.array_element = array_element
 
         if string_dt.maxchars == 1 << 64:
-            warnings.warn(
-                "maxchars was not set, default max char lenght is set to: "
-                + str(STR_LEN_DEFAULT)
-            )
+            # warnings.warn(
+            #    "maxchars was not set, default max char lenght is set to: "
+            #    + str(STR_LEN_DEFAULT)
+            # )
             self.strlen = STR_LEN_DEFAULT
 
         else:
@@ -508,6 +508,9 @@ class ArrayNP(DtypeNP):
             if value == []:
                 member_np = self.members.make_concrete_numpy_dtype(None)
                 val_shape = [0]
+            elif value is None:
+                member_np = self.members.make_concrete_numpy_dtype(None)
+                val_shape = []
             else:
                 member_np = self.members.make_concrete_numpy_dtype(value[0])
                 val_shape = [len(value)]

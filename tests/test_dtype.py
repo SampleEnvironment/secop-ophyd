@@ -82,6 +82,27 @@ REGULAR = False
             [],
             id="struct of empty arrays",
         ),
+        pytest.param(
+            ArrayOf(ArrayOf(FloatRange())),
+            [[], []],
+            [100, 100],
+            [2, 0],
+            id="empty 2d array ",
+        ),
+        pytest.param(
+            ArrayOf(ArrayOf(FloatRange())),
+            [[]],
+            [100, 100],
+            [1, 0],
+            id="empty 2d array [1,0]",
+        ),
+        pytest.param(
+            ArrayOf(ArrayOf(FloatRange())),
+            [],
+            [100, 100],
+            [0],
+            id="empty empty 2d",
+        ),
     ],
 )
 def test_arrayof_update_dtype(start_dtype, data, expected_shape, expected_update_shape):
