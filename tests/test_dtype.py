@@ -1,7 +1,8 @@
 import pytest
+from frappy.client import CacheItem
 from frappy.datatypes import ArrayOf, FloatRange, StringType, StructOf, TupleOf
 
-from secop_ophyd.util import SECoPdtype
+from secop_ophyd.util import SECoPdtype, SECoPReading
 
 RAGGED = True
 REGULAR = False
@@ -89,6 +90,8 @@ def test_arrayof_update_dtype(start_dtype, data, expected_shape, expected_update
 
     sdtype.update_dtype(data)
     assert sdtype.shape == expected_update_shape
+
+    SECoPReading(sdtype, CacheItem(data, 234342.2, None, datatype=start_dtype))
 
 
 @pytest.mark.parametrize(

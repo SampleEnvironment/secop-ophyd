@@ -643,7 +643,6 @@ class SECoPdtype:
             if isinstance(self.raw_dtype, ArrayOf):
                 self.shape = dt[2]
 
-            print(inner_dt)
             self.numpy_dtype = np.dtype(inner_dt)
 
             self.dtype_str = self.numpy_dtype.str
