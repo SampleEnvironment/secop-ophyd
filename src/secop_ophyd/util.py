@@ -505,8 +505,12 @@ class ArrayNP(DtypeNP):
                 self.shape,
             )
         else:
-            member_np = self.members.make_concrete_numpy_dtype(value[0])
-            val_shape = [len(value)]
+            if value == []:
+                member_np = self.members.make_concrete_numpy_dtype(None)
+                val_shape = [0]
+            else:
+                member_np = self.members.make_concrete_numpy_dtype(value[0])
+                val_shape = [len(value)]
 
             if isinstance(self.members, ArrayNP):
                 val_shape = val_shape + member_np[2]
@@ -639,6 +643,7 @@ class SECoPdtype:
             if isinstance(self.raw_dtype, ArrayOf):
                 self.shape = dt[2]
 
+            print(inner_dt)
             self.numpy_dtype = np.dtype(inner_dt)
 
             self.dtype_str = self.numpy_dtype.str

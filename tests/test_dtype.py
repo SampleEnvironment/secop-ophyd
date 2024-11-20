@@ -70,6 +70,17 @@ REGULAR = False
             [],
             id="Complex",
         ),
+        pytest.param(
+            StructOf(
+                mass=ArrayOf(FloatRange()),
+                pressure=ArrayOf(FloatRange()),
+                timestamp=ArrayOf(FloatRange()),
+            ),
+            {"mass": [], "pressure": [], "timestamp": []},
+            [],
+            [],
+            id="struct of empty arrays",
+        ),
     ],
 )
 def test_arrayof_update_dtype(start_dtype, data, expected_shape, expected_update_shape):
