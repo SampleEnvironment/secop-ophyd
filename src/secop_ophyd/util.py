@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import time
+import warnings
 from abc import ABC, abstractmethod
 from functools import reduce
 from itertools import chain
@@ -156,6 +157,7 @@ class DtypeNP(ABC):
     secop_dtype: DataType
     name: str | None
     array_element: bool = False
+    max_depth: int = 0
 
     @abstractmethod
     def make_numpy_dtype(self) -> tuple:
@@ -333,7 +335,7 @@ class StringNP(DtypeNP):
         self.array_element = array_element
 
         if string_dt.maxchars == 1 << 64:
-            Warning(
+            warnings.warn(
                 "maxchars was not set, default max char lenght is set to: "
                 + str(STR_LEN_DEFAULT)
             )
@@ -366,6 +368,9 @@ class StructNP(DtypeNP):
             name: dt_factory(member, name, self.array_element)
             for (name, member) in struct_dt.members.items()
         }
+
+        max_depth = [member.max_depth for member in self.members.values()]
+        self.max_depth = 1 + max(max_depth)
 
     def make_numpy_dtype(self) -> tuple:
         dt_list = []
@@ -406,9 +411,14 @@ class TupleNP(DtypeNP):
         self.secop_dtype = tuple_dt
         self.array_element = array_element
         self.members: list[DtypeNP] = [
-            dt_factory(member, array_element=self.array_element)
-            for member in tuple_dt.members
+            dt_factory(
+                secop_dt=member, name="f" + str(idx), array_element=self.array_element
+            )
+            for idx, member in enumerate(tuple_dt.members)
         ]
+
+        max_depth = [member.max_depth for member in self.members]
+        self.max_depth = 1 + max(max_depth)
 
     def make_numpy_dtype(self) -> tuple:
         dt_list = []
@@ -459,6 +469,8 @@ class ArrayNP(DtypeNP):
         self.members: DtypeNP = dt_factory(array_dt.members, array_element=True)
         self.root_type: DtypeNP
 
+        self.max_depth = self.members.max_depth
+
         if isinstance(self.members, ArrayNP):
             self.shape.extend(self.members.shape)
             self.root_type = self.members.root_type
@@ -473,11 +485,10 @@ class ArrayNP(DtypeNP):
             self.root_type = self.members
 
         if self.array_element and self.ragged:
-            pass
-            # raise NestedRaggedArray(
-            #    "ragged arrays inside of arrays of copmposite datatypes (struct/tuple)"
-            #    "are not supported"
-            # )
+            warnings.warn(
+                "ragged arrays inside of arrays of copmposite datatypes (struct/tuple)"
+                "are not supported"
+            )
 
     def make_numpy_dtype(self) -> tuple:
         if self.shape == []:
@@ -487,20 +498,20 @@ class ArrayNP(DtypeNP):
 
     def make_concrete_numpy_dtype(self, value) -> tuple:
 
-        if self.shape == []:
-            return self.members.make_concrete_numpy_dtype(value)
-        elif self.ragged is False:
+        if self.ragged is False:
             return (
                 self.name,
                 list(self.members.make_concrete_numpy_dtype(value)).pop(),
                 self.shape,
             )
         else:
-            return (
-                self.name,
-                list(self.members.make_concrete_numpy_dtype(value)).pop(),
-                [len(value)],
-            )
+            member_np = self.members.make_concrete_numpy_dtype(value[0])
+            val_shape = [len(value)]
+
+            if isinstance(self.members, ArrayNP):
+                val_shape = val_shape + member_np[2]
+
+            return (self.name, member_np[1], val_shape)
 
     def make_numpy_compatible_list(self, value: list):
         return [self.members.make_numpy_compatible_list(elem) for elem in value]
@@ -540,9 +551,9 @@ class SECoPdtype:
 
         self._is_composite: bool = False
 
-        self.describe_dict: dict = {}
-
         self.dtype_tree = dt_factory(datatype)
+
+        self.max_depth: int = self.dtype_tree.max_depth
 
         if isinstance(self.dtype_tree, ArrayNP):
             self.shape = self.dtype_tree.shape
@@ -567,12 +578,8 @@ class SECoPdtype:
 
             # all composite Dtypes are transported as numpy arrays
             self.dtype = "array"
-
             self.dtype_str = self.numpy_dtype.str
-            self.describe_dict["dtype_str"] = self.dtype_str
-
             self.dtype_descr = self.numpy_dtype.descr
-            self.describe_dict["dtype_descr"] = self.dtype_descr
 
         # Scalar atomic Datatypes and arrays of atomic dataypes
         else:
@@ -585,9 +592,18 @@ class SECoPdtype:
             else:
                 self.dtype = SECOP2DTYPE[datatype.__class__]
 
-        self.describe_dict["dtype"] = self.dtype
-        self.describe_dict["shape"] = self.shape
-        self.describe_dict["SECOP_datainfo"] = self.secop_dtype_str
+    def get_datakey(self):
+        describe_dict: dict = {}
+        # Composite Datatypes & Arrays of COmposite Datatypes
+        if self._is_composite:
+            describe_dict["dtype_str"] = self.dtype_str
+            describe_dict["dtype_descr"] = self.dtype_descr
+
+        describe_dict["dtype"] = self.dtype
+        describe_dict["shape"] = self.shape
+        describe_dict["SECOP_datainfo"] = self.secop_dtype_str
+
+        return describe_dict
 
     def _secop2numpy_array(self, value) -> np.ndarray:
         np_list = self.dtype_tree.make_numpy_compatible_list(value)
@@ -611,28 +627,29 @@ class SECoPdtype:
             return self.raw_dtype.validate(input_val)
 
     def update_dtype(self, input_val):
-        if not self._is_composite:
+        if self._is_composite:
+            # Composite Datatypes & Arrays of Composite Datatypes
+
+            dt = self.dtype_tree.make_concrete_numpy_dtype(input_val)
+
+            # Top level elements are not named and shape is
+            # already covered by the shape var
+            inner_dt = dt[1]
+
+            if isinstance(self.raw_dtype, ArrayOf):
+                self.shape = dt[2]
+
+            self.numpy_dtype = np.dtype(inner_dt)
+
+            self.dtype_str = self.numpy_dtype.str
+            self.dtype_descr = self.numpy_dtype.descr
+
             return
 
-        # Composite Datatypes & Arrays of Composite Datatypes
+        if isinstance(self.raw_dtype, ArrayOf):
+            dt = self.dtype_tree.make_concrete_numpy_dtype(input_val)
 
-        dt = self.dtype_tree.make_concrete_numpy_dtype(input_val)
-
-        # Top level elements are not named and shape is
-        # already covered by the shape var
-        dt = dt[1]
-
-        self.numpy_dtype = np.dtype(dt)
-
-        self.dtype_str = self.numpy_dtype.str
-        self.describe_dict["dtype_str"] = self.dtype_str
-
-        self.dtype_descr = self.numpy_dtype.descr
-        self.describe_dict["dtype_descr"] = self.dtype_descr
-
-        self.describe_dict["dtype"] = self.dtype
-        self.describe_dict["shape"] = self.shape
-        self.describe_dict["SECOP_datainfo"] = self.secop_dtype_str
+            self.shape = dt[2]
 
 
 class SECoPReading:

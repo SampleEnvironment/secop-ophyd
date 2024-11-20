@@ -1,4 +1,5 @@
 import asyncio
+import warnings
 from functools import wraps
 from typing import Any, Callable, Dict, Optional
 
@@ -30,6 +31,9 @@ atomic_dtypes = (
     BLOBType,
     ArrayOf,
 )
+
+# max depth for datatypes supported by tiled/databroker
+MAX_DEPTH = 1
 
 
 class LocalBackend(SignalBackend):
@@ -77,7 +81,7 @@ class LocalBackend(SignalBackend):
 
         self.describe_dict["source"] = self.source("")
 
-        self.describe_dict.update(self.SECoP_type_info.describe_dict)
+        self.describe_dict.update(self.SECoP_type_info.get_datakey())
 
         for property_name, prop_val in self.datainfo.items():
             if property_name == "type":
@@ -242,6 +246,14 @@ class SECoPParamBackend(SignalBackend):
 
         self.SECoP_type_info: SECoPdtype = SECoPdtype(self.SECoPdtype_obj)
 
+        if self.SECoP_type_info.max_depth > MAX_DEPTH:
+            warnings.warn(
+                f"The datatype of parameter '{path._accessible_name}' has a maximum"
+                f"depth of {self.SECoP_type_info.max_depth}. Tiled & Databroker only"
+                f"support a Depth upto {MAX_DEPTH}"
+                f"dtype_descr: {self.SECoP_type_info.dtype_descr}"
+            )
+
         self.describe_dict: dict = {}
 
         self.source_name = (
@@ -260,7 +272,7 @@ class SECoPParamBackend(SignalBackend):
         self.describe_dict["source"] = self.source_name
 
         # add gathered keys from SECoPdtype:
-        self.describe_dict.update(self.SECoP_type_info.describe_dict)
+        self.describe_dict.update(self.SECoP_type_info.get_datakey())
 
         for property_name, prop_val in self._param_description.items():
             # skip datainfo (treated seperately)
@@ -303,7 +315,7 @@ class SECoPParamBackend(SignalBackend):
 
             # this ensures the datakey is updated to the latest cached value
             SECoPReading(entry=dataset, secop_dt=self.SECoP_type_info)
-            self.describe_dict.update(self.SECoP_type_info.describe_dict)
+            self.describe_dict.update(self.SECoP_type_info.get_datakey())
 
         return self.describe_dict
 
@@ -390,13 +402,21 @@ class PropertyBackend(SignalBackend):
         self.SECoPdtype_obj: DataType = secop_dtype_obj_from_json(self._prop_value)
         self.SECoP_type_info: SECoPdtype = SECoPdtype(self.SECoPdtype_obj)
 
+        if self.SECoP_type_info.max_depth > MAX_DEPTH:
+            warnings.warn(
+                f"The datatype of parameter '{prop_key}' has a maximum"
+                f"depth of {self.SECoP_type_info.max_depth}. Tiled & Databroker only"
+                f"support a Depth upto {MAX_DEPTH}"
+                f"dtype_descr: {self.SECoP_type_info.dtype_descr}"
+            )
+
         # SECoP metadata is static and can only change when connection is reset
         self.describe_dict = {}
         self.source_name = prop_key
         self.describe_dict["source"] = self.source_name
 
         # add gathered keys from SECoPdtype:
-        self.describe_dict.update(self.SECoP_type_info.describe_dict)
+        self.describe_dict.update(self.SECoP_type_info.get_datakey())
 
         self._secclient: AsyncFrappyClient = secclient
         # TODO full property path

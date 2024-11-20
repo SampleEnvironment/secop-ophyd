@@ -1,84 +1,145 @@
-# import pytest
-# from frappy.datatypes import (
-#     ArrayOf,
-#     BLOBType,
-#     BoolType,
-#     EnumType,
-#     FloatRange,
-#     IntRange,
-#     ScaledInteger,
-#     StringType,
-#     StructOf,
-#     TupleOf,
-# )
+import pytest
+from frappy.datatypes import ArrayOf, FloatRange, StringType, StructOf, TupleOf
 
-# from secop_ophyd.util import NestedRaggedArray, SECoPdtype
+from secop_ophyd.util import SECoPdtype
+
+RAGGED = True
+REGULAR = False
 
 
-# def test_nested_ragged_inside_struct_arrays():
-#     ragged = ArrayOf(
-#         StructOf(arr2=ArrayOf(FloatRange(), minlen=0, maxlen=100), name=StringType()),
-#         minlen=0,
-#         maxlen=100,
-#     )
+@pytest.mark.parametrize(
+    "start_dtype,data,expected_shape,expected_update_shape",
+    [
+        pytest.param(
+            ArrayOf(FloatRange(), minlen=0, maxlen=100),
+            [0.1, 0.1],
+            [100],
+            [2],
+            id="Ragged 1D",
+        ),
+        pytest.param(
+            ArrayOf(ArrayOf(FloatRange()), minlen=0, maxlen=100),
+            [[10, 10], [10, 10]],
+            [100, 100],  # maxlen defaults to 100 if not given
+            [2, 2],
+            id="Ragged 2D",
+        ),
+        pytest.param(
+            ArrayOf(ArrayOf(ArrayOf(FloatRange())), minlen=0, maxlen=99),
+            [[[10, 10], [10, 10]], [[10, 10], [10, 10]]],
+            [99, 100, 100],
+            [2, 2, 2],
+            id="Ragged 3D",
+        ),
+        pytest.param(
+            ArrayOf(
+                ArrayOf(ArrayOf(FloatRange(), minlen=2, maxlen=2), minlen=2, maxlen=2),
+                minlen=2,
+                maxlen=2,
+            ),
+            [[[10, 10], [10, 10]], [[10, 10], [10, 10]]],
+            [2, 2, 2],
+            [2, 2, 2],
+            id="Regular 3D",
+        ),
+        pytest.param(
+            ArrayOf(TupleOf(ArrayOf(FloatRange(), minlen=0, maxlen=50), StringType())),
+            [([1, 2, 3], "blah")],
+            [100],
+            [1],
+            id="Complex Ragged 1D",
+        ),
+        pytest.param(
+            ArrayOf(
+                ArrayOf(
+                    TupleOf(ArrayOf(FloatRange(), minlen=0, maxlen=50), StringType())
+                )
+            ),
+            [
+                [([1, 2, 3], "blah"), ([1, 2, 3], "blah")],
+                [([1, 2, 3], "blah"), ([1, 2, 3], "blah")],
+            ],
+            [100, 100],
+            [2, 2],
+            id="Complex Ragged 2D",
+        ),
+        pytest.param(
+            TupleOf(ArrayOf(FloatRange(), minlen=0, maxlen=50), StringType()),
+            ([1, 2, 3], "blah"),
+            [],
+            [],
+            id="Complex",
+        ),
+    ],
+)
+def test_arrayof_update_dtype(start_dtype, data, expected_shape, expected_update_shape):
+    sdtype = SECoPdtype(start_dtype)
+    assert sdtype.shape == expected_shape
 
-#     with pytest.raises(NestedRaggedArray):
-#         SECoPdtype(ragged)
+    sdtype.update_dtype(data)
+    assert sdtype.shape == expected_update_shape
 
 
-# def test_nested_ragged_inside_tuple_arrays():
-#     ragged = ArrayOf(
-#         TupleOf(ArrayOf(FloatRange(), minlen=0, maxlen=100), StringType()),
-#         minlen=0,
-#         maxlen=100,
-#     )
-
-#     with pytest.raises(NestedRaggedArray):
-#         SECoPdtype(ragged)
-
-
-# def test_nested_ragged_arrays():
-#     ragged = ArrayOf(ArrayOf(FloatRange(),
-#       minlen=0, maxlen=100), minlen=0, maxlen=100)
-
-#     with pytest.raises(NestedRaggedArray):
-#         SECoPdtype(ragged)
-
-
-# def test_nested_arrays():
-
-#     inner_dt_list = [
-#         IntRange(),
-#         FloatRange(),
-#         ScaledInteger(1),
-#         StringType(),
-#         BoolType(),
-#         BLOBType(),
-#         EnumType("test", bla=0, blub=1),
-#     ]
-
-#     dtype_list = ["number", "number", "number",
-#       "string", "boolean", "string", "number"]
-
-#     for innner_dt, dtype in zip(inner_dt_list, dtype_list):
-
-#         arr_dt = ArrayOf(
-#             ArrayOf(ArrayOf(innner_dt, minlen=5, maxlen=5), minlen=5, maxlen=5),
-#             minlen=0,
-#             maxlen=5,
-#         )
-
-#         sdtype = SECoPdtype(arr_dt)
-
-#         assert sdtype.dtype == dtype
-
-#     ragged_arr = ArrayOf(
-#         ArrayOf(
-#             ArrayOf(IntRange(min=0, max=100), minlen=0, maxlen=5), minlen=5, maxlen=5
-#         ),
-#         minlen=5,
-#         maxlen=5,
-#     )
-
-#     with pytest.raises(NestedRaggedArray):
-#         SECoPdtype(ragged_arr)
+@pytest.mark.parametrize(
+    "start_dtype,expected_dtype_descr,expected_shape,max_depth",
+    [
+        pytest.param(
+            TupleOf(ArrayOf(FloatRange(), maxlen=50), StringType()),
+            [("f0", "<f8", (50,)), ("f1", "<U100")],
+            [],
+            1,
+            id="Tuple of Array",
+        ),
+        pytest.param(
+            ArrayOf(
+                TupleOf(FloatRange(), StringType(), ArrayOf(ArrayOf(FloatRange()))),
+                maxlen=50,
+            ),
+            [("f0", "<f8"), ("f1", "<U100"), ("f2", "<f8", (100, 100))],
+            [50],
+            1,
+            id="Array of Tuple",
+        ),
+        pytest.param(
+            ArrayOf(
+                TupleOf(
+                    FloatRange(), StringType(), TupleOf(FloatRange(), StringType())
+                ),
+                maxlen=50,
+            ),
+            [("f0", "<f8"), ("f1", "<U100"), ("f2", [("f0", "<f8"), ("f1", "<U100")])],
+            [50],
+            2,
+            id="Array of (Tuple of Tuple)",
+        ),
+        pytest.param(
+            ArrayOf(
+                StructOf(a=FloatRange(), b=StringType(), c=StringType()),
+                maxlen=50,
+            ),
+            [("a", "<f8"), ("b", "<U100"), ("c", "<U100")],
+            [50],
+            1,
+            id="Array of Struct",
+        ),
+        pytest.param(
+            ArrayOf(
+                StructOf(
+                    a=FloatRange(),
+                    b=StringType(),
+                    c=TupleOf(FloatRange(), FloatRange()),
+                ),
+                maxlen=50,
+            ),
+            [("a", "<f8"), ("b", "<U100"), ("c", [("f0", "<f8"), (("f1", "<f8"))])],
+            [50],
+            2,
+            id="Array of (Struct of tuple)",
+        ),
+    ],
+)
+def test_describe_str(start_dtype, expected_dtype_descr, expected_shape, max_depth):
+    sdtype = SECoPdtype(start_dtype)
+    assert sdtype.shape == expected_shape
+    assert sdtype.dtype_descr == expected_dtype_descr
+    assert sdtype.max_depth == max_depth
