@@ -537,7 +537,7 @@ class SECoPTriggerableDevice(SECoPReadableDevice, Triggerable, Stoppable):
                 await self.status.get_value(False)
                 return
 
-            await self.__go_coro(False)
+            await self.__go_coro(True)
 
         return AsyncStatus(awaitable=go_or_read_on_busy())
 
