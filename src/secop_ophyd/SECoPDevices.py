@@ -13,7 +13,9 @@ from bluesky.protocols import (
     Locatable,
     Location,
     PartialEvent,
+    Reading,
     Stoppable,
+    Subscribable,
     SyncOrAsync,
     Triggerable,
 )
@@ -41,6 +43,7 @@ from ophyd_async.core import (
     T,
     observe_value,
 )
+from ophyd_async.core._utils import Callback
 from typing_extensions import Self
 
 from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient
@@ -307,7 +310,7 @@ class SECoPCMDDevice(StandardReadable, Flyable, Triggerable):
         return await self.describe()
 
 
-class SECoPReadableDevice(SECoPBaseDevice, Triggerable):
+class SECoPReadableDevice(SECoPBaseDevice, Triggerable, Subscribable):
     """
     Standard readable SECoP device, corresponding to a SECoP module with the
     interface class "Readable"
@@ -493,6 +496,14 @@ class SECoPReadableDevice(SECoPBaseDevice, Triggerable):
 
     def trigger(self) -> bps.Status:
         return AsyncStatus(awaitable=self.value.read(cached=False))
+
+    def subscribe(self, function: Callback[dict[str, Reading]]) -> None:
+        """Subscribe to updates in the reading"""
+        self.value.subscribe(function=function)
+
+    def clear_sub(self, function: Callback) -> None:
+        """Remove a subscription."""
+        self.value.clear_sub(function=function)
 
 
 class SECoPTriggerableDevice(SECoPReadableDevice, Triggerable, Stoppable):
