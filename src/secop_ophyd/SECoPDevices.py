@@ -184,6 +184,23 @@ class SECoPBaseDevice(StandardReadable):
                     self._success = False
                     break
 
+    # TODO add timeout
+    def observe_status_change(self, monitored_status_code: int):
+        async def switch_from_status_inner():
+            async for current_stat in observe_value(self.status):
+                # status is has type Tuple and is therefore transported as
+                # structured Numpy array ('f0':statuscode;'f1':status Message)
+
+                stat_code = current_stat["f0"]
+
+                if monitored_status_code != stat_code:
+                    break
+
+        def switch_from_status_factory():
+            return switch_from_status_inner()
+
+        yield from bps.wait_for([switch_from_status_factory])
+
 
 class SECoPCMDDevice(StandardReadable, Flyable, Triggerable):
     """
@@ -539,8 +556,13 @@ class SECoPTriggerableDevice(SECoPReadableDevice, Triggerable, Stoppable):
         self._success = True
         self._stopped = False
         await asyncio.sleep(0.2)
+
         if wait_for_idle:
             await self.wait_for_idle()
+
+    def wait_for_prepared(self):
+        yield from self.observe_status_change(IDLE)
+        yield from self.observe_status_change(PREPARING)
 
     def trigger(self) -> AsyncStatus:
 
