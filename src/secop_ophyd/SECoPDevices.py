@@ -545,14 +545,12 @@ class SECoPTriggerableDevice(SECoPReadableDevice, Triggerable, Stoppable):
     def trigger(self) -> AsyncStatus:
 
         async def go_or_read_on_busy():
-            module_status = await self.status.get_value(True)
+            module_status = await self.status.get_value(False)
             stat_code = module_status["f0"]
 
             if BUSY <= stat_code <= ERROR:
-                print(f"mass spec BUSY status:{stat_code}")
                 return
 
-            print('mass spec IDELE sending "GO" Command')
             await self.__go_coro(True)
 
         return AsyncStatus(awaitable=go_or_read_on_busy())
