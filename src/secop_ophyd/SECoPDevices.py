@@ -549,8 +549,7 @@ class SECoPTriggerableDevice(SECoPReadableDevice, Triggerable, Stoppable):
             stat_code = module_status["f0"]
 
             if BUSY <= stat_code <= ERROR:
-                await self.status.get_value(True)
-                return
+                return AsyncStatus(awaitable=self.status.get_value(True))
 
             await self.__go_coro(True)
 
