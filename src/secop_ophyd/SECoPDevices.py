@@ -516,15 +516,11 @@ class SECoPReadableDevice(SECoPBaseDevice, Triggerable, Subscribable):
 
     def subscribe(self, function: Callback[dict[str, Reading]]) -> None:
         """Subscribe to updates in the reading"""
-        for sig in self._readables:
-            if isinstance(sig, SignalR):
-                sig.subscribe(function=function)
+        self.value.subscribe(function=function)
 
     def clear_sub(self, function: Callback) -> None:
         """Remove a subscription."""
-        for sig in self._readables:
-            if isinstance(sig, SignalR):
-                sig.subscribe(function=function)
+        self.value.clear_sub(function=function)
 
 
 class SECoPTriggerableDevice(SECoPReadableDevice, Triggerable, Stoppable):
