@@ -230,7 +230,7 @@ class BoolNP(DtypeNP):
         self.array_element = array_element
 
     def make_numpy_dtype(self) -> tuple:
-        return (self.name, "<b")
+        return (self.name, "<b1")
 
     def make_concrete_numpy_dtype(self, value) -> tuple:
         return self.make_numpy_dtype()
@@ -718,14 +718,4 @@ SECOP2DTYPE = {
     EnumType: "number",
     StringType: "string",
     BLOBType: "string",
-}
-
-SECOP2NUMPY = {
-    FloatRange: "<f8",
-    IntRange: "<i8",
-    ScaledInteger: "<i8",
-    BoolType: "<b1",
-    EnumType: "<i8",
-    StringType: "<U100",
-    BLOBType: "<U100",
 }
