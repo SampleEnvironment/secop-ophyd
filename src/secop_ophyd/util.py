@@ -721,8 +721,8 @@ SECOP2NUMPY = {
     FloatRange: "<f8",
     IntRange: "<i8",
     ScaledInteger: "<i8",
-    BoolType: "b",
+    BoolType: "<b1",
     EnumType: "<i8",
-    StringType: "U100",
-    BLOBType: "U100",
+    StringType: "<U100",
+    BLOBType: "<U100",
 }
