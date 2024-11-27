@@ -557,6 +557,7 @@ class SECoPdtype:
         self.dtype_tree: DtypeNP
 
         self._is_composite: bool = False
+        self._is_array: bool = False
 
         self.dtype_tree = dt_factory(datatype)
 
@@ -564,6 +565,7 @@ class SECoPdtype:
 
         if isinstance(self.dtype_tree, ArrayNP):
             self.shape = self.dtype_tree.shape
+            self._is_array = True
             self._is_composite = (
                 True
                 if isinstance(self.dtype_tree.root_type, (StructNP, TupleNP))
@@ -590,12 +592,10 @@ class SECoPdtype:
 
         # Scalar atomic Datatypes and arrays of atomic dataypes
         else:
-            self._is_composite = False
-
-            if isinstance(self.dtype_tree, ArrayNP):
+            if self._is_array:
                 # root secop datatype that is contained in the array
-                root_secop_dt = self.dtype_tree.root_type.secop_dtype
-                self.dtype = SECOP2DTYPE[root_secop_dt.__class__]
+                self.dtype = "array"
+
             else:
                 self.dtype = SECOP2DTYPE[datatype.__class__]
 
@@ -604,7 +604,12 @@ class SECoPdtype:
         # Composite Datatypes & Arrays of COmposite Datatypes
         if self._is_composite:
             describe_dict["dtype_str"] = self.dtype_str
+            describe_dict["dtype_numpy"] = self.dtype_descr
             describe_dict["dtype_descr"] = self.dtype_descr
+
+        if self._is_array:
+            root_secop_dt = self.dtype_tree.root_type.secop_dtype
+            describe_dict["dtype_numpy"] = SECOP2NUMPY[root_secop_dt.__class__]
 
         describe_dict["dtype"] = self.dtype
         describe_dict["shape"] = self.shape
@@ -710,4 +715,14 @@ SECOP2DTYPE = {
     EnumType: "number",
     StringType: "string",
     BLOBType: "string",
+}
+
+SECOP2NUMPY = {
+    FloatRange: "<f8",
+    IntRange: "<i8",
+    ScaledInteger: "<i8",
+    BoolType: "b",
+    EnumType: "<i8",
+    StringType: "U100",
+    BLOBType: "U100",
 }
