@@ -604,7 +604,7 @@ class SECoPdtype:
         # Composite Datatypes & Arrays of COmposite Datatypes
         if self._is_composite:
             describe_dict["dtype_str"] = self.dtype_str
-            describe_dict["dtype_numpy"] = self.dtype_descr
+            # describe_dict["dtype_numpy"] = self.dtype_descr
             describe_dict["dtype_descr"] = self.dtype_descr
 
         if self._is_array:
