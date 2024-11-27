@@ -230,7 +230,7 @@ class BoolNP(DtypeNP):
         self.array_element = array_element
 
     def make_numpy_dtype(self) -> tuple:
-        return (self.name, bool)
+        return (self.name, "<b")
 
     def make_concrete_numpy_dtype(self, value) -> tuple:
         return self.make_numpy_dtype()
@@ -251,7 +251,7 @@ class EnumNP(DtypeNP):
         self.array_element = array_element
 
     def make_numpy_dtype(self) -> tuple:
-        return (self.name, int)
+        return (self.name, "<i8")
 
     def make_concrete_numpy_dtype(self, value) -> tuple:
         return self.make_numpy_dtype()
@@ -272,7 +272,7 @@ class FloatNP(DtypeNP):
         self.array_element = array_element
 
     def make_numpy_dtype(self) -> tuple:
-        return (self.name, float)
+        return (self.name, "<f8")
 
     def make_concrete_numpy_dtype(self, value) -> tuple:
         return self.make_numpy_dtype()
@@ -293,7 +293,7 @@ class IntNP(DtypeNP):
         self.array_element = array_element
 
     def make_numpy_dtype(self) -> tuple:
-        return (self.name, int)
+        return (self.name, "<i8")
 
     def make_concrete_numpy_dtype(self, value) -> tuple:
         return self.make_numpy_dtype()
@@ -314,7 +314,7 @@ class ScaledIntNP(DtypeNP):
         self.array_element = array_element
 
     def make_numpy_dtype(self) -> tuple:
-        return (self.name, int)
+        return (self.name, "<i8")
 
     def make_concrete_numpy_dtype(self, value) -> tuple:
         return self.make_numpy_dtype()
@@ -345,10 +345,10 @@ class StringNP(DtypeNP):
             self.strlen = string_dt.maxchars
 
     def make_numpy_dtype(self) -> tuple:
-        return (self.name, "U" + str(self.strlen))
+        return (self.name, "<U" + str(self.strlen))
 
     def make_concrete_numpy_dtype(self, value) -> tuple:
-        return (self.name, "U" + str(self.strlen))
+        return (self.name, "<U" + str(self.strlen))
 
     def make_numpy_compatible_list(self, value: str):
         return value
@@ -479,7 +479,7 @@ class ArrayNP(DtypeNP):
                 pass
                 # raise NestedRaggedArray(
                 #    "ragged arrays with more than a single dimension are not supported"
-                # )
+                # )int
 
         else:
             self.root_type = self.members
@@ -489,6 +489,10 @@ class ArrayNP(DtypeNP):
                 "ragged arrays inside of arrays of copmposite datatypes (struct/tuple)"
                 "are not supported"
             )
+
+    def get_root_np_str(self) -> str:
+        dtype_list = self.root_type.make_numpy_dtype()
+        return dtype_list[1]
 
     def make_numpy_dtype(self) -> tuple:
         if self.shape == []:
@@ -607,9 +611,8 @@ class SECoPdtype:
             # describe_dict["dtype_numpy"] = self.dtype_descr
             describe_dict["dtype_descr"] = self.dtype_descr
 
-        if self._is_array:
-            root_secop_dt = self.dtype_tree.root_type.secop_dtype
-            describe_dict["dtype_numpy"] = SECOP2NUMPY[root_secop_dt.__class__]
+        if isinstance(self.dtype_tree, ArrayNP):
+            describe_dict["dtype_numpy"] = self.dtype_tree.get_root_np_str()
 
         describe_dict["dtype"] = self.dtype
         describe_dict["shape"] = self.shape
