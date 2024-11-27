@@ -248,9 +248,9 @@ class SECoPParamBackend(SignalBackend):
 
         if self.SECoP_type_info.max_depth > MAX_DEPTH:
             warnings.warn(
-                f"The datatype of parameter '{path._accessible_name}' has a maximum"
-                f"depth of {self.SECoP_type_info.max_depth}. Tiled & Databroker only"
-                f"support a Depth upto {MAX_DEPTH}"
+                f"The datatype of parameter '{path._accessible_name}' has a maximum "
+                f"depth of {self.SECoP_type_info.max_depth}. Tiled & Databroker only "
+                f"support a Depth upto {MAX_DEPTH} "
                 f"dtype_descr: {self.SECoP_type_info.dtype_descr}"
             )
 

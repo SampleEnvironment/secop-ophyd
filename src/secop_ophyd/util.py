@@ -230,7 +230,7 @@ class BoolNP(DtypeNP):
         self.array_element = array_element
 
     def make_numpy_dtype(self) -> tuple:
-        return (self.name, bool)
+        return (self.name, "<b1")
 
     def make_concrete_numpy_dtype(self, value) -> tuple:
         return self.make_numpy_dtype()
@@ -251,7 +251,7 @@ class EnumNP(DtypeNP):
         self.array_element = array_element
 
     def make_numpy_dtype(self) -> tuple:
-        return (self.name, int)
+        return (self.name, "<i8")
 
     def make_concrete_numpy_dtype(self, value) -> tuple:
         return self.make_numpy_dtype()
@@ -272,7 +272,7 @@ class FloatNP(DtypeNP):
         self.array_element = array_element
 
     def make_numpy_dtype(self) -> tuple:
-        return (self.name, float)
+        return (self.name, "<f8")
 
     def make_concrete_numpy_dtype(self, value) -> tuple:
         return self.make_numpy_dtype()
@@ -293,7 +293,7 @@ class IntNP(DtypeNP):
         self.array_element = array_element
 
     def make_numpy_dtype(self) -> tuple:
-        return (self.name, int)
+        return (self.name, "<i8")
 
     def make_concrete_numpy_dtype(self, value) -> tuple:
         return self.make_numpy_dtype()
@@ -314,7 +314,7 @@ class ScaledIntNP(DtypeNP):
         self.array_element = array_element
 
     def make_numpy_dtype(self) -> tuple:
-        return (self.name, int)
+        return (self.name, "<i8")
 
     def make_concrete_numpy_dtype(self, value) -> tuple:
         return self.make_numpy_dtype()
@@ -345,10 +345,10 @@ class StringNP(DtypeNP):
             self.strlen = string_dt.maxchars
 
     def make_numpy_dtype(self) -> tuple:
-        return (self.name, "U" + str(self.strlen))
+        return (self.name, "<U" + str(self.strlen))
 
     def make_concrete_numpy_dtype(self, value) -> tuple:
-        return (self.name, "U" + str(self.strlen))
+        return (self.name, "<U" + str(self.strlen))
 
     def make_numpy_compatible_list(self, value: str):
         return value
@@ -479,7 +479,7 @@ class ArrayNP(DtypeNP):
                 pass
                 # raise NestedRaggedArray(
                 #    "ragged arrays with more than a single dimension are not supported"
-                # )
+                # )int
 
         else:
             self.root_type = self.members
@@ -489,6 +489,10 @@ class ArrayNP(DtypeNP):
                 "ragged arrays inside of arrays of copmposite datatypes (struct/tuple)"
                 "are not supported"
             )
+
+    def get_root_np_str(self) -> str:
+        dtype_list = self.root_type.make_numpy_dtype()
+        return dtype_list[1]
 
     def make_numpy_dtype(self) -> tuple:
         if self.shape == []:
@@ -557,6 +561,7 @@ class SECoPdtype:
         self.dtype_tree: DtypeNP
 
         self._is_composite: bool = False
+        self._is_array: bool = False
 
         self.dtype_tree = dt_factory(datatype)
 
@@ -564,6 +569,7 @@ class SECoPdtype:
 
         if isinstance(self.dtype_tree, ArrayNP):
             self.shape = self.dtype_tree.shape
+            self._is_array = True
             self._is_composite = (
                 True
                 if isinstance(self.dtype_tree.root_type, (StructNP, TupleNP))
@@ -590,12 +596,10 @@ class SECoPdtype:
 
         # Scalar atomic Datatypes and arrays of atomic dataypes
         else:
-            self._is_composite = False
-
-            if isinstance(self.dtype_tree, ArrayNP):
+            if self._is_array:
                 # root secop datatype that is contained in the array
-                root_secop_dt = self.dtype_tree.root_type.secop_dtype
-                self.dtype = SECOP2DTYPE[root_secop_dt.__class__]
+                self.dtype = "array"
+
             else:
                 self.dtype = SECOP2DTYPE[datatype.__class__]
 
@@ -604,7 +608,11 @@ class SECoPdtype:
         # Composite Datatypes & Arrays of COmposite Datatypes
         if self._is_composite:
             describe_dict["dtype_str"] = self.dtype_str
+            # describe_dict["dtype_numpy"] = self.dtype_descr
             describe_dict["dtype_descr"] = self.dtype_descr
+
+        if isinstance(self.dtype_tree, ArrayNP):
+            describe_dict["dtype_numpy"] = self.dtype_tree.get_root_np_str()
 
         describe_dict["dtype"] = self.dtype
         describe_dict["shape"] = self.shape
