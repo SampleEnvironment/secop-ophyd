@@ -1,3 +1,4 @@
+# mypy: disable-error-code="attr-defined"
 import warnings
 
 from bluesky.plans import count

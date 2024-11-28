@@ -1,3 +1,4 @@
+# mypy: disable-error-code="attr-defined"
 from secop_ophyd.util import Path, deep_get
 
 

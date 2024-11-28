@@ -10,6 +10,7 @@ from typing import Any, List, Union
 
 import numpy as np
 from bluesky.protocols import Reading
+from event_model import DataKey
 from frappy.client import CacheItem
 from frappy.datatypes import (
     ArrayOf,
@@ -24,6 +25,7 @@ from frappy.datatypes import (
     StructOf,
     TupleOf,
 )
+from ophyd_async.core._utils import StrictEnum
 
 SCALAR_DATATYPES = (
     IntRange,
@@ -535,6 +537,7 @@ class ArrayNP(DtypeNP):
 
 
 class SECoPdtype:
+
     def __init__(self, datatype: DataType) -> None:
         self.raw_dtype: DataType = datatype
 
@@ -593,17 +596,21 @@ class SECoPdtype:
             self.dtype = "array"
             self.dtype_str = self.numpy_dtype.str
             self.dtype_descr = self.numpy_dtype.descr
+            self.datatype = np.ndarray
 
         # Scalar atomic Datatypes and arrays of atomic dataypes
         else:
             if self._is_array:
                 # root secop datatype that is contained in the array
                 self.dtype = "array"
+                self.datatype = np.ndarray
 
+            # Primitive datatypes
             else:
-                self.dtype = SECOP2DTYPE[datatype.__class__]
+                self.datatype = SECOP2DTYPE[datatype.__class__][0]
+                self.dtype = SECOP2DTYPE[datatype.__class__][1]
 
-    def get_datakey(self):
+    def get_datakey(self) -> DataKey:
         describe_dict: dict = {}
         # Composite Datatypes & Arrays of COmposite Datatypes
         if self._is_composite:
@@ -711,11 +718,11 @@ class SECoPReading:
 
 
 SECOP2DTYPE = {
-    FloatRange: "number",
-    IntRange: "number",
-    ScaledInteger: "number",
-    BoolType: "boolean",
-    EnumType: "number",
-    StringType: "string",
-    BLOBType: "string",
+    FloatRange: (float, "number"),
+    IntRange: (int, "integer"),
+    ScaledInteger: (int, "integer"),
+    BoolType: (bool, "boolean"),
+    EnumType: (StrictEnum, "string"),
+    StringType: (str, "string"),
+    BLOBType: (str, "string"),
 }

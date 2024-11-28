@@ -1,3 +1,4 @@
+# mypy: disable-error-code="attr-defined"
 import asyncio
 
 from bluesky.protocols import Triggerable

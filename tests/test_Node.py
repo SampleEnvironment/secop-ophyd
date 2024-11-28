@@ -1,3 +1,4 @@
+# mypy: disable-error-code="attr-defined"
 import asyncio
 
 import numpy as np

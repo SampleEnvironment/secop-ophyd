@@ -1,3 +1,4 @@
+# mypy: disable-error-code="attr-defined"
 import pytest
 from frappy.client import CacheItem
 from frappy.datatypes import ArrayOf, FloatRange, StringType, StructOf, TupleOf
