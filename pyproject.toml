@@ -93,6 +93,7 @@ exclude = [".tox", "venv","frappy"]
 [tool.mypy]
 ignore_missing_imports = true          # Ignore missing stubs in imported modules
 plugins = ["numpy.typing.mypy_plugin"]
+check_untyped_defs = true
 
 
 [tool.black]

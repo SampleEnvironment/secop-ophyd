@@ -34,17 +34,14 @@ from frappy.datatypes import (
 )
 from ophyd_async.core import (
     AsyncStatus,
-    ConfigSignal,
-    HintedSignal,
     SignalR,
     SignalRW,
     SignalX,
     StandardReadable,
-    T,
+    StandardReadableFormat,
     observe_value,
 )
 from ophyd_async.core._utils import Callback
-from typing_extensions import Self
 
 from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient
 from secop_ophyd.GenNodeCode import GenNodeCode, Method
@@ -125,7 +122,7 @@ class SECoPBaseDevice(StandardReadable):
 
         self._secclient: AsyncFrappyClient = secclient
 
-        self.status: SignalR = None
+        self.status: SignalR
 
         self.impl: str | None = None
 
@@ -248,45 +245,53 @@ class SECoPCMDDevice(StandardReadable, Flyable, Triggerable):
 
         self.wait_idle: bool = False
 
-        # Argument Signals (config Signals, can also be read)
-        arg_path = path.append("argument")
-        if self.arg_dtype is None:
-            self.argument = None
-        else:
-            arg_backend = LocalBackend(
-                path=arg_path,
-                secop_dtype_obj=self.arg_dtype,
-                sig_datainfo=datainfo["argument"],
+        with self.add_children_as_readables(
+            format=StandardReadableFormat.CONFIG_SIGNAL
+        ):
+            # Argument Signals (config Signals, can also be read)
+            arg_path = path.append("argument")
+            if self.arg_dtype is None:
+                self.argument = None
+            else:
+                arg_backend = LocalBackend(
+                    path=arg_path,
+                    secop_dtype_obj=self.arg_dtype,
+                    sig_datainfo=datainfo["argument"],
+                )
+                self.argument = SignalRW(arg_backend)
+                config.append(self.argument)
+
+            # Result Signals  (read Signals)
+            res_path = path.append("result")
+
+            if self.res_dtype is None:
+                self.result = None
+            else:
+                res_backend = LocalBackend(
+                    path=res_path,
+                    secop_dtype_obj=self.res_dtype,
+                    sig_datainfo=datainfo["result"],
+                )
+                self.result = SignalRW(res_backend)
+                read.append(self.argument)
+
+            argument = None
+            result = None
+            if isinstance(self.argument, SignalR):
+                argument = self.argument._connector.backend
+
+            if isinstance(self.result, SignalR):
+                result = self.result._connector.backend
+
+            # SignalX (signal that triggers execution of the Command)
+            exec_backend = SECoPXBackend(
+                path=path,
+                secclient=secclient,
+                argument=argument,  # type: ignore
+                result=result,  # type: ignore
             )
-            self.argument = SignalRW(arg_backend)
-            config.append(self.argument)
-
-        # Result Signals  (read Signals)
-        res_path = path.append("result")
-
-        if self.res_dtype is None:
-            self.result = None
-        else:
-            res_backend = LocalBackend(
-                path=res_path,
-                secop_dtype_obj=self.res_dtype,
-                sig_datainfo=datainfo["result"],
-            )
-            self.result = SignalRW(res_backend)
-            read.append(self.argument)
-
-        # SignalX (signal that triggers execution of the Command)
-        exec_backend = SECoPXBackend(
-            path=path,
-            secclient=secclient,
-            argument=None if self.argument is None else self.argument._backend,
-            result=None if self.result is None else self.result._backend,
-        )
 
         self.commandx = SignalX(exec_backend)
-
-        self.add_readables(read, wrapper=HintedSignal)
-        self.add_readables(config, wrapper=ConfigSignal)
 
         super().__init__(name=dev_name)
 
@@ -352,10 +357,12 @@ class SECoPReadableDevice(SECoPBaseDevice, Triggerable, Subscribable):
         module_desc = secclient.modules[module_name]
         self.plans: list[Method] = []
         self.mod_prop_devices: Dict[str, SignalR] = {}
-        self.param_devices: Dict[str, T] = {}
+        self.param_devices: Dict[str, Any] = {}
 
         # Add configuration Signal
-        with self.add_children_as_readables(ConfigSignal):
+        with self.add_children_as_readables(
+            format=StandardReadableFormat.CONFIG_SIGNAL
+        ):
             # generate Signals from Module Properties
             for property in module_desc["properties"]:
                 propb = PropertyBackend(property, module_desc["properties"], secclient)
@@ -387,7 +394,9 @@ class SECoPReadableDevice(SECoPBaseDevice, Triggerable, Subscribable):
                 self.param_devices[parameter] = getattr(self, parameter)
 
         # Add readables Signals
-        with self.add_children_as_readables(HintedSignal):
+        with self.add_children_as_readables(
+            format=StandardReadableFormat.HINTED_SIGNAL
+        ):
             for parameter in READABLE_PARAMS:
                 if parameter not in module_desc["parameters"].keys():
                     continue
@@ -465,8 +474,13 @@ class SECoPReadableDevice(SECoPBaseDevice, Triggerable, Subscribable):
 
                 yield from bps.wait_for([wait_for_idle_factory])
 
-            if return_type is not None and cmd_dev.result is not None:
-                return cmd_dev.result._backend.reading.get_value()
+            if (
+                return_type is not None
+                and isinstance(cmd_dev.result, SignalR)
+                and isinstance(cmd_dev.result._connector.backend, LocalBackend)
+            ):
+
+                return cmd_dev.result._connector.backend.reading.get_value()
 
         def command_plan(self, arg, wait_for_idle: bool = False):
             # TODO  Type checking
@@ -485,8 +499,13 @@ class SECoPReadableDevice(SECoPBaseDevice, Triggerable, Subscribable):
 
                 yield from bps.wait_for([wait_for_idle_factory])
 
-            if return_type is not None and cmd_dev.result is not None:
-                return cmd_dev.result._backend.reading.get_value()
+            if (
+                return_type is not None
+                and isinstance(cmd_dev.result, SignalR)
+                and isinstance(cmd_dev.result._connector.backend, LocalBackend)
+            ):
+
+                return cmd_dev.result._connector.backend.reading.get_value()
 
         cmd_meth = command_plan_no_arg if argument_type is None else command_plan
 
@@ -511,7 +530,7 @@ class SECoPReadableDevice(SECoPBaseDevice, Triggerable, Subscribable):
 
         return cmd_meth
 
-    def trigger(self) -> bps.Status:
+    def trigger(self) -> AsyncStatus:
         return AsyncStatus(awaitable=self.value.read(cached=False))
 
     def subscribe(self, function: Callback[dict[str, Reading]]) -> None:
@@ -715,14 +734,16 @@ class SECoPNodeDevice(StandardReadable):
 
         config = []
 
-        with self.add_children_as_readables(ConfigSignal):
+        with self.add_children_as_readables(
+            format=StandardReadableFormat.CONFIG_SIGNAL
+        ):
             for property in self._secclient.properties:
                 propb = PropertyBackend(property, self._secclient.properties, secclient)
                 setattr(self, property, SignalR(backend=propb))
                 config.append(getattr(self, property))
                 self.node_prop_devices[property] = getattr(self, property)
 
-        with self.add_children_as_readables():
+        with self.add_children_as_readables(format=StandardReadableFormat.CHILD):
             for module, module_desc in self._secclient.modules.items():
                 secop_dev_class = class_from_interface(module_desc["properties"])
 
@@ -738,7 +759,7 @@ class SECoPNodeDevice(StandardReadable):
         super().__init__(name=name)
 
     @classmethod
-    def create(cls, host: str, port: str, loop, log=Logger) -> Self:
+    def create(cls, host: str, port: str, loop, log=Logger) -> "SECoPNodeDevice":
 
         secclient: AsyncFrappyClient
 
@@ -762,7 +783,9 @@ class SECoPNodeDevice(StandardReadable):
         return SECoPNodeDevice(secclient=secclient)
 
     @classmethod
-    async def create_async(cls, host: str, port: str, loop, log=Logger) -> Self:
+    async def create_async(
+        cls, host: str, port: str, loop, log=Logger
+    ) -> "SECoPNodeDevice":
 
         secclient: AsyncFrappyClient
 
@@ -930,7 +953,7 @@ class SECoPNodeDevice(StandardReadable):
                 setattr(self, property, SignalR(backend=propb))
                 config.append(getattr(self, property))
 
-            self.add_readables(config, wrapper=ConfigSignal)
+            self.add_readables(config, format=StandardReadableFormat.CONFIG_SIGNAL)
         else:
             # Refresh changed modules
             module_desc = self._secclient.modules[module]

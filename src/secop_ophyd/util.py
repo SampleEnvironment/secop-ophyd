@@ -96,7 +96,7 @@ class Path:
             chain(
                 *[
                     (
-                        [k] + self._dev_path[i : i + n]
+                        [k] + self._dev_path[i : i + n]  # type: ignore
                         if len(self._dev_path[i : i + n]) == n
                         else self._dev_path[i : i + n]
                     )
@@ -111,13 +111,13 @@ class Path:
         if self._dev_path == []:
             return self._accessible_name
 
-        sig_name_postfix = self._dev_path[self._last_named_param :]
+        sig_postfix = self._dev_path[self._last_named_param :]
 
         if self._last_named_param is None:
-            sig_name_postfix = [self._accessible_name] + sig_name_postfix
+            sig_postfix = [self._accessible_name] + sig_postfix  # type: ignore
 
         delim = "-"
-        return delim.join(map(str, sig_name_postfix))
+        return delim.join(map(str, sig_postfix))
 
     def get_param_desc_path(self):
         return [self._module_name, "parameters", self._accessible_name]
@@ -557,6 +557,8 @@ class SECoPdtype:
         # Shape of Data
         self.shape = []
 
+        self.np_datatype: Any
+
         # Describe Fields ------------------------
 
         self.numpy_dtype: np.dtype
@@ -596,18 +598,18 @@ class SECoPdtype:
             self.dtype = "array"
             self.dtype_str = self.numpy_dtype.str
             self.dtype_descr = self.numpy_dtype.descr
-            self.datatype = np.ndarray
+            self.np_datatype = np.ndarray
 
         # Scalar atomic Datatypes and arrays of atomic dataypes
         else:
             if self._is_array:
                 # root secop datatype that is contained in the array
                 self.dtype = "array"
-                self.datatype = np.ndarray
+                self.np_datatype = np.ndarray
 
             # Primitive datatypes
             else:
-                self.datatype = SECOP2DTYPE[datatype.__class__][0]
+                self.np_datatype = SECOP2DTYPE[datatype.__class__][0]
                 self.dtype = SECOP2DTYPE[datatype.__class__][1]
 
     def get_datakey(self) -> DataKey:
