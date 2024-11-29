@@ -70,7 +70,7 @@ class LocalBackend(SignalBackend):
         # TODO check if this is really needed
         self.datainfo: dict = sig_datainfo
 
-        self.callback: Callback
+        self.callback: Callback | None = None
 
         self.SECoPdtype_obj: DataType = secop_dtype_obj
 
