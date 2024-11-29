@@ -1,3 +1,4 @@
+# mypy: disable-error-code="attr-defined"
 from secop_ophyd.util import Path, deep_get
 
 
@@ -30,13 +31,13 @@ def test_path_memberinfo(nested_param_description):
 
     path_struct = path.append("pos_struct")
 
-    datainfo: dict = deep_get(param_desc["datainfo"], path_struct.get_memberinfo_path())
+    datainfo = deep_get(param_desc["datainfo"], path_struct.get_memberinfo_path())
 
     assert datainfo == param_desc["datainfo"]["members"]["pos_struct"]
 
     path_tupl = path.append("tupl")
 
-    datainfo: dict = deep_get(param_desc["datainfo"], path_tupl.get_memberinfo_path())
+    datainfo = deep_get(param_desc["datainfo"], path_tupl.get_memberinfo_path())
 
     assert datainfo == param_desc["datainfo"]["members"]["tupl"]
 
@@ -44,7 +45,7 @@ def test_path_memberinfo(nested_param_description):
 
     assert path_tupl_2.get_memberinfo_path() == ["members", "tupl", "members", 1]
 
-    datainfo: dict = deep_get(param_desc["datainfo"], path_tupl_2.get_memberinfo_path())
+    datainfo = deep_get(param_desc["datainfo"], path_tupl_2.get_memberinfo_path())
 
     assert datainfo == param_desc["datainfo"]["members"]["tupl"]["members"][1]
 

@@ -17,7 +17,7 @@ from frappy.datatypes import (
     StructOf,
     TupleOf,
 )
-from ophyd_async.core import SignalBackend, T
+from ophyd_async.core import Callback, SignalBackend, T
 
 from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient
 from secop_ophyd.util import Path, SECoPdtype, SECoPReading, deep_get
@@ -31,6 +31,7 @@ atomic_dtypes = (
     BLOBType,
     ArrayOf,
 )
+
 
 # max depth for datatypes supported by tiled/databroker
 MAX_DEPTH = 1
@@ -69,7 +70,7 @@ class LocalBackend(SignalBackend):
         # TODO check if this is really needed
         self.datainfo: dict = sig_datainfo
 
-        self.callback: Callable[[Reading, Any], None] | None = None
+        self.callback: Callback | None = None
 
         self.SECoPdtype_obj: DataType = secop_dtype_obj
 
@@ -79,7 +80,7 @@ class LocalBackend(SignalBackend):
 
         self.describe_dict = {}
 
-        self.describe_dict["source"] = self.source("")
+        self.describe_dict["source"] = self.source("", True)
 
         self.describe_dict.update(self.SECoP_type_info.get_datakey())
 
@@ -88,17 +89,19 @@ class LocalBackend(SignalBackend):
                 property_name = "SECoP_dtype"
             self.describe_dict[property_name] = prop_val
 
-    def source(self, name: str) -> str:
+        super().__init__(datatype=self.SECoP_type_info.np_datatype)
+
+    def source(self, name: str, read: bool) -> str:
         return self.source_name
 
-    async def connect(self):
+    async def connect(self, timeout: float):
         pass
 
-    async def put(self, value: Any | None, wait=True, timeout=None):
+    async def put(self, value: Any | None, wait=True):
         self.reading.set_reading(self.SECoP_type_info.val2secop(value))
 
         if self.callback is not None:
-            self.callback(self.reading.get_reading(), self.reading.get_value())
+            self.callback(self.reading.get_reading())
 
     async def get_datakey(self, source: str) -> DataKey:
         """Metadata like source, dtype, shape, precision, units"""
@@ -110,8 +113,11 @@ class LocalBackend(SignalBackend):
     async def get_value(self) -> T:
         return self.reading.get_value()
 
-    def set_callback(self, callback: Callable[[Reading, Any], None] | None) -> None:
-        self.callback = callback
+    async def get_setpoint(self) -> T:
+        return await self.get_value()
+
+    def set_callback(self, callback: Callback[T] | None) -> None:
+        self.callback = callback  # type: ignore[assignment]
 
 
 # TODO add return of Asyncstatus
@@ -150,14 +156,15 @@ class SECoPXBackend(SignalBackend):
         self.result: LocalBackend | None = result
 
         self.source_name = self.path._module_name + ":" + self.path._accessible_name
+        super().__init__(datatype=None)
 
-    def source(self, name: str) -> str:
+    def source(self, name: str, read: bool) -> str:
         return self.source_name
 
-    async def connect(self):
+    async def connect(self, timeout: float):
         pass
 
-    async def put(self, value: Any | None, wait=True, timeout=None):
+    async def put(self, value: Any | None, wait=True):
 
         if self.argument is None:
             argument = None
@@ -170,7 +177,7 @@ class SECoPXBackend(SignalBackend):
                 command=self.path._accessible_name,
                 argument=argument,
             ),
-            timeout=timeout,
+            timeout=None,
         )
 
         # write return Value to corresponding Backend
@@ -186,7 +193,7 @@ class SECoPXBackend(SignalBackend):
         """Metadata like source, dtype, shape, precision, units"""
         res = {}
 
-        res["source"] = self.source("")
+        res["source"] = self.source("", True)
 
         # ophyd datatype (some SECoP datatypeshaveto be converted)
         # signalx has no datatype and is never read
@@ -210,8 +217,14 @@ class SECoPXBackend(SignalBackend):
             + " used to trigger Command execution"
         )
 
-    def set_callback(self, callback: Callable[[Reading, Any], None] | None) -> None:
+    def set_callback(self, callback: Callback[T] | None) -> None:
         pass
+
+    async def get_setpoint(self) -> T:
+        raise Exception(
+            "Cannot read _x Signal, it has no value and is only"
+            + " used to trigger Command execution"
+        )
 
 
 class SECoPParamBackend(SignalBackend):
@@ -225,6 +238,7 @@ class SECoPParamBackend(SignalBackend):
         :param secclient: SECoP client providing communication to the SEC Node
         :type secclient: AsyncFrappyClient
         """
+
         # secclient
         self._secclient: AsyncFrappyClient = secclient
 
@@ -240,7 +254,6 @@ class SECoPParamBackend(SignalBackend):
 
         self.readonly = self._param_description.get("readonly")
 
-        self.datatype: str
         self.SECoPdtype_str: str
         self.SECoPdtype_obj: DataType = self._param_description["datatype"]
 
@@ -287,19 +300,23 @@ class SECoPParamBackend(SignalBackend):
                 property_name = "units"
             self.describe_dict[property_name] = prop_val
 
-    def source(self, name: str) -> str:
+        super().__init__(datatype=self.SECoP_type_info.np_datatype)
+
+    def source(self, name: str, read: bool) -> str:
         return self.source_name
 
-    async def connect(self):
+    async def connect(self, timeout: float):
         pass
 
-    async def put(self, value: Any | None, wait=True, timeout=None):
+    async def put(self, value: Any | None, wait=True):
         # convert to frappy compatible Format
         secop_val = self.SECoP_type_info.val2secop(value)
 
+        # frappy client has no ability to just send a secop message without
+        # waiting for a reply
         await asyncio.wait_for(
             self._secclient.set_parameter(**self.get_param_path(), value=secop_val),
-            timeout=timeout,
+            timeout=None,
         )
 
     async def get_datakey(self, source: str) -> DataKey:
@@ -333,7 +350,10 @@ class SECoPParamBackend(SignalBackend):
 
         return dataset["value"]  # type: ignore
 
-    def set_callback(self, callback: Callable[[Reading, Any], None] | None) -> None:
+    async def get_setpoint(self) -> T:
+        return await self.get_value()
+
+    def set_callback(self, callback: Callback[T] | None) -> None:
         def awaitify(sync_func):
             """Wrap a synchronous callable to allow ``await``'ing it"""
 
@@ -348,7 +368,7 @@ class SECoPParamBackend(SignalBackend):
             async_callback = awaitify(callback)
 
             asyncio.run_coroutine_threadsafe(
-                async_callback(reading=data.get_reading(), value=data.get_value()),
+                async_callback(reading=data.get_reading()),
                 self._secclient.loop,
             )
 
@@ -421,14 +441,16 @@ class PropertyBackend(SignalBackend):
         self._secclient: AsyncFrappyClient = secclient
         # TODO full property path
 
-    def source(self, name: str) -> str:
+        super().__init__(datatype=self.SECoP_type_info.np_datatype)
+
+    def source(self, name: str, read: bool) -> str:
         return str(self.source_name)
 
-    async def connect(self):
+    async def connect(self, timeout: float):
         """Connect to underlying hardware"""
         pass
 
-    async def put(self, value: Optional[T], wait=True, timeout=None):
+    async def put(self, value: Optional[T], wait=True):
         """Put a value to the PV, if wait then wait for completion for up to timeout"""
         # Properties are readonly
         pass
@@ -451,7 +473,10 @@ class PropertyBackend(SignalBackend):
 
         return dataset["value"]  # type: ignore
 
-    def set_callback(self, callback: Callable[[Reading, Any], None] | None) -> None:
+    async def get_setpoint(self) -> T:
+        return await self.get_value()
+
+    def set_callback(self, callback: Callback[T] | None) -> None:
         pass
 
 
@@ -481,9 +506,9 @@ def secop_dtype_obj_from_json(prop_val):
             members = secop_dtype_obj_from_json(prop_val[0])
             return ArrayOf(members)
         else:
-            members = []
+            members = []  # type: ignore
             for elem in prop_val:
-                members.append(secop_dtype_obj_from_json(elem))
+                members.append(secop_dtype_obj_from_json(elem))  # type: ignore
             return TupleOf(*members)
 
     raise Exception(

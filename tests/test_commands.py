@@ -1,3 +1,4 @@
+# mypy: disable-error-code="attr-defined"
 import asyncio
 
 from bluesky.protocols import Triggerable
@@ -56,7 +57,7 @@ async def test_struct_inp_cmd(nested_struct_sim, nested_node: SECoPNodeDevice):
 
     await test_cmd.argument.set(input_dict)  # type: ignore
 
-    res: SignalR = test_cmd.result
+    res: SignalR = test_cmd.result  # type: ignore
 
     run_obj: SignalX = test_cmd.commandx
 
@@ -86,7 +87,7 @@ async def test_secop_error_on_cmd(nested_struct_sim, nested_node: SECoPNodeDevic
 
     await test_cmd.argument.set(input_dict)  # type: ignore
 
-    res: SignalR = test_cmd.result
+    res: SignalR = test_cmd.result  # type: ignore
 
     run_obj: SignalX = test_cmd.commandx
 
@@ -114,7 +115,7 @@ async def test_secop_triggering_cmd_dev(
 
     await test_cmd.argument.set(input_dict)  # type: ignore
 
-    res: SignalR = test_cmd.result
+    res: SignalR = test_cmd.result  # type: ignore
 
     stat = test_cmd.trigger()
 

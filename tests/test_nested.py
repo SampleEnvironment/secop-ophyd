@@ -1,3 +1,4 @@
+# mypy: disable-error-code="attr-defined"
 import numpy as np
 from ophyd_async.core import SignalR, SignalRW
 

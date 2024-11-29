@@ -1,3 +1,4 @@
+# mypy: disable-error-code="attr-defined"
 import asyncio
 
 import numpy as np
@@ -29,7 +30,7 @@ async def test_node_describe(cryo_sim, cryo_node_internal_loop: SECoPNodeDevice)
 
 
 async def test_node_module_describe(cryo_sim, cryo_node_internal_loop: SECoPNodeDevice):
-    # Node device has no read value, it has to return an empty dict
+
     val_desc = await cryo_node_internal_loop.cryo.describe_configuration()
     conf = await cryo_node_internal_loop.cryo.read_configuration()
 
@@ -39,16 +40,20 @@ async def test_node_module_describe(cryo_sim, cryo_node_internal_loop: SECoPNode
 
 
 async def test_dev_read(cryo_sim, cryo_node_internal_loop: SECoPNodeDevice):
-    # Node device has no read value, it has to return an empty dict
+
     cryo_dev: SECoPMoveableDevice = cryo_node_internal_loop.cryo
     cryo_val = await cryo_dev.read()
     val_name = cryo_dev.value.name
-    assert cryo_val[val_name].get("value") > 5
+
+    read_val = cryo_val[val_name].get("value")
+
+    assert read_val is not None
+    assert read_val > 5
     await cryo_node_internal_loop.disconnect_async()
 
 
 async def test_signal_read(cryo_sim, cryo_node_internal_loop: SECoPNodeDevice):
-    # Node device has no read value, it has to return an empty dict
+
     cryo_dev: SECoPMoveableDevice = cryo_node_internal_loop.cryo
 
     p = await cryo_dev.p.get_value(cached=False)
@@ -58,7 +63,7 @@ async def test_signal_read(cryo_sim, cryo_node_internal_loop: SECoPNodeDevice):
 
 
 async def test_signal_read_cached(cryo_sim, cryo_node_internal_loop: SECoPNodeDevice):
-    # Node device has no read value, it has to return an empty dict
+
     cryo_dev: SECoPMoveableDevice = cryo_node_internal_loop.cryo
 
     p = await cryo_dev.p.get_value(cached=True)
@@ -71,7 +76,7 @@ async def test_signal_read_cached(cryo_sim, cryo_node_internal_loop: SECoPNodeDe
 async def test_signal_stage_unstage_read_cached(
     cryo_sim, cryo_node_internal_loop: SECoPNodeDevice
 ):
-    # Node device has no read value, it has to return an empty dict
+
     cryo_dev: SECoPMoveableDevice = cryo_node_internal_loop.cryo
 
     await cryo_dev.value.stage()
@@ -90,24 +95,18 @@ async def test_signal_stage_unstage_read_cached(
 
 
 async def test_status(cryo_sim, cryo_node_internal_loop: SECoPNodeDevice):
-    # Node device has no read value, it has to return an empty dict
+
     cryo_dev: SECoPMoveableDevice = cryo_node_internal_loop.cryo
     status: SignalR = cryo_dev.status
 
-    stat_reading = await status.read()
-
-    stat_val = stat_reading[status.name].get("value")
-
     async for current_stat in observe_value(status):
+        assert current_stat["f0"] == 100
+
         if current_stat["f0"] == 100:
             break
 
-    print(stat_val["f0"])
-    await cryo_node_internal_loop.disconnect_async()
-
 
 async def test_trigger(cryo_sim, cryo_node_internal_loop: SECoPNodeDevice):
-    # Node device has no read value, it has to return an empty dict
     cryo_dev: SECoPMoveableDevice = cryo_node_internal_loop.cryo
 
     val_old = await cryo_dev.read()
@@ -155,11 +154,9 @@ async def test_node_drive(cryo_sim, cryo_node_internal_loop: SECoPNodeDevice):
 
     await stat
 
-    reading = await cryo_dev.read()
+    reading = await cryo_dev.value.get_value()
 
-    assert np.isclose(
-        reading.get(cryo_dev.value.name).get("value"), new_target, atol=0.2
-    )
+    assert np.isclose(reading, new_target, atol=0.2)
 
     await cryo_node_internal_loop.disconnect_async()
 

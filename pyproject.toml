@@ -9,7 +9,7 @@ version = "0.0.1"
 description = "An Interface between bluesky and SECoP, using ophyd and frappy-client"
 
 dependencies = [
-    'ophyd-async == 0.7.0',
+    'ophyd-async == 0.8.0',
     'frappy-core@git+https://github.com/SampleEnvironment/frappy@v0.19.2'
     
 ]
@@ -93,6 +93,7 @@ exclude = [".tox", "venv","frappy"]
 [tool.mypy]
 ignore_missing_imports = true          # Ignore missing stubs in imported modules
 plugins = ["numpy.typing.mypy_plugin"]
+check_untyped_defs = true
 
 
 [tool.black]

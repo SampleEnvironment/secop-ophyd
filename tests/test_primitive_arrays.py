@@ -1,3 +1,5 @@
+# mypy: disable-error-code="attr-defined"
+
 import pytest
 from bluesky import RunEngine
 from bluesky.callbacks.best_effort import BestEffortCallback

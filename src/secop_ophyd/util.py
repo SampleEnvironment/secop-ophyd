@@ -10,6 +10,7 @@ from typing import Any, List, Union
 
 import numpy as np
 from bluesky.protocols import Reading
+from event_model import DataKey
 from frappy.client import CacheItem
 from frappy.datatypes import (
     ArrayOf,
@@ -24,6 +25,7 @@ from frappy.datatypes import (
     StructOf,
     TupleOf,
 )
+from ophyd_async.core._utils import StrictEnum
 
 SCALAR_DATATYPES = (
     IntRange,
@@ -94,7 +96,7 @@ class Path:
             chain(
                 *[
                     (
-                        [k] + self._dev_path[i : i + n]
+                        [k] + self._dev_path[i : i + n]  # type: ignore
                         if len(self._dev_path[i : i + n]) == n
                         else self._dev_path[i : i + n]
                     )
@@ -109,13 +111,13 @@ class Path:
         if self._dev_path == []:
             return self._accessible_name
 
-        sig_name_postfix = self._dev_path[self._last_named_param :]
+        sig_postfix = self._dev_path[self._last_named_param :]
 
         if self._last_named_param is None:
-            sig_name_postfix = [self._accessible_name] + sig_name_postfix
+            sig_postfix = [self._accessible_name] + sig_postfix  # type: ignore
 
         delim = "-"
-        return delim.join(map(str, sig_name_postfix))
+        return delim.join(map(str, sig_postfix))
 
     def get_param_desc_path(self):
         return [self._module_name, "parameters", self._accessible_name]
@@ -535,6 +537,7 @@ class ArrayNP(DtypeNP):
 
 
 class SECoPdtype:
+
     def __init__(self, datatype: DataType) -> None:
         self.raw_dtype: DataType = datatype
 
@@ -553,6 +556,8 @@ class SECoPdtype:
 
         # Shape of Data
         self.shape = []
+
+        self.np_datatype: Any
 
         # Describe Fields ------------------------
 
@@ -593,17 +598,21 @@ class SECoPdtype:
             self.dtype = "array"
             self.dtype_str = self.numpy_dtype.str
             self.dtype_descr = self.numpy_dtype.descr
+            self.np_datatype = np.ndarray
 
         # Scalar atomic Datatypes and arrays of atomic dataypes
         else:
             if self._is_array:
                 # root secop datatype that is contained in the array
                 self.dtype = "array"
+                self.np_datatype = np.ndarray
 
+            # Primitive datatypes
             else:
-                self.dtype = SECOP2DTYPE[datatype.__class__]
+                self.np_datatype = SECOP2DTYPE[datatype.__class__][0]
+                self.dtype = SECOP2DTYPE[datatype.__class__][1]
 
-    def get_datakey(self):
+    def get_datakey(self) -> DataKey:
         describe_dict: dict = {}
         # Composite Datatypes & Arrays of COmposite Datatypes
         if self._is_composite:
@@ -711,11 +720,11 @@ class SECoPReading:
 
 
 SECOP2DTYPE = {
-    FloatRange: "number",
-    IntRange: "number",
-    ScaledInteger: "number",
-    BoolType: "boolean",
-    EnumType: "number",
-    StringType: "string",
-    BLOBType: "string",
+    FloatRange: (float, "number"),
+    IntRange: (int, "integer"),
+    ScaledInteger: (int, "integer"),
+    BoolType: (bool, "boolean"),
+    EnumType: (StrictEnum, "string"),
+    StringType: (str, "string"),
+    BLOBType: (str, "string"),
 }
