@@ -52,7 +52,7 @@ from secop_ophyd.SECoPSignal import (
     SECoPParamBackend,
     SECoPXBackend,
 )
-from secop_ophyd.util import Path
+from secop_ophyd.util import Access, Path, Role, get_access_level
 
 # Predefined Status Codes
 DISABLED = 0
@@ -84,119 +84,11 @@ def clean_identifier(anystring):
     return str(re.sub(r"\W+|^(?=\d)", "_", anystring))
 
 
-def class_from_interface(mod_properties: Dict[str, Dict[str, str]]):
-    module_interface_classes: dict = mod_properties[INTERFACE_CLASSES]
-    for interface_class in IF_CLASSES.keys():
-        if interface_class in module_interface_classes:
-            return IF_CLASSES[interface_class]
-
-    raise Exception(
-        "no compatible Interfaceclass found in: "
-        + str(mod_properties.get(INTERFACE_CLASSES))
-    )
-
-
 def get_config_attrs(parameters):
     parameters_cfg = parameters.copy()
     parameters_cfg.pop("target", None)
     parameters_cfg.pop("value", None)
     return parameters_cfg
-
-
-class SECoPBaseDevice(StandardReadable):
-    """Base Class for generating Opyd devices from SEC Node modules,
-    objects of type SECoPBaseDevice are not supposed to be instanciated
-
-    """
-
-    def __init__(self, secclient: AsyncFrappyClient) -> None:
-        """Initiate A SECoPBaseDevice
-
-        :param secclient: SECoP client providing communication to the SEC Node
-        :type secclient: AsyncFrappyClient
-        :raises Exception: If SECoPBaseDevice is instanciated on its own
-        """
-
-        if type(self) is SECoPBaseDevice:
-            raise Exception("<SECoPBaseDevice> must be subclassed.")
-
-        self._secclient: AsyncFrappyClient = secclient
-
-        self.status: SignalR
-
-        self.impl: str | None = None
-
-    def _signal_from_parameter(self, path: Path, sig_name: str, readonly: bool):
-        """Generates an Ophyd Signal from a Module Parameter
-
-        :param path: Path to the Parameter in the secclient module dict
-        :type path: Path
-        :param sig_name: Name of the new Signal
-        :type sig_name: str
-        :param readonly: Signal is R or RW
-        :type readonly: bool
-        """
-        # Normal types + (struct and tuple as JSON object Strings)
-        paramb = SECoPParamBackend(path=path, secclient=self._secclient)
-
-        # construct signal
-        if readonly:
-            setattr(self, sig_name, SignalR(paramb))
-        else:
-            setattr(self, sig_name, SignalRW(paramb))
-
-        def noop(val):
-            pass
-
-        sig: SignalR = getattr(self, sig_name)
-        sig.subscribe_value(noop)
-
-    async def wait_for_idle(self):
-        """asynchronously waits until module is IDLE again. this is helpful,
-        for running commands that are not done immediately
-        """
-        if self.status is None:
-            raise Exception("status Signal not initialized")
-
-        # force reading of fresh status from device
-        await self.status.read(False)
-
-        async for current_stat in observe_value(self.status):
-            # status is has type Tuple and is therefore transported as
-            # structured Numpy array ('f0':statuscode;'f1':status Message)
-
-            stat_code = current_stat["f0"]
-
-            # Module is in IDLE/WARN state
-            if IDLE <= stat_code < BUSY:
-                break
-
-            if hasattr(self, "_stopped"):
-                if self._stopped is True:
-                    break
-
-            # Error State or DISABLED
-            if hasattr(self, "_success"):
-                if stat_code >= ERROR or stat_code < IDLE:
-                    self._success = False
-                    break
-
-    # TODO add timeout
-    def observe_status_change(self, monitored_status_code: int):
-        async def switch_from_status_inner():
-            async for current_stat in observe_value(self.status):
-                # status is has type Tuple and is therefore transported as
-                # structured Numpy array ('f0':statuscode;'f1':status Message)
-
-                stat_code = current_stat["f0"]
-
-                if monitored_status_code != stat_code:
-                    break
-
-        def switch_from_status_factory():
-            return switch_from_status_inner()
-
-        yield from bps.wait_for([switch_from_status_factory])
 
 
 class SECoPCMDDevice(StandardReadable, Flyable, Triggerable):
@@ -332,26 +224,26 @@ class SECoPCMDDevice(StandardReadable, Flyable, Triggerable):
         return await self.describe()
 
 
-class SECoPReadableDevice(SECoPBaseDevice, Triggerable, Subscribable):
-    """
-    Standard readable SECoP device, corresponding to a SECoP module with the
-    interface class "Readable"
+class SECoPBaseDevice(StandardReadable):
+    """Base Class for generating Opyd devices from SEC Node modules,
+    objects of type SECoPBaseDevice are not supposed to be instanciated
+
     """
 
-    def __init__(self, secclient: AsyncFrappyClient, module_name: str):
-        """Initializes the SECoPReadableDevice
+    def __init__(
+        self, secclient: AsyncFrappyClient, module_name: str, role: Role = Role.USER
+    ) -> None:
+        """Initiate A SECoPBaseDevice
 
         :param secclient: SECoP client providing communication to the SEC Node
         :type secclient: AsyncFrappyClient
-        :param module_name: Name of the SEC Node module that is represented by
-            this device
-        :type module_name: str
         """
 
-        self.value: SignalR
-        self.descriptiom: SignalR
+        self._secclient: AsyncFrappyClient = secclient
 
-        super().__init__(secclient=secclient)
+        self.impl: str | None = None
+
+        self.role: Role = role
 
         self._module = module_name
         module_desc = secclient.modules[module_name]
@@ -530,6 +422,130 @@ class SECoPReadableDevice(SECoPBaseDevice, Triggerable, Subscribable):
 
         return cmd_meth
 
+    def _signal_from_parameter(self, path: Path, sig_name: str, readonly: bool):
+        """Generates an Ophyd Signal from a Module Parameter
+
+        :param path: Path to the Parameter in the secclient module dict
+        :type path: Path
+        :param sig_name: Name of the new Signal
+        :type sig_name: str
+        :param readonly: Signal is R or RW
+        :type readonly: bool
+        """
+        # Normal types + (struct and tuple as JSON object Strings)
+        paramb = SECoPParamBackend(path=path, secclient=self._secclient)
+
+        # construct signal
+        if readonly:
+            setattr(self, sig_name, SignalR(paramb))
+        else:
+            setattr(self, sig_name, SignalRW(paramb))
+
+        def noop(val):
+            pass
+
+        sig: SignalR = getattr(self, sig_name)
+        sig.subscribe_value(noop)
+
+
+class SECoPCommunicatorDevice(SECoPBaseDevice):
+
+    def __init__(
+        self, secclient: AsyncFrappyClient, module_name: str, role: Role = Role.USER
+    ):
+        """Initializes the SECoPCommunicatorDevice
+
+        :param secclient: SECoP client providing communication to the SEC Node
+        :type secclient: AsyncFrappyClient
+        :param module_name: Name of the SEC Node module that is represented by
+            this device
+        :type module_name: str"""
+
+        super().__init__(secclient=secclient, module_name=module_name, role=role)
+
+
+class SECoPReadableDevice(SECoPCommunicatorDevice, Triggerable, Subscribable):
+    """
+    Standard readable SECoP device, corresponding to a SECoP module with the
+    interface class "Readable"
+    """
+
+    def __init__(
+        self, secclient: AsyncFrappyClient, module_name: str, role: Role = Role.USER
+    ):
+        """Initializes the SECoPReadableDevice
+
+        :param secclient: SECoP client providing communication to the SEC Node
+        :type secclient: AsyncFrappyClient
+        :param module_name: Name of the SEC Node module that is represented by
+            this device
+        :type module_name: str
+        """
+
+        self.value: SignalR
+        self.status: SignalR
+
+        super().__init__(secclient=secclient, module_name=module_name, role=role)
+
+        if not hasattr(self, "value"):
+            raise AttributeError(
+                "Attribute 'value' has not been assigned,"
+                + "but is needed for Readable interface class"
+            )
+
+        if not hasattr(self, "status"):
+            raise AttributeError(
+                "Attribute 'status' has not been assigned,"
+                + "but is needed for Readable interface class"
+            )
+
+    async def wait_for_idle(self):
+        """asynchronously waits until module is IDLE again. this is helpful,
+        for running commands that are not done immediately
+        """
+        if self.status is None:
+            raise Exception("status Signal not initialized")
+
+        # force reading of fresh status from device
+        await self.status.read(False)
+
+        async for current_stat in observe_value(self.status):
+            # status is has type Tuple and is therefore transported as
+            # structured Numpy array ('f0':statuscode;'f1':status Message)
+
+            stat_code = current_stat["f0"]
+
+            # Module is in IDLE/WARN state
+            if IDLE <= stat_code < BUSY:
+                break
+
+            if hasattr(self, "_stopped"):
+                if self._stopped is True:
+                    break
+
+            # Error State or DISABLED
+            if hasattr(self, "_success"):
+                if stat_code >= ERROR or stat_code < IDLE:
+                    self._success = False
+                    break
+
+    # TODO add timeout
+    def observe_status_change(self, monitored_status_code: int):
+        async def switch_from_status_inner():
+            async for current_stat in observe_value(self.status):
+                # status is has type Tuple and is therefore transported as
+                # structured Numpy array ('f0':statuscode;'f1':status Message)
+
+                stat_code = current_stat["f0"]
+
+                if monitored_status_code != stat_code:
+                    break
+
+        def switch_from_status_factory():
+            return switch_from_status_inner()
+
+        yield from bps.wait_for([switch_from_status_factory])
+
     def trigger(self) -> AsyncStatus:
         return AsyncStatus(awaitable=self.value.read(cached=False))
 
@@ -542,13 +558,15 @@ class SECoPReadableDevice(SECoPBaseDevice, Triggerable, Subscribable):
         self.value.clear_sub(function=function)
 
 
-class SECoPTriggerableDevice(SECoPReadableDevice, Triggerable, Stoppable):
+class SECoPTriggerableDevice(SECoPReadableDevice, Stoppable):
     """
     Standard triggerable SECoP device, corresponding to a SECoP module with the0s
     interface class "Triggerable"
     """
 
-    def __init__(self, secclient: AsyncFrappyClient, module_name: str):
+    def __init__(
+        self, secclient: AsyncFrappyClient, module_name: str, role: Role = Role.USER
+    ):
         """Initialize SECoPTriggerableDevice
 
         :param secclient: SECoP client providing communication to the SEC Node
@@ -563,7 +581,7 @@ class SECoPTriggerableDevice(SECoPReadableDevice, Triggerable, Stoppable):
         self._success = True
         self._stopped = False
 
-        super().__init__(secclient, module_name)
+        super().__init__(secclient, module_name, role)
 
     async def __go_coro(self, wait_for_idle: bool):
         await self._secclient.exec_command(module=self._module, command="go")
@@ -619,7 +637,9 @@ class SECoPMoveableDevice(SECoPWritableDevice, Locatable, Stoppable):
     interface class "Drivable"
     """
 
-    def __init__(self, secclient: AsyncFrappyClient, module_name: str):
+    def __init__(
+        self, secclient: AsyncFrappyClient, module_name: str, role: Role = Role.USER
+    ):
         """Initialize SECoPMovableDevice
 
         :param secclient: SECoP client providing communication to the SEC Node
@@ -631,7 +651,13 @@ class SECoPMoveableDevice(SECoPWritableDevice, Locatable, Stoppable):
 
         self.target: SignalRW
 
-        super().__init__(secclient, module_name)
+        super().__init__(secclient, module_name, role)
+
+        if not hasattr(self, "target"):
+            raise AttributeError(
+                "Attribute 'target' has not been assigned, "
+                + "but is needed for 'Drivable' interface class!"
+            )
 
         self._success = True
         self._stopped = False
@@ -708,13 +734,15 @@ class SECoPNodeDevice(StandardReadable):
     to the Sec-node properties
     """
 
-    def __init__(self, secclient: AsyncFrappyClient):
+    def __init__(self, secclient: AsyncFrappyClient, role="USER"):
         """Initializes the node device and generates all node signals and subdevices
         corresponding to the SECoP-modules of the secnode
 
         :param secclient: SECoP client providing communication to the SEC Node
         :type secclient: AsyncFrappyClient
         """
+
+        self.role: Role = Role[role]
 
         self.equipment_id: SignalR
         self.description: SignalR
@@ -745,10 +773,18 @@ class SECoPNodeDevice(StandardReadable):
 
         with self.add_children_as_readables(format=StandardReadableFormat.CHILD):
             for module, module_desc in self._secclient.modules.items():
-                secop_dev_class = class_from_interface(module_desc["properties"])
 
-                setattr(self, module, secop_dev_class(self._secclient, module))
-                self.mod_devices[module] = getattr(self, module)
+                secop_dev_class = self.class_from_interface(module_desc["properties"])
+
+                # if access level is not enough 'secop_dev_class' is set to None
+                # --> module is hidden
+                if secop_dev_class is not None:
+                    setattr(
+                        self,
+                        module,
+                        secop_dev_class(self._secclient, module, self.role),
+                    )
+                    self.mod_devices[module] = getattr(self, module)
 
         # register secclient callbacks (these are useful if sec node description
         # changes after a reconnect)
@@ -866,6 +902,8 @@ class SECoPNodeDevice(StandardReadable):
             if isinstance(
                 attr_value,
                 (
+                    SECoPBaseDevice,
+                    SECoPCommunicatorDevice,
                     SECoPReadableDevice,
                     SECoPWritableDevice,
                     SECoPMoveableDevice,
@@ -957,7 +995,7 @@ class SECoPNodeDevice(StandardReadable):
         else:
             # Refresh changed modules
             module_desc = self._secclient.modules[module]
-            secop_dev_class = class_from_interface(module_desc["properties"])
+            secop_dev_class = self.class_from_interface(module_desc["properties"])
 
             setattr(self, module, secop_dev_class(self._secclient, module))
 
@@ -972,14 +1010,60 @@ class SECoPNodeDevice(StandardReadable):
         if state == "connected" and online is True:
             self._secclient.conn_timestamp = ttime.time()
 
+    def class_from_interface(self, mod_properties: dict):
+        module_access_level = Access.WRITE
+        ophyd_class = None
+
+        # check if acessmode is defined for the module
+        if "accessmode" in mod_properties:
+            module_access_level = get_access_level(
+                self.role, mod_properties["accessmode"]
+            )
+
+        # infer highest level IF class
+        module_interface_classes: dict = mod_properties[INTERFACE_CLASSES]
+        for interface_class in IF_CLASSES.keys():
+            if interface_class in module_interface_classes:
+                ophyd_class = IF_CLASSES[interface_class]
+                break
+
+        # No predefined IF class was a match --> use base class (loose collection of
+        # accessibles)
+        if ophyd_class is None:
+            ophyd_class = SECoPBaseDevice  # type: ignore
+
+        # downgrade IF class if accesslevel is not sufficient
+        match module_access_level:
+            # Full access
+            case Access.WRITE:
+                return ophyd_class
+
+            # demote to lower IF class
+            case Access.READ:
+                if ophyd_class == SECoPBaseDevice:
+                    return SECoPBaseDevice
+                if ophyd_class == SECoPCommunicatorDevice:
+                    return SECoPCommunicatorDevice
+                if ophyd_class == SECoPReadableDevice:
+                    return SECoPReadableDevice
+                if ophyd_class == SECoPWritableDevice:
+                    return SECoPReadableDevice
+                if ophyd_class == SECoPMoveableDevice:
+                    return SECoPReadableDevice
+                if ophyd_class == SECoPTriggerableDevice:
+                    return SECoPReadableDevice
+
+            # NO access --> Module is hidden
+            case Access.NO_ACCESS:
+                return None
+
 
 IF_CLASSES = {
     "Triggerable": SECoPTriggerableDevice,
     "Drivable": SECoPMoveableDevice,
     "Writable": SECoPWritableDevice,
     "Readable": SECoPReadableDevice,
-    "Module": SECoPReadableDevice,
-    "Communicator": SECoPReadableDevice,
+    "Communicator": SECoPCommunicatorDevice,
 }
 
 SECOP_TO_NEXUS_TYPE = {

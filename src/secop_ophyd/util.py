@@ -4,6 +4,7 @@ import copy
 import time
 import warnings
 from abc import ABC, abstractmethod
+from enum import Enum
 from functools import reduce
 from itertools import chain
 from typing import Any, List, Union
@@ -35,6 +36,34 @@ SCALAR_DATATYPES = (
     StringType,
     EnumType,
 )
+
+
+class Role(Enum):
+    USER = 0
+    ADVANCED = 1
+    EXPERT = 2
+
+
+class Access(Enum):
+    NO_ACCESS = 0
+    READ = 1
+    WRITE = 2
+
+
+def get_access_level(role: Role, accessmode: str) -> Access:
+    assert len(accessmode) == 3
+
+    access_str = accessmode[role.value]
+
+    match access_str:
+        case "r":
+            return Access.READ
+        case "w":
+            return Access.WRITE
+        case "-":
+            return Access.NO_ACCESS
+        case _:
+            raise Exception(f"unknown accces level: {accessmode[role.value]}")
 
 
 class NestedRaggedArray(Exception):
