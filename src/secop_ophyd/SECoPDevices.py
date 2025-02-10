@@ -816,7 +816,9 @@ class SECoPNodeDevice(StandardReadable):
         with self.add_children_as_readables(format=StandardReadableFormat.CHILD):
             for module, module_desc in self._secclient.modules.items():
 
-                secop_dev_class = self.class_from_interface(module_desc["properties"])
+                (secop_dev_class, module_access) = self.class_from_interface(
+                    module_desc["properties"]
+                )
 
                 # if access level is not enough 'secop_dev_class' is set to None
                 # --> module is hidden
@@ -825,9 +827,7 @@ class SECoPNodeDevice(StandardReadable):
                         self,
                         module,
                         secop_dev_class(
-                            self._secclient,
-                            module,
-                            self.role,
+                            self._secclient, module, self.role, module_access
                         ),
                     )
                     self.mod_devices[module] = getattr(self, module)
@@ -1041,9 +1041,15 @@ class SECoPNodeDevice(StandardReadable):
         else:
             # Refresh changed modules
             module_desc = self._secclient.modules[module]
-            secop_dev_class = self.class_from_interface(module_desc["properties"])
+            (secop_dev_class, module_access) = self.class_from_interface(
+                module_desc["properties"]
+            )
 
-            setattr(self, module, secop_dev_class(self._secclient, module))
+            setattr(
+                self,
+                module,
+                secop_dev_class(self._secclient, module, self.role, module_access),
+            )
 
             # TODO what about removing Modules during disconn
 
