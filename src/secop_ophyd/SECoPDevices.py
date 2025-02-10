@@ -231,7 +231,11 @@ class SECoPBaseDevice(StandardReadable):
     """
 
     def __init__(
-        self, secclient: AsyncFrappyClient, module_name: str, role: Role = Role.USER
+        self,
+        secclient: AsyncFrappyClient,
+        module_name: str,
+        role: Role = Role.USER,
+        accesslevel: Access = Access.UNSPECIFIED,
     ) -> None:
         """Initiate A SECoPBaseDevice
 
@@ -244,6 +248,7 @@ class SECoPBaseDevice(StandardReadable):
         self.impl: str | None = None
 
         self.role: Role = role
+        self.access: Access = accesslevel
 
         self._module = module_name
         module_desc = secclient.modules[module_name]
@@ -273,9 +278,25 @@ class SECoPBaseDevice(StandardReadable):
                     continue
                 # generate new root path
                 param_path = Path(parameter_name=parameter, module_name=module_name)
-
+                param_access = get_access_level(
+                    self.role, properties.get("accessmode", None), self.access
+                )
                 # readonly propertyns to plans and plan stubs.
                 readonly: bool = properties.get("readonly", None)
+
+                match param_access:
+                    case Access.READ:
+                        # force readonly
+                        readonly = True
+                    case Access.WRITE:
+                        # keep access specified in readonly
+                        pass
+                    case Access.UNSPECIFIED:
+                        # keep access specified in readonly
+                        pass
+                    case Access.NO_ACCESS:
+                        # skip instantiating the Signal
+                        continue
 
                 # Normal types + (struct and tuple as JSON object Strings)
                 self._signal_from_parameter(
@@ -451,7 +472,11 @@ class SECoPBaseDevice(StandardReadable):
 class SECoPCommunicatorDevice(SECoPBaseDevice):
 
     def __init__(
-        self, secclient: AsyncFrappyClient, module_name: str, role: Role = Role.USER
+        self,
+        secclient: AsyncFrappyClient,
+        module_name: str,
+        role: Role = Role.USER,
+        accesslevel: Access = Access.UNSPECIFIED,
     ):
         """Initializes the SECoPCommunicatorDevice
 
@@ -461,7 +486,7 @@ class SECoPCommunicatorDevice(SECoPBaseDevice):
             this device
         :type module_name: str"""
 
-        super().__init__(secclient=secclient, module_name=module_name, role=role)
+        super().__init__(secclient, module_name, role, accesslevel)
 
 
 class SECoPReadableDevice(SECoPCommunicatorDevice, Triggerable, Subscribable):
@@ -471,7 +496,11 @@ class SECoPReadableDevice(SECoPCommunicatorDevice, Triggerable, Subscribable):
     """
 
     def __init__(
-        self, secclient: AsyncFrappyClient, module_name: str, role: Role = Role.USER
+        self,
+        secclient: AsyncFrappyClient,
+        module_name: str,
+        role: Role = Role.USER,
+        accesslevel: Access = Access.UNSPECIFIED,
     ):
         """Initializes the SECoPReadableDevice
 
@@ -485,7 +514,12 @@ class SECoPReadableDevice(SECoPCommunicatorDevice, Triggerable, Subscribable):
         self.value: SignalR
         self.status: SignalR
 
-        super().__init__(secclient=secclient, module_name=module_name, role=role)
+        super().__init__(
+            secclient=secclient,
+            module_name=module_name,
+            role=role,
+            accesslevel=accesslevel,
+        )
 
         if not hasattr(self, "value"):
             raise AttributeError(
@@ -565,7 +599,11 @@ class SECoPTriggerableDevice(SECoPReadableDevice, Stoppable):
     """
 
     def __init__(
-        self, secclient: AsyncFrappyClient, module_name: str, role: Role = Role.USER
+        self,
+        secclient: AsyncFrappyClient,
+        module_name: str,
+        role: Role = Role.USER,
+        accesslevel: Access = Access.UNSPECIFIED,
     ):
         """Initialize SECoPTriggerableDevice
 
@@ -581,7 +619,7 @@ class SECoPTriggerableDevice(SECoPReadableDevice, Stoppable):
         self._success = True
         self._stopped = False
 
-        super().__init__(secclient, module_name, role)
+        super().__init__(secclient, module_name, role, accesslevel)
 
     async def __go_coro(self, wait_for_idle: bool):
         await self._secclient.exec_command(module=self._module, command="go")
@@ -638,7 +676,11 @@ class SECoPMoveableDevice(SECoPWritableDevice, Locatable, Stoppable):
     """
 
     def __init__(
-        self, secclient: AsyncFrappyClient, module_name: str, role: Role = Role.USER
+        self,
+        secclient: AsyncFrappyClient,
+        module_name: str,
+        role: Role = Role.USER,
+        accesslevel: Access = Access.UNSPECIFIED,
     ):
         """Initialize SECoPMovableDevice
 
@@ -651,7 +693,7 @@ class SECoPMoveableDevice(SECoPWritableDevice, Locatable, Stoppable):
 
         self.target: SignalRW
 
-        super().__init__(secclient, module_name, role)
+        super().__init__(secclient, module_name, role, accesslevel)
 
         if not hasattr(self, "target"):
             raise AttributeError(
@@ -782,7 +824,11 @@ class SECoPNodeDevice(StandardReadable):
                     setattr(
                         self,
                         module,
-                        secop_dev_class(self._secclient, module, self.role),
+                        secop_dev_class(
+                            self._secclient,
+                            module,
+                            self.role,
+                        ),
                     )
                     self.mod_devices[module] = getattr(self, module)
 
@@ -1011,7 +1057,7 @@ class SECoPNodeDevice(StandardReadable):
             self._secclient.conn_timestamp = ttime.time()
 
     def class_from_interface(self, mod_properties: dict):
-        module_access_level = Access.WRITE
+        module_access_level = Access.UNSPECIFIED
         ophyd_class = None
 
         # check if acessmode is defined for the module
@@ -1034,28 +1080,30 @@ class SECoPNodeDevice(StandardReadable):
 
         # downgrade IF class if accesslevel is not sufficient
         match module_access_level:
+            case Access.UNSPECIFIED:
+                return (ophyd_class, module_access_level)
             # Full access
             case Access.WRITE:
-                return ophyd_class
+                return (ophyd_class, module_access_level)
 
             # demote to lower IF class
             case Access.READ:
                 if ophyd_class == SECoPBaseDevice:
-                    return SECoPBaseDevice
+                    return (SECoPBaseDevice, module_access_level)
                 if ophyd_class == SECoPCommunicatorDevice:
-                    return SECoPCommunicatorDevice
+                    return (SECoPCommunicatorDevice, module_access_level)
                 if ophyd_class == SECoPReadableDevice:
-                    return SECoPReadableDevice
+                    return (SECoPReadableDevice, module_access_level)
                 if ophyd_class == SECoPWritableDevice:
-                    return SECoPReadableDevice
+                    return (SECoPReadableDevice, module_access_level)
                 if ophyd_class == SECoPMoveableDevice:
-                    return SECoPReadableDevice
+                    return (SECoPReadableDevice, module_access_level)
                 if ophyd_class == SECoPTriggerableDevice:
-                    return SECoPReadableDevice
+                    return (SECoPReadableDevice, module_access_level)
 
             # NO access --> Module is hidden
             case Access.NO_ACCESS:
-                return None
+                return (None, module_access_level)
 
 
 IF_CLASSES = {
