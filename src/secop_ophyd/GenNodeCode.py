@@ -45,6 +45,8 @@ class GenNodeCode:
         """
         # prevent circular import
         from secop_ophyd.SECoPDevices import (
+            SECoPBaseDevice,
+            SECoPCommunicatorDevice,
             SECoPMoveableDevice,
             SECoPNodeDevice,
             SECoPReadableDevice,
@@ -123,6 +125,8 @@ class GenNodeCode:
                 if issubclass(
                     class_obj,
                     (
+                        SECoPBaseDevice,
+                        SECoPCommunicatorDevice,
                         SECoPMoveableDevice,
                         SECoPReadableDevice,
                         SECoPWritableDevice,
