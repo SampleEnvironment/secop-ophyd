@@ -1,11 +1,11 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 
 [project]
 name = "secop-ophyd"
-version = "0.0.1"
+
 description = "An Interface between bluesky and SECoP, using ophyd and frappy-client"
 
 dependencies = [
@@ -16,7 +16,9 @@ dependencies = [
 
 license.file = "LICENSE"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
+
+dynamic = ["version"]
 
 [project.optional-dependencies]
 dev = [
@@ -43,12 +45,14 @@ dev = [
     'python-dotenv',
     'bluesky',
     'sphinx',
-    'snakefmt'
+    'snakefmt',
+    'tomli'
 ]
 
 
 
-
+[tool.hatch.version]
+source = "vcs"
 
 
 [tool.setuptools.packages.find]

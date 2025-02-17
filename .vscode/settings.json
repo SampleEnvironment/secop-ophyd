@@ -12,7 +12,8 @@
     ],
     "workbench.colorCustomizations": {
         "editorRuler.foreground": "#f5f38067"
-    }
+    },
+    "esbonio.server.enabled": false
 
 
 
