@@ -261,7 +261,7 @@ class SECoPBaseDevice(StandardReadable):
                 if property == "implementation":
                     self.impl = module_desc["properties"]["implementation"]
 
-                if property == "meaning":
+                if property in ["features", "meaning"]:
                     continue
 
                 setattr(self, property, SignalR(backend=propb))
