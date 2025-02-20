@@ -269,6 +269,9 @@ class SECoPBaseDevice(StandardReadable):
 
             # generate Signals from Module parameters eiter r or rw
             for parameter, properties in module_desc["parameters"].items():
+                if parameter == "status":
+                    continue
+
                 if parameter in READABLE_PARAMS:
                     continue
                 # generate new root path
@@ -307,6 +310,23 @@ class SECoPBaseDevice(StandardReadable):
                     readonly=readonly,
                 )
                 self.param_devices[parameter] = getattr(self, parameter)
+
+        if "status" in module_desc["parameters"]:
+            parameter = "status"
+            properties = module_desc["parameters"][parameter]
+            # generate new root path
+            param_path = Path(parameter_name=parameter, module_name=module_name)
+
+            # readonly propertyns to plans and plan stubs.
+            readonly: bool = properties.get("readonly", None)
+
+            # Normal types + (struct and tuple as JSON object Strings)
+            self._signal_from_parameter(
+                path=param_path,
+                sig_name=parameter,
+                readonly=readonly,
+            )
+            self.param_devices[parameter] = getattr(self, parameter)
 
         # Initialize Command Devices
         for command, properties in module_desc["commands"].items():
