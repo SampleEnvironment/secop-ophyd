@@ -8,7 +8,7 @@ on:
 
 env:
   WORK_DIR: ${{ github.workspace }}
-  PUBLISH: 'TRUE'
+
 
 
 jobs:
@@ -99,7 +99,7 @@ jobs:
   publish-to-pypi:
     name: >-
       Publish to PyPI
-    if: ${{startsWith(github.ref, 'refs/tags/') && github.env.PUBLISH == 'TRUE'}}  # only publish to PyPI on tag pushes
+    if: ${{startsWith(github.ref, 'refs/tags/')}}  # only publish to PyPI on tag pushes
     needs: [lint,test,build]
     runs-on: ubuntu-latest
     environment:
@@ -162,7 +162,6 @@ jobs:
   publish-to-testpypi:
     name: Publish to TestPyPI
     needs: [lint,test,build]
-    if: ${{github.env.PUBLISH == 'TRUE'}} 
     runs-on: ubuntu-latest
 
     environment:
