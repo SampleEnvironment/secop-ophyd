@@ -67,7 +67,7 @@ float_to_top = true
 profile = "black"
 skip = [".gitignore"]
 known_third_party = ["frappy"]
-skip_glob = ["frappy/*","epics-testing/*"]
+skip_glob = ["frappy/*","epics-testing/*","src/secop_ophyd/_version.py"]
 
 
 [[project.authors]] # Further authors may be added by duplicating this section
