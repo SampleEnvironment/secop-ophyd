@@ -54,6 +54,7 @@ dev = [
 
 [tool.setuptools.packages.find]
 exclude = ["frappy*"]
+where = ["src"]  # Add this line
 
 [tool.pytest.ini_options]
 minversion = "6.0"
