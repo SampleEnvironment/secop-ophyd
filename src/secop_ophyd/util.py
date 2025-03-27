@@ -48,10 +48,14 @@ class Access(Enum):
     NO_ACCESS = 0
     READ = 1
     WRITE = 2
+    UNSPECIFIED = 3
 
 
-def get_access_level(role: Role, accessmode: str) -> Access:
-    assert len(accessmode) == 3
+def get_access_level(
+    role: Role, accessmode: str | None, parent_acc: Access = Access.UNSPECIFIED
+) -> Access:
+    if accessmode is None:
+        return parent_acc
 
     access_str = accessmode[role.value]
 
