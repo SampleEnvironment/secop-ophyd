@@ -1,16 +1,17 @@
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = ["setuptools>=64", "setuptools_scm[toml]>=8"]
+build-backend = "setuptools.build_meta"
+
 
 
 [project]
 name = "secop-ophyd"
-version = "0.0.1"
+dynamic = ["version"]
 description = "An Interface between bluesky and SECoP, using ophyd and frappy-client"
 
 dependencies = [
     'ophyd-async >= 0.9.0',
-    'frappy-core@git+https://github.com/SampleEnvironment/frappy@v0.19.2'
+    'frappy-core == 0.20.4'
     
 ]
 
@@ -53,6 +54,7 @@ dev = [
 
 [tool.setuptools.packages.find]
 exclude = ["frappy*"]
+where = ["src"]  # Add this line
 
 [tool.pytest.ini_options]
 minversion = "6.0"
@@ -66,15 +68,13 @@ float_to_top = true
 profile = "black"
 skip = [".gitignore"]
 known_third_party = ["frappy"]
-skip_glob = ["frappy/*","epics-testing/*"]
+skip_glob = ["frappy/*","epics-testing/*","src/secop_ophyd/_version.py"]
 
 
 [[project.authors]] # Further authors may be added by duplicating this section
-email = "peter.wegmann@helmholtz-berlin.de"
-name = "Peter Wegmann"
+email = "peter.braun@helmholtz-berlin.de"
+name = "Peter Braun"
 
-[tool.hatch.metadata]
-allow-direct-references = true
 
 
 
@@ -119,3 +119,7 @@ commands =
     mypy: mypy src tests {posargs}
     pre-commit: pre-commit run --all-files {posargs}
 """
+
+[tool.setuptools_scm]
+write_to = "src/secop_ophyd/_version.py"
+version_file = "src/secop_ophyd/_version.py"
