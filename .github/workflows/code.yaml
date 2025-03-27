@@ -8,7 +8,7 @@ on:
 
 env:
   WORK_DIR: ${{ github.workspace }}
-  PUBLISH: FALSE
+  PUBLISH: TRUE
 
 
 jobs:
