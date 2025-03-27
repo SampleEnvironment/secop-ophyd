@@ -6,3 +6,4 @@ secop_ophyd/asyncclient.log
 build
 dist
 .env
+**/_version.py
