@@ -6,7 +6,6 @@ import os
 import pytest
 from bluesky import RunEngine
 from databroker.v2 import temp
-from dotenv import load_dotenv
 from frappy.datatypes import (
     ArrayOf,
     FloatRange,
@@ -22,42 +21,46 @@ from secop_ophyd.SECoPDevices import SECoPNodeDevice
 
 
 @pytest.fixture
-def env_vars():
-    work_dir = os.getenv("WORK_DIR")
-    path_variable = os.getenv("PATH_VAR")
+def frappy_env():
+    """Create and return environment variables and paths for frappy server."""
+    # Create absolute paths for frappy requirements
+    base_dir = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
+    conf_dir = os.path.join(base_dir, "tests", "cfg")
+    log_dir = os.path.join(base_dir, "tests", "logs")
+    pid_dir = os.path.join(base_dir, "tests", "pid")
 
-    if work_dir is None and path_variable is None:
-        if not load_dotenv():
-            raise Exception("Env Vars could not be set")
+    # Create directories if they don't exist
+    os.makedirs(conf_dir, exist_ok=True)
+    os.makedirs(log_dir, exist_ok=True)
+    os.makedirs(pid_dir, exist_ok=True)
 
-        work_dir = os.getenv("WORK_DIR")
-        path_variable = os.getenv("PATH_VAR")
+    # Create environment variables
+    env = os.environ.copy()  # Start with current environment
+    env.update(
+        {
+            "FRAPPY_CONFDIR": conf_dir,
+            "FRAPPY_LOGDIR": log_dir,
+            "FRAPPY_PIDDIR": pid_dir,
+        }
+    )
 
-    # Env Vars are set (tests are probably run within a github actions runner)
-    frappy_dir: str = str(work_dir) + "/frappy"
-    env_dict = {"PATH": str(path_variable)}
-
-    return frappy_dir, env_dict
-
-
-# Import bluesky and ophyd
+    return {"env": env, "conf_dir": conf_dir, "log_dir": log_dir, "pid_dir": pid_dir}
 
 
 @pytest.fixture
-def cryo_sim(xprocess, env_vars):
-    frappy_dir, env_dict = env_vars
+def cryo_sim(xprocess, frappy_env):
 
     class Starter(ProcessStarter):
         # startup pattern
-        pattern = ".*: startup done, handling transport messages"
+        pattern = ".*: startup done with interface(s)*"
         timeout = 5
         # command to start process
-        env = env_dict
+        env = frappy_env["env"]  # Use the environment variables from the fixture
+
         args = [
-            "python3",
-            frappy_dir + "/bin/frappy-server",
+            "frappy-server",
             "-c",
-            frappy_dir + "/cfg/cryo_cfg.py",
+            "cryo_cfg.py",
             "cryo",
         ]
 
@@ -71,20 +74,18 @@ def cryo_sim(xprocess, env_vars):
 
 
 @pytest.fixture
-def nested_struct_sim(xprocess, env_vars):
-    frappy_dir, env_dict = env_vars
+def nested_struct_sim(xprocess, frappy_env):
 
     class Starter(ProcessStarter):
         # startup pattern
         pattern = ".*: startup done, handling transport messages"
         timeout = 5
 
-        env = env_dict
+        env = frappy_env["env"]  # Use the environment variables from the fixture
         args = [
-            "python3",
-            frappy_dir + "/bin/frappy-server",
+            "frappy-server",
             "-c",
-            frappy_dir + "/cfg/ophyd_secop_test_cfg.py",
+            "ophyd_secop_test_cfg.py",
             "nested",
         ]
 

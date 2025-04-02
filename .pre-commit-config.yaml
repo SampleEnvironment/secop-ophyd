@@ -1,6 +1,6 @@
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.4.0
+    rev: v5.0.0
     hooks:
       - id: check-added-large-files
       - id: check-yaml
@@ -14,13 +14,26 @@ repos:
         language: system
         entry: black --check --diff src tests
         types: [python]
+        exclude: |
+          (?x)^(
+              tests/cfg/|
+              tests/frappy_modules/|
+              tests/logs/|
+              tests/pid/
+          )
 
+  - repo: https://github.com/pycqa/flake8
+    rev: '7.2.0'  # You can use a more recent version if available
+    hooks:
       - id: flake8
-        name: Run flake8
-        stages: [pre-commit]
-        language: system
-        entry: flake8 src tests
-        types: [python]
-        verbose: true
+        additional_dependencies: [flake8-pyproject]
+        args: [src, tests, docs]
+        exclude: |
+          (?x)^(
+              tests/cfg/|
+              tests/frappy_modules/|
+              tests/logs/|
+              tests/pid/
+          )
 
 
