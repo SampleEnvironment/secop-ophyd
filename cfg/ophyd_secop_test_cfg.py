@@ -17,7 +17,8 @@ if '.xprocess' in base_path:
         base_path = os.path.dirname(base_path)
     
 sys.path.append(base_path)
-
+print("path: " + base_path)
+print("Name:" + __name__)
 
 
 Node(
