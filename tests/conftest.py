@@ -25,17 +25,13 @@ def frappy_env():
     """Create and return environment variables and paths for frappy server."""
     # Create absolute paths for frappy requirements
     base_dir = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
-    conf_dir = os.path.join(base_dir, "tests", "cfg")
-    log_dir = os.path.join(base_dir, "tests", "logs")
-    pid_dir = os.path.join(base_dir, "tests", "pid")
-
-    # Create directories if they don't exist
-    os.makedirs(conf_dir, exist_ok=True)
-    os.makedirs(log_dir, exist_ok=True)
-    os.makedirs(pid_dir, exist_ok=True)
+    conf_dir = os.path.join(base_dir, "cfg")
+    log_dir = os.path.join(base_dir, "logs")
+    pid_dir = os.path.join(base_dir, "pid")
 
     # Create environment variables
     env = os.environ.copy()  # Start with current environment
+
     env.update(
         {
             "FRAPPY_CONFDIR": conf_dir,

@@ -1,6 +1,24 @@
 #####################################################################
 # Python version of frappy config
 #####################################################################
+import os
+import sys
+
+
+# this is for adding module classes to the path
+base_path = os.path.abspath(os.path.dirname(__name__))
+
+# Detects if we are running tests via xprocess
+# and adjusts the base path accordingly
+if '.xprocess' in base_path:
+    # Go up three more directories to reach the project root from the xprocess directory
+    # Typically: .pytest_cache/d/.xprocess/cryo_sim -> project_root
+    for _ in range(4):
+        base_path = os.path.dirname(base_path)
+    
+sys.path.append(base_path)
+
+
 
 Node(
     "ophyd_secop.frappy.demo",
@@ -13,7 +31,7 @@ Node(
 
 Mod(
     "str_test",
-    "frappy_HZB.ophyd_secop_test_modules.Test_Mod_str",
+    "frappy_modules.ophyd_secop_test_modules.Test_Mod_str",
     "test module for reading String signals in Bluesky RE",
     group="test",
     value="blah",
@@ -22,7 +40,7 @@ Mod(
 
 Mod(
     "struct_of_arrays",
-    "frappy_HZB.ophyd_secop_test_modules.Test_Struct_of_arrays",
+    "frappy_modules.ophyd_secop_test_modules.Test_Struct_of_arrays",
     "module for testing struct of arrays",
     value={
         "ints": [1, 2, 3, 4, 5],
@@ -39,7 +57,7 @@ Mod(
 
 Mod(
     "nd_arr",
-    "frappy_HZB.ophyd_secop_test_modules.Test_ND_arrays",
+    "frappy_modules.ophyd_secop_test_modules.Test_ND_arrays",
     "module for testing multidimensional arrays",
     value=[
         [1, 1, 1, 1, 1],
@@ -53,7 +71,7 @@ Mod(
 
 Mod(
     "primitive_arrays",
-    "frappy_HZB.ophyd_secop_test_modules.OPHYD_test_primitive_arrays",
+    "frappy_modules.ophyd_secop_test_modules.OPHYD_test_primitive_arrays",
     "simulated hardware for testing handling of arays of primitives",
     value=10.3,
 )
@@ -61,7 +79,7 @@ Mod(
 
 Mod(
     "ophy_struct",
-    "frappy_HZB.ophyd_secop_test_modules.OPYD_test_struct",
+    "frappy_modules.ophyd_secop_test_modules.OPYD_test_struct",
     "simulated hardware for testing ophyd struct behavior" "also tuples",
     group="very important/stuff",
     # jitter=0.1,

@@ -16,10 +16,10 @@ repos:
         types: [python]
         exclude: |
           (?x)^(
-              tests/cfg/|
-              tests/frappy_modules/|
-              tests/logs/|
-              tests/pid/
+              cfg/|
+              frappy_modules/|
+              logs/|
+              pid/
           )
 
   - repo: https://github.com/pycqa/flake8
@@ -30,10 +30,10 @@ repos:
         args: [src, tests, docs]
         exclude: |
           (?x)^(
-              tests/cfg/|
-              tests/frappy_modules/|
-              tests/logs/|
-              tests/pid/
+              cfg/|
+              frappy_modules/|
+              logs/|
+              pid/
           )
 
 
