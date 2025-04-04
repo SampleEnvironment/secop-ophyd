@@ -74,7 +74,7 @@ def nested_struct_sim(xprocess, frappy_env):
 
     class Starter(ProcessStarter):
         # startup pattern
-        pattern = ".*: startup done, handling transport messages"
+        pattern = ".*: startup done with interface(s)*"
         timeout = 5
 
         env = frappy_env["env"]  # Use the environment variables from the fixture
