@@ -4,19 +4,13 @@
 import os
 import sys
 
+# Get project root from environment variable
+project_root = os.environ.get('FRAPPY_PROJECT_ROOT')
 
-# this is for adding module classes to the path
-base_path = os.path.abspath(os.path.dirname(__name__))
-
-# Detects if we are running tests via xprocess
-# and adjusts the base path accordingly
-if '.xprocess' in base_path:
-    # Go up three more directories to reach the project root from the xprocess directory
-    # Typically: .pytest_cache/d/.xprocess/cryo_sim -> project_root
-    for _ in range(4):
-        base_path = os.path.dirname(base_path)
-    
-sys.path.append(base_path)
+# If project_root is provided and it's a valid directory, add it to sys.path
+if project_root and os.path.isdir(project_root):
+    if project_root not in sys.path:
+        sys.path.insert(0, project_root)
 
 
 

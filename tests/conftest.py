@@ -29,6 +29,9 @@ def frappy_env():
     log_dir = os.path.join(base_dir, "logs")
     pid_dir = os.path.join(base_dir, "pid")
 
+    # Add path to frappy_modules
+    frappy_modules_dir = os.path.join(base_dir, "frappy_modules")
+
     # Create environment variables
     env = os.environ.copy()  # Start with current environment
 
@@ -37,10 +40,17 @@ def frappy_env():
             "FRAPPY_CONFDIR": conf_dir,
             "FRAPPY_LOGDIR": log_dir,
             "FRAPPY_PIDDIR": pid_dir,
+            "FRAPPY_PROJECT_ROOT": base_dir,  # Add the project root
         }
     )
 
-    return {"env": env, "conf_dir": conf_dir, "log_dir": log_dir, "pid_dir": pid_dir}
+    return {
+        "env": env,
+        "conf_dir": conf_dir,
+        "log_dir": log_dir,
+        "pid_dir": pid_dir,
+        "modules_dir": frappy_modules_dir,
+    }
 
 
 @pytest.fixture
