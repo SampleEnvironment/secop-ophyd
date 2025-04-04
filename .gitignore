@@ -7,3 +7,5 @@ build
 dist
 .env
 **/_version.py
+pid
+logs

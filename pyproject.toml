@@ -53,7 +53,6 @@ dev = [
 
 
 [tool.setuptools.packages.find]
-exclude = ["frappy*"]
 where = ["src"]  # Add this line
 
 [tool.pytest.ini_options]
@@ -87,13 +86,14 @@ extend-ignore = [
     "W503",
 ]
 max-line-length = 88 # Respect black's line length (default 88),
-exclude = [".tox", "venv","frappy"]
+exclude = [".tox", "venv","tests/cfg","tests/frappy_modules","tests/logs","tests/pid"]
 
 
 [tool.mypy]
 ignore_missing_imports = true          # Ignore missing stubs in imported modules
 plugins = ["numpy.typing.mypy_plugin"]
 check_untyped_defs = true
+exclude = ["tests/cfg","tests/frappy_modules","tests/logs","tests/pid"]
 
 
 [tool.black]
