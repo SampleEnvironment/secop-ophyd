@@ -1,4 +1,5 @@
 .venv
+.secop_ophyd
 *.pyc
 *.egg-info
 .pytest_cache
