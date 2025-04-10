@@ -1,8 +1,10 @@
 import asyncio
 import inspect
+import logging
 import re
 import threading
 import time as ttime
+from logging import Logger
 from types import MethodType
 from typing import Any, Dict, Iterator, Optional, Type
 
@@ -19,7 +21,6 @@ from bluesky.protocols import (
     SyncOrAsync,
     Triggerable,
 )
-from frappy.client import Logger
 from frappy.datatypes import (
     ArrayOf,
     BLOBType,
@@ -45,6 +46,7 @@ from ophyd_async.core._utils import Callback
 
 from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient
 from secop_ophyd.GenNodeCode import GenNodeCode, Method
+from secop_ophyd.logs import LOG_LEVELS, setup_logging
 from secop_ophyd.propertykeys import DATAINFO, EQUIPMENT_ID, INTERFACE_CLASSES
 from secop_ophyd.SECoPSignal import (
     LocalBackend,
@@ -52,7 +54,7 @@ from secop_ophyd.SECoPSignal import (
     SECoPParamBackend,
     SECoPXBackend,
 )
-from secop_ophyd.util import Access, Path, Role, get_access_level
+from secop_ophyd.util import Path
 
 # Predefined Status Codes
 DISABLED = 0
@@ -231,7 +233,7 @@ class SECoPBaseDevice(StandardReadable):
     """
 
     def __init__(
-        self, secclient: AsyncFrappyClient, module_name: str, role: Role = Role.USER
+        self, secclient: AsyncFrappyClient, module_name: str, loglevel=logging.INFO
     ) -> None:
         """Initiate A SECoPBaseDevice
 
@@ -243,13 +245,17 @@ class SECoPBaseDevice(StandardReadable):
 
         self.impl: str | None = None
 
-        self.role: Role = role
-
         self._module = module_name
         module_desc = secclient.modules[module_name]
         self.plans: list[Method] = []
         self.mod_prop_devices: Dict[str, SignalR] = {}
         self.param_devices: Dict[str, Any] = {}
+
+        name = self._secclient.properties[EQUIPMENT_ID].replace(".", "-")
+
+        self.logger: Logger = setup_logging(
+            name=f"secop-ophyd:{name}:{module_name}", level=loglevel
+        )
 
         # Add configuration Signal
         with self.add_children_as_readables(
@@ -451,7 +457,7 @@ class SECoPBaseDevice(StandardReadable):
 class SECoPCommunicatorDevice(SECoPBaseDevice):
 
     def __init__(
-        self, secclient: AsyncFrappyClient, module_name: str, role: Role = Role.USER
+        self, secclient: AsyncFrappyClient, module_name: str, loglevel=logging.INFO
     ):
         """Initializes the SECoPCommunicatorDevice
 
@@ -461,7 +467,9 @@ class SECoPCommunicatorDevice(SECoPBaseDevice):
             this device
         :type module_name: str"""
 
-        super().__init__(secclient=secclient, module_name=module_name, role=role)
+        super().__init__(
+            secclient=secclient, module_name=module_name, loglevel=loglevel
+        )
 
 
 class SECoPReadableDevice(SECoPCommunicatorDevice, Triggerable, Subscribable):
@@ -471,7 +479,7 @@ class SECoPReadableDevice(SECoPCommunicatorDevice, Triggerable, Subscribable):
     """
 
     def __init__(
-        self, secclient: AsyncFrappyClient, module_name: str, role: Role = Role.USER
+        self, secclient: AsyncFrappyClient, module_name: str, loglevel=logging.INFO
     ):
         """Initializes the SECoPReadableDevice
 
@@ -485,7 +493,9 @@ class SECoPReadableDevice(SECoPCommunicatorDevice, Triggerable, Subscribable):
         self.value: SignalR
         self.status: SignalR
 
-        super().__init__(secclient=secclient, module_name=module_name, role=role)
+        super().__init__(
+            secclient=secclient, module_name=module_name, loglevel=loglevel
+        )
 
         if not hasattr(self, "value"):
             raise AttributeError(
@@ -503,7 +513,11 @@ class SECoPReadableDevice(SECoPCommunicatorDevice, Triggerable, Subscribable):
         """asynchronously waits until module is IDLE again. this is helpful,
         for running commands that are not done immediately
         """
+
+        self.logger.info(f"Waiting for {self.name} to be IDLE")
+
         if self.status is None:
+            self.logger.error("Status Signal not initialized")
             raise Exception("status Signal not initialized")
 
         # force reading of fresh status from device
@@ -517,15 +531,18 @@ class SECoPReadableDevice(SECoPCommunicatorDevice, Triggerable, Subscribable):
 
             # Module is in IDLE/WARN state
             if IDLE <= stat_code < BUSY:
+                self.logger.info(f"Module {self.name} --> IDLE")
                 break
 
             if hasattr(self, "_stopped"):
+                self.logger.info(f"Module {self.name} was stopped STOPPED")
                 if self._stopped is True:
                     break
 
             # Error State or DISABLED
             if hasattr(self, "_success"):
                 if stat_code >= ERROR or stat_code < IDLE:
+                    self.logger.error(f"Module {self.name} --> ERROR/DISABLED")
                     self._success = False
                     break
 
@@ -547,6 +564,7 @@ class SECoPReadableDevice(SECoPCommunicatorDevice, Triggerable, Subscribable):
         yield from bps.wait_for([switch_from_status_factory])
 
     def trigger(self) -> AsyncStatus:
+
         return AsyncStatus(awaitable=self.value.read(cached=False))
 
     def subscribe(self, function: Callback[dict[str, Reading]]) -> None:
@@ -565,7 +583,7 @@ class SECoPTriggerableDevice(SECoPReadableDevice, Stoppable):
     """
 
     def __init__(
-        self, secclient: AsyncFrappyClient, module_name: str, role: Role = Role.USER
+        self, secclient: AsyncFrappyClient, module_name: str, loglevel=logging.info
     ):
         """Initialize SECoPTriggerableDevice
 
@@ -581,7 +599,7 @@ class SECoPTriggerableDevice(SECoPReadableDevice, Stoppable):
         self._success = True
         self._stopped = False
 
-        super().__init__(secclient, module_name, role)
+        super().__init__(secclient, module_name, loglevel=loglevel)
 
     async def __go_coro(self, wait_for_idle: bool):
         await self._secclient.exec_command(module=self._module, command="go")
@@ -598,6 +616,8 @@ class SECoPTriggerableDevice(SECoPReadableDevice, Stoppable):
         yield from self.observe_status_change(PREPARING)
 
     def trigger(self) -> AsyncStatus:
+
+        self.logger.info(f"Triggering {self.name} go command")
 
         async def go_or_read_on_busy():
             module_status = await self.status.get_value(False)
@@ -621,6 +641,8 @@ class SECoPTriggerableDevice(SECoPReadableDevice, Stoppable):
         """
         self._success = success
 
+        self.logger.info(f"Stopping {self.name} success={success}")
+
         await self._secclient.exec_command(self._module, "stop")
         self._stopped = True
 
@@ -638,7 +660,7 @@ class SECoPMoveableDevice(SECoPWritableDevice, Locatable, Stoppable):
     """
 
     def __init__(
-        self, secclient: AsyncFrappyClient, module_name: str, role: Role = Role.USER
+        self, secclient: AsyncFrappyClient, module_name: str, loglevel=logging.INFO
     ):
         """Initialize SECoPMovableDevice
 
@@ -651,7 +673,7 @@ class SECoPMoveableDevice(SECoPWritableDevice, Locatable, Stoppable):
 
         self.target: SignalRW
 
-        super().__init__(secclient, module_name, role)
+        super().__init__(secclient, module_name, loglevel=loglevel)
 
         if not hasattr(self, "target"):
             raise AttributeError(
@@ -678,7 +700,9 @@ class SECoPMoveableDevice(SECoPWritableDevice, Locatable, Stoppable):
     async def _move(self, new_target):
         self._success = True
         self._stopped = False
+
         await self.target.set(new_target, wait=False)
+        self.logger.info(f"Moving {self.name} to {new_target}")
 
         # force reading of status from device
         await self.status.read(False)
@@ -692,11 +716,13 @@ class SECoPMoveableDevice(SECoPWritableDevice, Locatable, Stoppable):
 
             # Error State or DISABLED
             if stat_code >= ERROR or stat_code < IDLE:
+                self.logger.error(f"Module {self.name} --> ERROR/DISABLED")
                 self._success = False
                 break
 
             # Module is in IDLE/WARN state
             if IDLE <= stat_code < BUSY:
+                self.logger.info(f"Reached Target Module {self.name} --> IDLE")
                 break
 
             # TODO other status transitions
@@ -714,6 +740,8 @@ class SECoPMoveableDevice(SECoPWritableDevice, Locatable, Stoppable):
         :type success: bool, optional
         """
         self._success = success
+
+        self.logger.info(f"Stopping {self.name} success={success}")
 
         await self._secclient.exec_command(self._module, "stop")
         self._stopped = True
@@ -734,15 +762,13 @@ class SECoPNodeDevice(StandardReadable):
     to the Sec-node properties
     """
 
-    def __init__(self, secclient: AsyncFrappyClient, role="USER"):
+    def __init__(self, secclient: AsyncFrappyClient, logger: Logger):
         """Initializes the node device and generates all node signals and subdevices
         corresponding to the SECoP-modules of the secnode
 
         :param secclient: SECoP client providing communication to the SEC Node
         :type secclient: AsyncFrappyClient
         """
-
-        self.role: Role = Role[role]
 
         self.equipment_id: SignalR
         self.description: SignalR
@@ -762,6 +788,13 @@ class SECoPNodeDevice(StandardReadable):
 
         config = []
 
+        self.logger: Logger = logger
+
+        self.logger.info(
+            "Initializing SECoPNodeDevice "
+            + f"({self._secclient.host}:{self._secclient.port})"
+        )
+
         with self.add_children_as_readables(
             format=StandardReadableFormat.CONFIG_SIGNAL
         ):
@@ -776,13 +809,13 @@ class SECoPNodeDevice(StandardReadable):
 
                 secop_dev_class = self.class_from_interface(module_desc["properties"])
 
-                # if access level is not enough 'secop_dev_class' is set to None
-                # --> module is hidden
                 if secop_dev_class is not None:
                     setattr(
                         self,
                         module,
-                        secop_dev_class(self._secclient, module, self.role),
+                        secop_dev_class(
+                            self._secclient, module, loglevel=self.logger.level
+                        ),
                     )
                     self.mod_devices[module] = getattr(self, module)
 
@@ -795,16 +828,23 @@ class SECoPNodeDevice(StandardReadable):
         super().__init__(name=name)
 
     @classmethod
-    def create(cls, host: str, port: str, loop, log=Logger) -> "SECoPNodeDevice":
+    def create(
+        cls, host: str, port: str, loop, loglevel: str = "INFO"
+    ) -> "SECoPNodeDevice":
 
         secclient: AsyncFrappyClient
+
+        logger: Logger = setup_logging(
+            name=f"frappy:{host}:{port}", level=LOG_LEVELS[loglevel]
+        )
 
         if not loop.is_running():
             raise Exception("The provided Eventloop is not running")
 
         if loop._thread_id != threading.current_thread().ident:
             client_future = asyncio.run_coroutine_threadsafe(
-                AsyncFrappyClient.create(host=host, port=port, loop=loop, log=log), loop
+                AsyncFrappyClient.create(host=host, port=port, loop=loop, log=logger),
+                loop,
             )
             secclient = client_future.result()
 
@@ -816,12 +856,16 @@ class SECoPNodeDevice(StandardReadable):
                 "running in a seperate thread"
             )
 
-        return SECoPNodeDevice(secclient=secclient)
+        return SECoPNodeDevice(secclient=secclient, logger=logger)
 
     @classmethod
     async def create_async(
-        cls, host: str, port: str, loop, log=Logger
+        cls, host: str, port: str, loop, loglevel: str = "INFO"
     ) -> "SECoPNodeDevice":
+
+        logger: Logger = setup_logging(
+            name=f"frappy:{host}:{port}", level=LOG_LEVELS[loglevel]
+        )
 
         secclient: AsyncFrappyClient
 
@@ -830,7 +874,7 @@ class SECoPNodeDevice(StandardReadable):
 
         if loop._thread_id == threading.current_thread().ident:
             secclient = await AsyncFrappyClient.create(
-                host=host, port=port, loop=loop, log=log
+                host=host, port=port, loop=loop, log=logger
             )
 
             secclient.external = False
@@ -838,12 +882,13 @@ class SECoPNodeDevice(StandardReadable):
         else:
             # Event loop is running in a different thread
             client_future = asyncio.run_coroutine_threadsafe(
-                AsyncFrappyClient.create(host=host, port=port, loop=loop, log=log), loop
+                AsyncFrappyClient.create(host=host, port=port, loop=loop, log=logger),
+                loop,
             )
             secclient = await asyncio.wrap_future(future=client_future)
             secclient.external = True
 
-        return SECoPNodeDevice(secclient=secclient)
+        return SECoPNodeDevice(secclient=secclient, logger=logger)
 
     def disconnect(self):
         """shuts down secclient, eventloop must be running in external thread"""
@@ -1011,14 +1056,7 @@ class SECoPNodeDevice(StandardReadable):
             self._secclient.conn_timestamp = ttime.time()
 
     def class_from_interface(self, mod_properties: dict):
-        module_access_level = Access.WRITE
         ophyd_class = None
-
-        # check if acessmode is defined for the module
-        if "accessmode" in mod_properties:
-            module_access_level = get_access_level(
-                self.role, mod_properties["accessmode"]
-            )
 
         # infer highest level IF class
         module_interface_classes: dict = mod_properties[INTERFACE_CLASSES]
@@ -1032,30 +1070,7 @@ class SECoPNodeDevice(StandardReadable):
         if ophyd_class is None:
             ophyd_class = SECoPBaseDevice  # type: ignore
 
-        # downgrade IF class if accesslevel is not sufficient
-        match module_access_level:
-            # Full access
-            case Access.WRITE:
-                return ophyd_class
-
-            # demote to lower IF class
-            case Access.READ:
-                if ophyd_class == SECoPBaseDevice:
-                    return SECoPBaseDevice
-                if ophyd_class == SECoPCommunicatorDevice:
-                    return SECoPCommunicatorDevice
-                if ophyd_class == SECoPReadableDevice:
-                    return SECoPReadableDevice
-                if ophyd_class == SECoPWritableDevice:
-                    return SECoPReadableDevice
-                if ophyd_class == SECoPMoveableDevice:
-                    return SECoPReadableDevice
-                if ophyd_class == SECoPTriggerableDevice:
-                    return SECoPReadableDevice
-
-            # NO access --> Module is hidden
-            case Access.NO_ACCESS:
-                return None
+        return ophyd_class
 
 
 IF_CLASSES = {

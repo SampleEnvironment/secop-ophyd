@@ -176,7 +176,10 @@ def nested_node_re(run_engine):
 @pytest.fixture
 async def cryo_node_internal_loop():
     return await SECoPNodeDevice.create_async(
-        host="localhost", port="10769", loop=asyncio.get_running_loop()
+        host="localhost",
+        port="10769",
+        loop=asyncio.get_running_loop(),
+        loglevel="DEBUG",
     )
 
 
