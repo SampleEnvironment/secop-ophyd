@@ -1,6 +1,6 @@
 import logging
 import sys
-from logging.handlers import RotatingFileHandler
+from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 from typing import Optional
 
@@ -9,8 +9,9 @@ DEFAULT_LOG_LEVEL = logging.INFO
 DEFAULT_LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 DEFAULT_LOG_DIR = ".secop-ophyd"
 DEFAULT_LOG_FILENAME = "secop-ophyd.log"
-DEFAULT_MAX_BYTES = 100 * 1024 * 1024  # 10 MB
-DEFAULT_BACKUP_COUNT = 5
+DEFAULT_ROTATION_WHEN = "H"  # Rotate every hour
+DEFAULT_ROTATION_INTERVAL = 1  # Every 1 hour
+DEFAULT_BACKUP_COUNT = 48  # Keep logs for 48 hours
 
 # Create a dictionary of log level names to their values
 LOG_LEVELS = {
@@ -28,12 +29,13 @@ def setup_logging(
     log_format: str = DEFAULT_LOG_FORMAT,
     log_dir: Optional[str] = None,
     log_file: Optional[str] = None,
-    max_bytes: int = DEFAULT_MAX_BYTES,
+    when: str = DEFAULT_ROTATION_WHEN,
+    interval: int = DEFAULT_ROTATION_INTERVAL,
     backup_count: int = DEFAULT_BACKUP_COUNT,
     console: bool = False,
 ) -> logging.Logger:
     """
-    Set up and configure a logger with rotating file handler.
+    Set up and configure a logger with timed rotating file handler.
 
     Parameters:
     ----------
@@ -44,15 +46,18 @@ def setup_logging(
     log_format : str
         Format string for log messages
     log_dir : Optional[str]
-        Directory to store log files (default: ~/.secop-ophyd/logs)
+        Directory to store log files (default: .secop-ophyd in current directory)
     log_file : Optional[str]
         Log file name (default: secop-ophyd.log)
-    max_bytes : int
-        Maximum size of log file before rotation (default: 10 MB)
+    when : str
+        Type of interval - can be 'S' (seconds), 'M' (minutes), 'H' (hours),
+        'D' (days), 'W0'-'W6' (weekday, 0=Monday), 'midnight'
+    interval : int
+        How many units between rotations (default: 1 hour)
     backup_count : int
-        Number of backup files to keep (default: 5)
+        Number of backup files to keep (default: 48 - for 48 hours of logs)
     console : bool
-        Whether to also log to console (default: True)
+        Whether to also log to console (default: False)
 
     Returns:
     -------
@@ -83,9 +88,14 @@ def setup_logging(
 
     log_file_path = log_path / log_file
 
-    # Create rotating file handler
-    file_handler = RotatingFileHandler(
-        log_file_path, maxBytes=max_bytes, backupCount=backup_count
+    # Create timed rotating file handler
+    file_handler = TimedRotatingFileHandler(
+        log_file_path,
+        when=when,
+        interval=interval,
+        backupCount=backup_count,
+        encoding="utf-8",
+        utc=True,  # Use UTC time for consistency
     )
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
@@ -96,13 +106,16 @@ def setup_logging(
         console_handler.setFormatter(formatter)
         logger.addHandler(console_handler)
 
-    logger.info(f"Logging initialized: {log_file_path}")
+    logger.info(
+        f"Logging initialized: {log_file_path} (rotating every {interval} {when}"
+        + ", keeping {backup_count} backups)"
+    )
     return logger
 
 
 def get_logger(name: str) -> logging.Logger:
     """
-    Get a logger by name. If the logger doesn't exist, it will be created
+    Get a logger by name. If the logger doesn't have handlers, it will be created
     with default settings.
 
     Parameters:
