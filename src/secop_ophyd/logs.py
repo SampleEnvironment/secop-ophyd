@@ -9,7 +9,7 @@ DEFAULT_LOG_LEVEL = logging.INFO
 DEFAULT_LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 DEFAULT_LOG_DIR = ".secop-ophyd"
 DEFAULT_LOG_FILENAME = "secop-ophyd.log"
-DEFAULT_ROTATION_WHEN = "H"  # Rotate every hour
+DEFAULT_ROTATION_WHEN = "M"  # Rotate every hour
 DEFAULT_ROTATION_INTERVAL = 1  # Every 1 hour
 DEFAULT_BACKUP_COUNT = 48  # Keep logs for 48 hours
 
