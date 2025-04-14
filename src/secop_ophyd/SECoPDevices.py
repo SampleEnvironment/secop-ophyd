@@ -233,7 +233,11 @@ class SECoPBaseDevice(StandardReadable):
     """
 
     def __init__(
-        self, secclient: AsyncFrappyClient, module_name: str, loglevel=logging.INFO
+        self,
+        secclient: AsyncFrappyClient,
+        module_name: str,
+        loglevel=logging.INFO,
+        logdir: str | None = None,
     ) -> None:
         """Initiate A SECoPBaseDevice
 
@@ -254,7 +258,7 @@ class SECoPBaseDevice(StandardReadable):
         name = self._secclient.properties[EQUIPMENT_ID].replace(".", "-")
 
         self.logger: Logger = setup_logging(
-            name=f"secop-ophyd:{name}:{module_name}", level=loglevel
+            name=f"secop-ophyd:{name}:{module_name}", level=loglevel, log_dir=logdir
         )
 
         # Add configuration Signal
@@ -457,7 +461,11 @@ class SECoPBaseDevice(StandardReadable):
 class SECoPCommunicatorDevice(SECoPBaseDevice):
 
     def __init__(
-        self, secclient: AsyncFrappyClient, module_name: str, loglevel=logging.INFO
+        self,
+        secclient: AsyncFrappyClient,
+        module_name: str,
+        loglevel=logging.INFO,
+        logdir: str | None = None,
     ):
         """Initializes the SECoPCommunicatorDevice
 
@@ -468,7 +476,10 @@ class SECoPCommunicatorDevice(SECoPBaseDevice):
         :type module_name: str"""
 
         super().__init__(
-            secclient=secclient, module_name=module_name, loglevel=loglevel
+            secclient=secclient,
+            module_name=module_name,
+            loglevel=loglevel,
+            logdir=logdir,
         )
 
 
@@ -479,7 +490,11 @@ class SECoPReadableDevice(SECoPCommunicatorDevice, Triggerable, Subscribable):
     """
 
     def __init__(
-        self, secclient: AsyncFrappyClient, module_name: str, loglevel=logging.INFO
+        self,
+        secclient: AsyncFrappyClient,
+        module_name: str,
+        loglevel=logging.INFO,
+        logdir: str | None = None,
     ):
         """Initializes the SECoPReadableDevice
 
@@ -494,7 +509,10 @@ class SECoPReadableDevice(SECoPCommunicatorDevice, Triggerable, Subscribable):
         self.status: SignalR
 
         super().__init__(
-            secclient=secclient, module_name=module_name, loglevel=loglevel
+            secclient=secclient,
+            module_name=module_name,
+            loglevel=loglevel,
+            logdir=logdir,
         )
 
         if not hasattr(self, "value"):
@@ -583,7 +601,11 @@ class SECoPTriggerableDevice(SECoPReadableDevice, Stoppable):
     """
 
     def __init__(
-        self, secclient: AsyncFrappyClient, module_name: str, loglevel=logging.info
+        self,
+        secclient: AsyncFrappyClient,
+        module_name: str,
+        loglevel=logging.info,
+        logdir: str | None = None,
     ):
         """Initialize SECoPTriggerableDevice
 
@@ -599,7 +621,7 @@ class SECoPTriggerableDevice(SECoPReadableDevice, Stoppable):
         self._success = True
         self._stopped = False
 
-        super().__init__(secclient, module_name, loglevel=loglevel)
+        super().__init__(secclient, module_name, loglevel=loglevel, logdir=logdir)
 
     async def __go_coro(self, wait_for_idle: bool):
         await self._secclient.exec_command(module=self._module, command="go")
@@ -660,7 +682,11 @@ class SECoPMoveableDevice(SECoPWritableDevice, Locatable, Stoppable):
     """
 
     def __init__(
-        self, secclient: AsyncFrappyClient, module_name: str, loglevel=logging.INFO
+        self,
+        secclient: AsyncFrappyClient,
+        module_name: str,
+        loglevel=logging.INFO,
+        logdir: str | None = None,
     ):
         """Initialize SECoPMovableDevice
 
@@ -673,7 +699,7 @@ class SECoPMoveableDevice(SECoPWritableDevice, Locatable, Stoppable):
 
         self.target: SignalRW
 
-        super().__init__(secclient, module_name, loglevel=loglevel)
+        super().__init__(secclient, module_name, loglevel=loglevel, logdir=logdir)
 
         if not hasattr(self, "target"):
             raise AttributeError(
@@ -762,7 +788,9 @@ class SECoPNodeDevice(StandardReadable):
     to the Sec-node properties
     """
 
-    def __init__(self, secclient: AsyncFrappyClient, logger: Logger):
+    def __init__(
+        self, secclient: AsyncFrappyClient, logger: Logger, logdir: str | None = None
+    ):
         """Initializes the node device and generates all node signals and subdevices
         corresponding to the SECoP-modules of the secnode
 
@@ -814,7 +842,10 @@ class SECoPNodeDevice(StandardReadable):
                         self,
                         module,
                         secop_dev_class(
-                            self._secclient, module, loglevel=self.logger.level
+                            self._secclient,
+                            module,
+                            loglevel=self.logger.level,
+                            logdir=logdir,
                         ),
                     )
                     self.mod_devices[module] = getattr(self, module)
@@ -829,13 +860,18 @@ class SECoPNodeDevice(StandardReadable):
 
     @classmethod
     def create(
-        cls, host: str, port: str, loop, loglevel: str = "INFO"
+        cls,
+        host: str,
+        port: str,
+        loop,
+        loglevel: str = "INFO",
+        logdir: str | None = None,
     ) -> "SECoPNodeDevice":
 
         secclient: AsyncFrappyClient
 
         logger: Logger = setup_logging(
-            name=f"frappy:{host}:{port}", level=LOG_LEVELS[loglevel]
+            name=f"frappy:{host}:{port}", level=LOG_LEVELS[loglevel], log_dir=logdir
         )
 
         if not loop.is_running():
@@ -856,15 +892,20 @@ class SECoPNodeDevice(StandardReadable):
                 "running in a seperate thread"
             )
 
-        return SECoPNodeDevice(secclient=secclient, logger=logger)
+        return SECoPNodeDevice(secclient=secclient, logger=logger, logdir=logdir)
 
     @classmethod
     async def create_async(
-        cls, host: str, port: str, loop, loglevel: str = "INFO"
+        cls,
+        host: str,
+        port: str,
+        loop,
+        loglevel: str = "INFO",
+        logdir: str | None = None,
     ) -> "SECoPNodeDevice":
 
         logger: Logger = setup_logging(
-            name=f"frappy:{host}:{port}", level=LOG_LEVELS[loglevel]
+            name=f"frappy:{host}:{port}", level=LOG_LEVELS[loglevel], log_dir=logdir
         )
 
         secclient: AsyncFrappyClient
@@ -888,7 +929,7 @@ class SECoPNodeDevice(StandardReadable):
             secclient = await asyncio.wrap_future(future=client_future)
             secclient.external = True
 
-        return SECoPNodeDevice(secclient=secclient, logger=logger)
+        return SECoPNodeDevice(secclient=secclient, logger=logger, logdir=logdir)
 
     def disconnect(self):
         """shuts down secclient, eventloop must be running in external thread"""
