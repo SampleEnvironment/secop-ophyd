@@ -1,7 +1,7 @@
 import asyncio
 import warnings
 from functools import wraps
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict
 
 from bluesky.protocols import DataKey, Reading
 from frappy.client import CacheItem
@@ -17,7 +17,7 @@ from frappy.datatypes import (
     StructOf,
     TupleOf,
 )
-from ophyd_async.core import Callback, SignalBackend, T
+from ophyd_async.core import Callback, SignalBackend, SignalDatatypeT
 
 from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient
 from secop_ophyd.util import Path, SECoPdtype, SECoPReading, deep_get
@@ -107,16 +107,16 @@ class LocalBackend(SignalBackend):
         """Metadata like source, dtype, shape, precision, units"""
         return self.describe_dict
 
-    async def get_reading(self) -> Reading:
+    async def get_reading(self) -> Reading[SignalDatatypeT]:
         return self.reading.get_reading()
 
-    async def get_value(self) -> T:
+    async def get_value(self) -> SignalDatatypeT:
         return self.reading.get_value()
 
-    async def get_setpoint(self) -> T:
+    async def get_setpoint(self) -> SignalDatatypeT:
         return await self.get_value()
 
-    def set_callback(self, callback: Callback[T] | None) -> None:
+    def set_callback(self, callback: Callback[Reading[SignalDatatypeT]] | None) -> None:
         self.callback = callback  # type: ignore[assignment]
 
 
@@ -205,22 +205,22 @@ class SECoPXBackend(SignalBackend):
 
         return res
 
-    async def get_reading(self) -> Reading:
+    async def get_reading(self) -> Reading[SignalDatatypeT]:
         raise Exception(
             "Cannot read _x Signal, it has no value and is only"
             + " used to trigger Command execution"
         )
 
-    async def get_value(self) -> T:
+    async def get_value(self) -> SignalDatatypeT:
         raise Exception(
             "Cannot read _x Signal, it has no value and is only"
             + " used to trigger Command execution"
         )
 
-    def set_callback(self, callback: Callback[T] | None) -> None:
+    def set_callback(self, callback: Callback[Reading[SignalDatatypeT]] | None) -> None:
         pass
 
-    async def get_setpoint(self) -> T:
+    async def get_setpoint(self) -> SignalDatatypeT:
         raise Exception(
             "Cannot read _x Signal, it has no value and is only"
             + " used to trigger Command execution"
@@ -336,7 +336,7 @@ class SECoPParamBackend(SignalBackend):
 
         return self.describe_dict
 
-    async def get_reading(self) -> Reading:
+    async def get_reading(self) -> Reading[SignalDatatypeT]:
         dataset = await self._secclient.get_parameter(
             **self.get_param_path(), trycache=False
         )
@@ -345,15 +345,15 @@ class SECoPParamBackend(SignalBackend):
 
         return sec_reading.get_reading()
 
-    async def get_value(self) -> T:
+    async def get_value(self) -> SignalDatatypeT:
         dataset: Reading = await self.get_reading()
 
         return dataset["value"]  # type: ignore
 
-    async def get_setpoint(self) -> T:
+    async def get_setpoint(self) -> SignalDatatypeT:
         return await self.get_value()
 
-    def set_callback(self, callback: Callback[T] | None) -> None:
+    def set_callback(self, callback: Callback[Reading[SignalDatatypeT]] | None) -> None:
         def awaitify(sync_func):
             """Wrap a synchronous callable to allow ``await``'ing it"""
 
@@ -403,7 +403,7 @@ class PropertyBackend(SignalBackend):
     """Readonly backend for static SECoP Properties of Nodes/Modules"""
 
     def __init__(
-        self, prop_key: str, property_dict: Dict[str, T], secclient: AsyncFrappyClient
+        self, prop_key: str, property_dict: Dict[str, Any], secclient: AsyncFrappyClient
     ) -> None:
         """Initializes PropertyBackend
 
@@ -450,7 +450,7 @@ class PropertyBackend(SignalBackend):
         """Connect to underlying hardware"""
         pass
 
-    async def put(self, value: Optional[T], wait=True):
+    async def put(self, value: SignalDatatypeT | None, wait=True):
         """Put a value to the PV, if wait then wait for completion for up to timeout"""
         # Properties are readonly
         pass
@@ -459,7 +459,7 @@ class PropertyBackend(SignalBackend):
         """Metadata like source, dtype, shape, precision, units"""
         return self.describe_dict
 
-    async def get_reading(self) -> Reading:
+    async def get_reading(self) -> Reading[SignalDatatypeT]:
         dataset = CacheItem(
             value=self._prop_value, timestamp=self._secclient.conn_timestamp
         )
@@ -468,15 +468,15 @@ class PropertyBackend(SignalBackend):
 
         return sec_reading.get_reading()
 
-    async def get_value(self) -> T:
+    async def get_value(self) -> SignalDatatypeT:
         dataset: Reading = await self.get_reading()
 
         return dataset["value"]  # type: ignore
 
-    async def get_setpoint(self) -> T:
+    async def get_setpoint(self) -> SignalDatatypeT:
         return await self.get_value()
 
-    def set_callback(self, callback: Callback[T] | None) -> None:
+    def set_callback(self, callback: Callback[Reading[SignalDatatypeT]] | None) -> None:
         pass
 
 
