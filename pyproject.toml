@@ -37,17 +37,14 @@ dev = [
     'pytest-xprocess',
     'pre-commit',
     'ipykernel',
-    'databroker==2.0.0b64',
+    'databroker[all]==2.0.0b64',
     'ophyd',
     'tox',
     'mlzlog',
     'python-dotenv',
     'bluesky',
     'sphinx',
-    'snakefmt',
-    'pandas',
-    'bluesky-tiled-plugins==2.0.0b64',
-    'bson'
+    'snakefmt'
 ]
 
 

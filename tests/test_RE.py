@@ -17,7 +17,9 @@ async def test_run_engine_count(cryo_sim, run_engine, cryo_node: SECoPNodeDevice
 
     run = db[p]
 
-    data = run.primary.read()
+    print(run[0])
+
+    data = run[0].primary.read()
 
     cryo_dat = data[cryo_node.cryo.value.name]
 
