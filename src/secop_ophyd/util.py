@@ -579,7 +579,7 @@ class SECoPdtype:
         self.dtype_descr: list
 
         # string representation of the original secop datatype
-        self.secop_dtype_str = datatype.export_datatype()
+        self.secop_dtype_str = str(datatype.export_datatype())
 
         # Shape of Data
         self.shape = []
