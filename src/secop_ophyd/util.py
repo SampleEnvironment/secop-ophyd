@@ -26,6 +26,7 @@ from frappy.datatypes import (
     TupleOf,
 )
 from ophyd_async.core._utils import StrictEnum
+from typing_extensions import NotRequired
 
 SCALAR_DATATYPES = (
     IntRange,
@@ -35,6 +36,32 @@ SCALAR_DATATYPES = (
     StringType,
     EnumType,
 )
+
+
+class SECoPDataKey(DataKey):
+    """
+    A DataKey that is used to describe the SECoP Datatype.
+    """
+
+    dtype_str: NotRequired[str]
+    """
+    The array-protocol typestring of the data-type object.
+    """
+
+    dtype_descr: NotRequired[list]
+    """
+    String representation of the numpy structured array dtype.
+    """
+
+    SECOP_datainfo: str
+    """
+    String representation of the original secop datatype.
+    """
+
+    SECoP_dtype: NotRequired[str]
+    """
+    The SECoP datatype of the data.
+    """
 
 
 class NestedRaggedArray(Exception):
@@ -612,7 +639,8 @@ class SECoPdtype:
                 self.np_datatype = SECOP2DTYPE[datatype.__class__][0]
                 self.dtype = SECOP2DTYPE[datatype.__class__][1]
 
-    def get_datakey(self) -> DataKey:
+    def get_datakey(self) -> dict:
+
         describe_dict: dict = {}
         # Composite Datatypes & Arrays of COmposite Datatypes
         if self._is_composite:

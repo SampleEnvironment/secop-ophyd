@@ -4,7 +4,6 @@ import pytest
 from bluesky import RunEngine
 from bluesky.callbacks.best_effort import BestEffortCallback
 from bluesky.plans import count
-from bluesky.utils import ProgressBarManager
 from ophyd_async.core import SignalR
 
 from secop_ophyd.SECoPDevices import SECoPNodeDevice, SECoPReadableDevice
@@ -15,7 +14,6 @@ async def test_primitive_arrays(
 ):
     bec = BestEffortCallback()
     run_engine.subscribe(bec)
-    run_engine.waiting_hook = ProgressBarManager()
     run_engine.ignore_callback_exceptions = False
 
     prim_arr: SECoPReadableDevice = nested_node_re.primitive_arrays
@@ -57,7 +55,6 @@ async def test_primitive_float_array(
 ):
     bec = BestEffortCallback()
     run_engine.subscribe(bec)
-    run_engine.waiting_hook = ProgressBarManager()
     run_engine.ignore_callback_exceptions = False
 
     prim_arr: SECoPReadableDevice = nested_node_re.primitive_arrays

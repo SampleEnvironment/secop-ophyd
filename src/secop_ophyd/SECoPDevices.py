@@ -10,7 +10,6 @@ from typing import Any, Dict, Iterator, Optional, Type
 
 import bluesky.plan_stubs as bps
 from bluesky.protocols import (
-    Descriptor,
     Flyable,
     Locatable,
     Location,
@@ -18,7 +17,6 @@ from bluesky.protocols import (
     Reading,
     Stoppable,
     Subscribable,
-    SyncOrAsync,
     Triggerable,
 )
 from frappy.datatypes import (
@@ -221,9 +219,6 @@ class SECoPCMDDevice(StandardReadable, Flyable, Triggerable):
         yield dict(
             time=self._start_time, timestamps={self.name: []}, data={self.name: []}
         )
-
-    async def describe_collect(self) -> SyncOrAsync[Dict[str, Dict[str, Descriptor]]]:
-        return await self.describe()
 
 
 class SECoPBaseDevice(StandardReadable):

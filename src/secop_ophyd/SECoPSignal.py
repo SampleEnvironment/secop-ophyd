@@ -20,7 +20,7 @@ from frappy.datatypes import (
 from ophyd_async.core import Callback, SignalBackend, SignalDatatypeT
 
 from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient
-from secop_ophyd.util import Path, SECoPdtype, SECoPReading, deep_get
+from secop_ophyd.util import Path, SECoPDataKey, SECoPdtype, SECoPReading, deep_get
 
 atomic_dtypes = (
     StringType,
@@ -105,7 +105,7 @@ class LocalBackend(SignalBackend):
 
     async def get_datakey(self, source: str) -> DataKey:
         """Metadata like source, dtype, shape, precision, units"""
-        return self.describe_dict
+        return describedict_to_datakey(self.describe_dict)
 
     async def get_reading(self) -> Reading[SignalDatatypeT]:
         return self.reading.get_reading()
@@ -191,19 +191,8 @@ class SECoPXBackend(SignalBackend):
 
     async def get_datakey(self, source: str) -> DataKey:
         """Metadata like source, dtype, shape, precision, units"""
-        res = {}
 
-        res["source"] = self.source("", True)
-
-        # ophyd datatype (some SECoP datatypeshaveto be converted)
-        # signalx has no datatype and is never read
-        res["dtype"] = "None"
-
-        # get shape from datainfo and SECoPtype
-
-        res["shape"] = []  # type: ignore
-
-        return res
+        return DataKey(shape=[], dtype="string", source=self.source("", True))
 
     async def get_reading(self) -> Reading[SignalDatatypeT]:
         raise Exception(
@@ -334,7 +323,7 @@ class SECoPParamBackend(SignalBackend):
             SECoPReading(entry=dataset, secop_dt=self.SECoP_type_info)
             self.describe_dict.update(self.SECoP_type_info.get_datakey())
 
-        return self.describe_dict
+        return describedict_to_datakey(self.describe_dict)
 
     async def get_reading(self) -> Reading[SignalDatatypeT]:
         dataset = await self._secclient.get_parameter(
@@ -457,7 +446,7 @@ class PropertyBackend(SignalBackend):
 
     async def get_datakey(self, source: str) -> DataKey:
         """Metadata like source, dtype, shape, precision, units"""
-        return self.describe_dict
+        return describedict_to_datakey(self.describe_dict)
 
     async def get_reading(self) -> Reading[SignalDatatypeT]:
         dataset = CacheItem(
@@ -515,3 +504,27 @@ def secop_dtype_obj_from_json(prop_val):
         f"""unsupported datatype in Property:  {str(prop_val.__class__.__name__)}\n
         propval: {prop_val}"""
     )
+
+
+def describedict_to_datakey(describe_dict: dict) -> SECoPDataKey:
+    """Convert a DataKey to a SECoPDataKey"""
+    datakey = SECoPDataKey(
+        dtype=describe_dict["dtype"],
+        shape=describe_dict["shape"],
+        source=describe_dict["source"],
+        SECOP_datainfo=describe_dict["SECOP_datainfo"],
+    )
+
+    if "units" in describe_dict:
+        datakey["units"] = describe_dict["units"]
+
+    if "dtype_str" in describe_dict:
+        datakey["dtype_str"] = describe_dict["dtype_str"]
+
+    if "dtype_descr" in describe_dict:
+        datakey["dtype_descr"] = describe_dict["dtype_descr"]
+
+    if "dtype_numpy" in describe_dict:
+        datakey["dtype_numpy"] = describe_dict["dtype_numpy"]
+
+    return datakey
