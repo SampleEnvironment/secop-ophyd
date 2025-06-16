@@ -10,7 +10,7 @@ dynamic = ["version"]
 description = "An Interface between bluesky and SECoP, using ophyd and frappy-client"
 
 dependencies = [
-    'ophyd-async >= 0.9.0',
+    'ophyd-async >= 0.10.0',
     'frappy-core == 0.20.4'
     
 ]
@@ -37,7 +37,7 @@ dev = [
     'pytest-xprocess',
     'pre-commit',
     'ipykernel',
-    'databroker',
+    'databroker[all]==2.0.0b64',
     'ophyd',
     'tox',
     'mlzlog',
@@ -60,7 +60,7 @@ minversion = "6.0"
 addopts = "-v"
 asyncio_mode="auto"
 filterwarnings = "ignore::PendingDeprecationWarning"
-norecursedirs=["frappy","epics-testing","build"]
+
 
 [tool.isort]
 float_to_top = true

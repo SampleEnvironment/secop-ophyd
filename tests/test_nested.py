@@ -61,7 +61,7 @@ async def test_nested_dtype_str_signal_generation(
 
     assert isinstance(val, np.ndarray)
     assert descr["dtype"] == "array"
-    assert descr["SECoP_dtype"] == "struct"
+    assert "struct" in descr["SECOP_datainfo"]
     await nested_node.disconnect_async()
 
 
