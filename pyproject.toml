@@ -46,7 +46,8 @@ dev = [
     'sphinx',
     'snakefmt',
     'pandas',
-    'bluesky-tiled-plugins==2.0.0b64'
+    'bluesky-tiled-plugins==2.0.0b64',
+    'bson'
 ]
 
 
