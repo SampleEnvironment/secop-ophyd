@@ -77,18 +77,11 @@ ERROR_PREPARED = 450
 UNKNOWN = 401  # not in SECoP standard (yet)
 
 
-READABLE_PARAMS = ["value", "target"]
+READABLE_PARAMS = ["value", "target", "status"]
 
 
 def clean_identifier(anystring):
     return str(re.sub(r"\W+|^(?=\d)", "_", anystring))
-
-
-def get_config_attrs(parameters):
-    parameters_cfg = parameters.copy()
-    parameters_cfg.pop("target", None)
-    parameters_cfg.pop("value", None)
-    return parameters_cfg
 
 
 class SECoPCMDDevice(StandardReadable, Flyable, Triggerable):
@@ -256,6 +249,7 @@ class SECoPBaseDevice(StandardReadable):
             name=f"secop-ophyd:{name}:{module_name}", level=loglevel, log_dir=logdir
         )
 
+        self.logger.info(f"Initializing SECoPBaseDevice for module {module_name}")
         # Add configuration Signal
         with self.add_children_as_readables(
             format=StandardReadableFormat.CONFIG_SIGNAL
@@ -577,7 +571,7 @@ class SECoPReadableDevice(SECoPCommunicatorDevice, Triggerable, Subscribable):
         yield from bps.wait_for([switch_from_status_factory])
 
     def trigger(self) -> AsyncStatus:
-
+        self.logger.info(f"Triggering {self.name}: read fresh data from device")
         return AsyncStatus(awaitable=self.value.read(cached=False))
 
     def subscribe(self, function: Callback[dict[str, Reading]]) -> None:

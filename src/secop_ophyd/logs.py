@@ -1,8 +1,7 @@
 import logging
-import sys
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
-from typing import Optional
+from typing import Dict, Optional
 
 # Default configuration
 DEFAULT_LOG_LEVEL = logging.INFO
@@ -23,16 +22,15 @@ LOG_LEVELS = {
 }
 
 
+log_file_handlers: Dict[str, TimedRotatingFileHandler] = {}
+
+console_handler: logging.StreamHandler | None = None
+
+
 def setup_logging(
     name: str = "secop_ophyd",
     level: int = DEFAULT_LOG_LEVEL,
-    log_format: str = DEFAULT_LOG_FORMAT,
     log_dir: Optional[str] = None,
-    log_file: Optional[str] = None,
-    when: str = DEFAULT_ROTATION_WHEN,
-    interval: int = DEFAULT_ROTATION_INTERVAL,
-    backup_count: int = DEFAULT_BACKUP_COUNT,
-    console: bool = False,
 ) -> logging.Logger:
     """
     Set up and configure a logger with timed rotating file handler.
@@ -64,6 +62,14 @@ def setup_logging(
     logging.Logger
         Configured logger instance
     """
+
+    log_format: str = DEFAULT_LOG_FORMAT
+
+    log_file: Optional[str] = None
+    when: str = DEFAULT_ROTATION_WHEN
+    interval: int = DEFAULT_ROTATION_INTERVAL
+    backup_count: int = DEFAULT_BACKUP_COUNT
+
     # Create logger
     logger = logging.getLogger(name)
     logger.setLevel(level)
@@ -87,29 +93,46 @@ def setup_logging(
         log_file = DEFAULT_LOG_FILENAME
 
     log_file_path = log_path / log_file
+    # Use resolved string path as key to ensure consistency
+    handler_key = str(log_file_path.resolve())
 
-    # Create timed rotating file handler
-    file_handler = TimedRotatingFileHandler(
-        log_file_path,
-        when=when,
-        interval=interval,
-        backupCount=backup_count,
-        encoding="utf-8",
-        utc=True,  # Use UTC time for consistency
-    )
-    file_handler.setFormatter(formatter)
-    logger.addHandler(file_handler)
+    if handler_key not in log_file_handlers:
+        # Create timed rotating file handler
+        file_handler = TimedRotatingFileHandler(
+            log_file_path,
+            when=when,
+            interval=interval,
+            backupCount=backup_count,
+            encoding="utf-8",
+            utc=True,  # Use UTC time for consistency
+        )
+        file_handler.setFormatter(formatter)
+        log_file_handlers[handler_key] = file_handler
+        is_new_handler = True
+
+    else:
+        # Use existing handler (don't overwrite formatter)
+        file_handler = log_file_handlers[handler_key]
+        is_new_handler = False
 
     # Add console handler if requested
-    if console:
-        console_handler = logging.StreamHandler(sys.stdout)
-        console_handler.setFormatter(formatter)
-        logger.addHandler(console_handler)
+    # global console_handler
 
-    logger.info(
-        f"Logging initialized: {log_file_path} (rotating every {interval} {when}"
-        + ", keeping {backup_count} backups)"
-    )
+    # if not console_handler:
+    #     console_handler = logging.StreamHandler(sys.stdout)
+    #     console_handler.setFormatter(formatter)
+    #     logger.addHandler(console_handler)
+    # else:
+    #     logger.addHandler(console_handler)
+
+    logger.addHandler(file_handler)
+
+    # Log initialization message
+    if is_new_handler:
+        logger.info(f"Logger '{name}' initialized with new log file: {log_file_path}")
+    else:
+        logger.info(f"Logger '{name}' added to shared log file: {log_file_path}")
+
     return logger
 
 
