@@ -165,7 +165,9 @@ def run_engine(db):
 
 @pytest.fixture
 def cryo_node(run_engine):
-    return SECoPNodeDevice.create(host="localhost", port="10769", loop=run_engine.loop)
+    return SECoPNodeDevice.create(
+        host="localhost", port="10769", loop=run_engine.loop, loglevel="DEBUG"
+    )
 
 
 @pytest.fixture
