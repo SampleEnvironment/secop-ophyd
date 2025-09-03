@@ -3,7 +3,7 @@ import string
 import time
 
 import numpy as np
-from frappy.core import Command, Drivable, IntRange, Parameter, Readable, StructOf
+from frappy.core import Command, Drivable, IntRange, Parameter, Readable, Property
 from frappy.datatypes import (
     ArrayOf,
     BoolType,
@@ -12,6 +12,8 @@ from frappy.datatypes import (
     StatusType,
     StringType,
     TupleOf,
+    StructOf,
+    ValueType
 )
 from frappy.errors import ImpossibleError
 from frappy.lib import clamp, mkthread
@@ -21,6 +23,8 @@ from frappy.lib.enum import Enum
 
 
 class Test_Mod_str(Readable):
+
+    
     Status = Enum(Readable.Status)
 
     status = Parameter(datatype=StatusType(Status))
@@ -125,6 +129,12 @@ class Test_Struct_of_arrays(Readable):
 
 
 class OPHYD_test_primitive_arrays(Readable):
+    plotly = Property(
+        "JSON object defining Plotly graph",
+        datatype=ValueType(),
+        export="always",
+        default={},
+    )
 
     value = Parameter("struct Value", datatype=FloatRange(), default=1.0, readonly=True)
     arr_int = Parameter(

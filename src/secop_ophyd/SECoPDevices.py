@@ -260,7 +260,7 @@ class SECoPBaseDevice(StandardReadable):
                 if property == "implementation":
                     self.impl = module_desc["properties"]["implementation"]
 
-                if property in ["meaning", "plotly"]:
+                if property in ["meaning", "_plotly"]:
                     continue
 
                 propb = PropertyBackend(property, module_desc["properties"], secclient)

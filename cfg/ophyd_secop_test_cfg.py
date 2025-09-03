@@ -28,6 +28,7 @@ Mod(
     "test module for reading String signals in Bluesky RE",
     group="test",
     value="blah",
+
 )
 
 
@@ -67,6 +68,7 @@ Mod(
     "frappy_modules.ophyd_secop_test_modules.OPHYD_test_primitive_arrays",
     "simulated hardware for testing handling of arays of primitives",
     value=10.3,
+    plotly={"data": [{"y": [1, 2, 3, 4]}], "layout": {"title": "A Plotly Graph"}},
 )
 
 
