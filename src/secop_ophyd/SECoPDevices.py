@@ -256,12 +256,14 @@ class SECoPBaseDevice(StandardReadable):
         ):
             # generate Signals from Module Properties
             for property in module_desc["properties"]:
-                propb = PropertyBackend(property, module_desc["properties"], secclient)
+
                 if property == "implementation":
                     self.impl = module_desc["properties"]["implementation"]
 
                 if property in ["meaning", "plotly"]:
                     continue
+
+                propb = PropertyBackend(property, module_desc["properties"], secclient)
 
                 setattr(self, property, SignalR(backend=propb))
                 self.mod_prop_devices[property] = getattr(self, property)
