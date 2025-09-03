@@ -35,6 +35,7 @@ dev = [
     'matplotlib',
     'pytest-asyncio',
     'pytest-xprocess',
+    'pytest-cov',
     'pre-commit',
     'ipykernel',
     'databroker[all]==2.0.0b64',

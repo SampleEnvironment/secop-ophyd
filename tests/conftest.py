@@ -5,7 +5,6 @@ import os
 
 import pytest
 from bluesky import RunEngine
-from databroker.v2 import temp
 from frappy.datatypes import (
     ArrayOf,
     FloatRange,
@@ -152,14 +151,8 @@ async def nested_client(nested_struct_sim, logger, port="10771"):
 
 
 @pytest.fixture
-def db():
-    return temp()
-
-
-@pytest.fixture
-def run_engine(db):
+def run_engine():
     re = RunEngine({})
-    re.subscribe(db.v1.insert)
     return re
 
 
