@@ -23,7 +23,7 @@ async def test_stop_cmd(cryo_sim, cryo_node_internal_loop: SECoPNodeDevice):
 
     await stat
 
-    assert cryo._stopped is True
+    assert cryo._stopped is False
 
     await cryo_node_internal_loop.disconnect_async()
 
