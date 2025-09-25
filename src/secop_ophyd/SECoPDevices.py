@@ -758,10 +758,10 @@ class SECoPMoveableDevice(SECoPWritableDevice, Locatable, Stoppable):
         """
         self._success = success
 
-        self.logger.info(f"Stopping {self.name} success={success}")
-
-        await self._secclient.exec_command(self._module, "stop")
-        self._stopped = True
+        if not success:
+            self.logger.info(f"Stopping {self.name} success={success}")
+            await self._secclient.exec_command(self._module, "stop")
+            self._stopped = True
 
     async def locate(self) -> Location:
         # return current location of the device (setpoint and readback).
