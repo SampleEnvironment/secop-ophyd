@@ -12,7 +12,7 @@ warnings.filterwarnings(
 )
 
 
-async def test_run_engine_count(cryo_sim, run_engine, cryo_node: SECoPNodeDevice):
+async def test_run_engine_count(run_engine, cryo_sim, cryo_node: SECoPNodeDevice):
     run_engine(count([cryo_node.cryo], num=5, delay=1))
 
     cryo_node.disconnect()
