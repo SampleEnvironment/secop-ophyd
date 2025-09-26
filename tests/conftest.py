@@ -151,20 +151,20 @@ async def nested_client(nested_struct_sim, logger, port="10771"):
 
 
 @pytest.fixture
-def run_engine():
+async def run_engine():
     re = RunEngine({})
     return re
 
 
 @pytest.fixture
-def cryo_node(run_engine):
+async def cryo_node(run_engine):
     return SECoPNodeDevice.create(
-        host="localhost", port="10769", loop=run_engine.loop, loglevel="DEBUG"
+        host="localhost", port="10769", loop=run_engine.loop, loglevel="INFO"
     )
 
 
 @pytest.fixture
-def nested_node_re(run_engine):
+async def nested_node_re(run_engine):
     return SECoPNodeDevice.create(host="localhost", port="10771", loop=run_engine.loop)
 
 
