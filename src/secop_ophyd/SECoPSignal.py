@@ -327,7 +327,7 @@ class SECoPParamBackend(SignalBackend):
 
     async def get_reading(self) -> Reading[SignalDatatypeT]:
         dataset = await self._secclient.get_parameter(
-            **self.get_param_path(), trycache=False
+            **self.get_param_path(), trycache=True
         )
 
         sec_reading = SECoPReading(entry=dataset, secop_dt=self.SECoP_type_info)

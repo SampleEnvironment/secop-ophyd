@@ -9,7 +9,7 @@ from ophyd_async.core import SignalR
 from secop_ophyd.SECoPDevices import SECoPNodeDevice, SECoPReadableDevice
 
 
-async def test_primitive_arrays(
+def test_primitive_arrays(
     nested_struct_sim, run_engine: RunEngine, nested_node_re: SECoPNodeDevice
 ):
     bec = BestEffortCallback()
