@@ -765,9 +765,12 @@ class SECoPMoveableDevice(SECoPWritableDevice, Locatable, Stoppable):
     async def locate(self) -> Location:
         # return current location of the device (setpoint and readback).
         # Only locally cached values are returned
+        setpoint = await self._secclient.get_parameter(self._module, "target", True)
+        readback = await self._secclient.get_parameter(self._module, "value", True)
+
         location: Location = {
-            "setpoint": await self.target.get_value(True),
-            "readback": await self.value.get_value(True),
+            "setpoint": setpoint.value,
+            "readback": readback.value,
         }
         return location
 
