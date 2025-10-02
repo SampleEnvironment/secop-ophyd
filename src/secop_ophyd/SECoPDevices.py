@@ -77,7 +77,10 @@ ERROR_PREPARED = 450
 UNKNOWN = 401  # not in SECoP standard (yet)
 
 
-READABLE_PARAMS = ["value", "target", "status"]
+HINTED_PARAMS = [
+    "value",
+]
+UNCACHED_PARAMS = ["target", "status"]
 
 
 def clean_identifier(anystring):
@@ -250,7 +253,7 @@ class SECoPBaseDevice(StandardReadable):
         )
 
         self.logger.info(f"Initializing SECoPBaseDevice for module {module_name}")
-        # Add configuration Signal
+        # Add configuration Signals
         with self.add_children_as_readables(
             format=StandardReadableFormat.CONFIG_SIGNAL
         ):
@@ -270,7 +273,7 @@ class SECoPBaseDevice(StandardReadable):
 
             # generate Signals from Module parameters eiter r or rw
             for parameter, properties in module_desc["parameters"].items():
-                if parameter in READABLE_PARAMS:
+                if parameter in HINTED_PARAMS + UNCACHED_PARAMS:
                     continue
                 # generate new root path
                 param_path = Path(parameter_name=parameter, module_name=module_name)
@@ -286,11 +289,34 @@ class SECoPBaseDevice(StandardReadable):
                 )
                 self.param_devices[parameter] = getattr(self, parameter)
 
-        # Add readables Signals
+        # Add hinted readable Signals
         with self.add_children_as_readables(
             format=StandardReadableFormat.HINTED_SIGNAL
         ):
-            for parameter in READABLE_PARAMS:
+            for parameter in HINTED_PARAMS:
+                if parameter not in module_desc["parameters"].keys():
+                    continue
+                properties = module_desc["parameters"][parameter]
+
+                # generate new root path
+                param_path = Path(parameter_name=parameter, module_name=module_name)
+
+                # readonly propertyns to plans and plan stubs.
+                readonly = properties.get("readonly", None)
+
+                # Normal types + (struct and tuple as JSON object Strings)
+                self._signal_from_parameter(
+                    path=param_path,
+                    sig_name=parameter,
+                    readonly=readonly,
+                )
+                self.param_devices[parameter] = getattr(self, parameter)
+
+        # Add uncached readable Signals
+        with self.add_children_as_readables(
+            format=StandardReadableFormat.UNCACHED_SIGNAL
+        ):
+            for parameter in UNCACHED_PARAMS:
                 if parameter not in module_desc["parameters"].keys():
                     continue
                 properties = module_desc["parameters"][parameter]
