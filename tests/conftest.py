@@ -164,7 +164,7 @@ async def cryo_node(run_engine):
 
 
 @pytest.fixture
-async def nested_node_re(run_engine):
+def nested_node_re(run_engine):
     return SECoPNodeDevice.create(host="localhost", port="10771", loop=run_engine.loop)
 
 

@@ -442,12 +442,6 @@ class SECoPBaseDevice(StandardReadable):
         else:
             setattr(self, sig_name, SignalRW(paramb))
 
-        def noop(val):
-            pass
-
-        sig: SignalR = getattr(self, sig_name)
-        sig.subscribe_value(noop)
-
 
 class SECoPCommunicatorDevice(SECoPBaseDevice):
 
@@ -574,7 +568,12 @@ class SECoPReadableDevice(SECoPCommunicatorDevice, Triggerable, Subscribable):
 
     def trigger(self) -> AsyncStatus:
         self.logger.info(f"Triggering {self.name}: read fresh data from device")
-        return AsyncStatus(awaitable=self.value.read(cached=False))
+        # get fresh reading of the value Parameter from the SEC Node
+        return AsyncStatus(
+            awaitable=self._secclient.get_parameter(
+                self._module, "value", trycache=False
+            )
+        )
 
     def subscribe(self, function: Callback[dict[str, Reading]]) -> None:
         """Subscribe to updates in the reading"""

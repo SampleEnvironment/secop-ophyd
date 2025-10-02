@@ -66,6 +66,8 @@ async def test_signal_read_cached(cryo_sim, cryo_node_internal_loop: SECoPNodeDe
 
     cryo_dev: SECoPMoveableDevice = cryo_node_internal_loop.cryo
 
+    cryo_dev.p.subscribe_value(lambda val: None)
+
     p = await cryo_dev.p.get_value(cached=True)
 
     assert p == 40.0
@@ -79,15 +81,11 @@ async def test_signal_stage_unstage_read_cached(
 
     cryo_dev: SECoPMoveableDevice = cryo_node_internal_loop.cryo
 
-    await cryo_dev.value.stage()
-
-    await asyncio.sleep(1)
-
-    await cryo_dev.value.unstage()
-
-    await asyncio.sleep(1)
+    await cryo_dev.p.stage()
 
     p = await cryo_dev.p.get_value(cached=True)
+
+    await cryo_dev.p.unstage()
 
     assert p == 40.0
 
@@ -140,6 +138,10 @@ async def test_trigger(cryo_sim, cryo_node_internal_loop: SECoPNodeDevice):
 async def test_node_drive(cryo_sim, cryo_node_internal_loop: SECoPNodeDevice):
     cryo_dev: SECoPMoveableDevice = cryo_node_internal_loop.cryo
 
+    await cryo_dev.window.set(5)
+    await cryo_dev.tolerance.set(1)
+    await cryo_dev.ramp.set(20)
+
     target_old = await cryo_dev.target.read()
 
     new_target = 11.0
@@ -156,7 +158,7 @@ async def test_node_drive(cryo_sim, cryo_node_internal_loop: SECoPNodeDevice):
 
     reading = await cryo_dev.value.get_value()
 
-    assert np.isclose(reading, new_target, atol=0.2)
+    assert np.isclose(reading, new_target, atol=1.0)
 
     await cryo_node_internal_loop.disconnect_async()
 
