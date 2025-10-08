@@ -309,25 +309,6 @@ class SECoPBaseDevice(StandardReadable):
                 )
                 self.param_devices[parameter] = getattr(self, parameter)
 
-        # Add status Sigal (neither config nor read signal)
-        if "status" in module_desc["parameters"].keys():
-
-            properties = module_desc["parameters"]["status"]
-
-            # generate new root path
-            param_path = Path(parameter_name="status", module_name=module_name)
-
-            # readonly propertyns to plans and plan stubs.
-            readonly = properties.get("readonly", None)
-
-            # Normal types + (struct and tuple as JSON object Strings)
-            self._signal_from_parameter(
-                path=param_path,
-                sig_name="status",
-                readonly=readonly,
-            )
-            self.param_devices["status"] = getattr(self, "status")
-
         # Initialize Command Devices
         for command, properties in module_desc["commands"].items():
             # generate new root path
@@ -366,6 +347,21 @@ class SECoPBaseDevice(StandardReadable):
             self.plans.append(plan)
 
         self.set_name(module_name)
+
+        # Add status Signal AFTER set_name() to avoid auto-registration as config/hinted
+        # This is only needed as long as Tiled can't handle structured numpy arrays
+        if "status" in module_desc["parameters"].keys():
+            properties = module_desc["parameters"]["status"]
+            param_path = Path(parameter_name="status", module_name=module_name)
+            readonly = properties.get("readonly", None)
+
+            # Create signal without adding to readables
+            self._signal_from_parameter(
+                path=param_path,
+                sig_name="status",
+                readonly=readonly,
+            )
+            self.param_devices["status"] = getattr(self, "status")
 
     def generate_cmd_plan(
         self,
