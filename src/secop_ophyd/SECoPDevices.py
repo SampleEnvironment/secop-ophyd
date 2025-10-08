@@ -77,7 +77,7 @@ ERROR_PREPARED = 450
 UNKNOWN = 401  # not in SECoP standard (yet)
 
 
-READABLE_PARAMS = ["value", "target", "status"]
+READABLE_PARAMS = ["value", "target"]
 
 
 def clean_identifier(anystring):
