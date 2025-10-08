@@ -77,7 +77,8 @@ ERROR_PREPARED = 450
 UNKNOWN = 401  # not in SECoP standard (yet)
 
 
-READABLE_PARAMS = ["value", "target"]
+HINTED_PARAMS = ["value"]
+UNCACHED_PARAMS = ["target"]
 
 
 def clean_identifier(anystring):
