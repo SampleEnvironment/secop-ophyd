@@ -312,10 +312,10 @@ class SECoPBaseDevice(StandardReadable):
         # Add status Sigal (neither config nor read signal)
         if "status" in module_desc["parameters"].keys():
 
-            properties = module_desc["parameters"][parameter]
+            properties = module_desc["parameters"]["status"]
 
             # generate new root path
-            param_path = Path(parameter_name=parameter, module_name=module_name)
+            param_path = Path(parameter_name="status", module_name=module_name)
 
             # readonly propertyns to plans and plan stubs.
             readonly = properties.get("readonly", None)
@@ -323,10 +323,10 @@ class SECoPBaseDevice(StandardReadable):
             # Normal types + (struct and tuple as JSON object Strings)
             self._signal_from_parameter(
                 path=param_path,
-                sig_name=parameter,
+                sig_name="status",
                 readonly=readonly,
             )
-            self.param_devices[parameter] = getattr(self, parameter)
+            self.param_devices["status"] = getattr(self, "status")
 
         # Initialize Command Devices
         for command, properties in module_desc["commands"].items():
