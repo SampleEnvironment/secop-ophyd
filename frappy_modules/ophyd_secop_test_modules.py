@@ -86,9 +86,14 @@ class Test_ND_arrays(Readable):
     def read_arr3d(self):
         return self.arr3d
 
+class SignalFormatParameter(Parameter):
+    signal_format = Property('A Property for indicating the StandardReadable.Format for ophyd-async', StringType(), default='', export=True)
+    
 
 class Test_Struct_of_arrays(Readable):
     Status = Enum(Readable.Status)
+    
+    
 
     status = Parameter(datatype=StatusType(Status))
 
@@ -102,7 +107,7 @@ class Test_Struct_of_arrays(Readable):
         readonly=True,
     )
 
-    writable_strct_of_arr = Parameter(
+    writable_strct_of_arr = SignalFormatParameter(
         "writable struct of arrays containing primitive datatypes",
         datatype=StructOf(
             ints=ArrayOf(IntRange(), minlen=5, maxlen=5),
@@ -110,6 +115,7 @@ class Test_Struct_of_arrays(Readable):
             floats=ArrayOf(FloatRange(), minlen=5, maxlen=5),
         ),
         readonly=False,
+        signal_format = "HINTED_SIGNAL"
     )
 
     def read_value(self):

@@ -77,10 +77,6 @@ ERROR_PREPARED = 450
 UNKNOWN = 401  # not in SECoP standard (yet)
 
 
-HINTED_PARAMS = ["value"]
-UNCACHED_PARAMS = ["target"]
-
-
 def clean_identifier(anystring):
     return str(re.sub(r"\W+|^(?=\d)", "_", anystring))
 
@@ -233,6 +229,10 @@ class SECoPBaseDevice(StandardReadable):
         :param secclient: SECoP client providing communication to the SEC Node
         :type secclient: AsyncFrappyClient
         """
+        # config_params is default
+        self._hinted_params: list[str] = ["value", "target"]
+        self._uncached_params: list[str] = []
+        self._hinted_uncached_params: list[str] = []
 
         self._secclient: AsyncFrappyClient = secclient
 
@@ -245,6 +245,21 @@ class SECoPBaseDevice(StandardReadable):
         self.param_devices: Dict[str, Any] = {}
 
         name = self._secclient.properties[EQUIPMENT_ID].replace(".", "-")
+
+        for parameter, properties in module_desc["parameters"].items():
+            match properties.get("_signal_format", None):
+                case "HINTED_SIGNAL":
+                    if parameter not in self._hinted_params:
+                        self._hinted_params.append(parameter)
+
+                case "HINTED_UNCACHED_SIGNAL":
+                    if parameter not in self._hinted_uncached_params:
+                        self._hinted_uncached_params.append(parameter)
+                case "UNCACHED_SIGNAL":
+                    if parameter not in self._uncached_params:
+                        self._uncached_params.append(parameter)
+                case _:
+                    continue
 
         self.logger: Logger = setup_logging(
             name=f"secop-ophyd:{name}:{module_name}", level=loglevel, log_dir=logdir
@@ -271,7 +286,12 @@ class SECoPBaseDevice(StandardReadable):
 
             # generate Signals from Module parameters eiter r or rw
             for parameter, properties in module_desc["parameters"].items():
-                if parameter in HINTED_PARAMS + UNCACHED_PARAMS:
+                if (
+                    parameter
+                    in self._hinted_params
+                    + self._uncached_params
+                    + self._hinted_uncached_params
+                ):
                     continue
                 # generate new root path
                 param_path = Path(parameter_name=parameter, module_name=module_name)
@@ -287,51 +307,26 @@ class SECoPBaseDevice(StandardReadable):
                 )
                 self.param_devices[parameter] = getattr(self, parameter)
 
-        # Add hinted readable Signals
-        with self.add_children_as_readables(
-            format=StandardReadableFormat.HINTED_SIGNAL
-        ):
-            for parameter in HINTED_PARAMS:
-                if parameter not in module_desc["parameters"].keys():
-                    continue
-                properties = module_desc["parameters"][parameter]
+        self.add_signals_by_format(
+            format=StandardReadableFormat.HINTED_SIGNAL,
+            format_params=self._hinted_params,
+            module_name=module_name,
+            module_desc=module_desc,
+        )
 
-                # generate new root path
-                param_path = Path(parameter_name=parameter, module_name=module_name)
+        self.add_signals_by_format(
+            format=StandardReadableFormat.UNCACHED_SIGNAL,
+            format_params=self._uncached_params,
+            module_name=module_name,
+            module_desc=module_desc,
+        )
 
-                # readonly propertyns to plans and plan stubs.
-                readonly = properties.get("readonly", None)
-
-                # Normal types + (struct and tuple as JSON object Strings)
-                self._signal_from_parameter(
-                    path=param_path,
-                    sig_name=parameter,
-                    readonly=readonly,
-                )
-                self.param_devices[parameter] = getattr(self, parameter)
-
-        # Add uncached readable Signals
-        with self.add_children_as_readables(
-            format=StandardReadableFormat.UNCACHED_SIGNAL
-        ):
-            for parameter in UNCACHED_PARAMS:
-                if parameter not in module_desc["parameters"].keys():
-                    continue
-                properties = module_desc["parameters"][parameter]
-
-                # generate new root path
-                param_path = Path(parameter_name=parameter, module_name=module_name)
-
-                # readonly propertyns to plans and plan stubs.
-                readonly = properties.get("readonly", None)
-
-                # Normal types + (struct and tuple as JSON object Strings)
-                self._signal_from_parameter(
-                    path=param_path,
-                    sig_name=parameter,
-                    readonly=readonly,
-                )
-                self.param_devices[parameter] = getattr(self, parameter)
+        self.add_signals_by_format(
+            format=StandardReadableFormat.HINTED_UNCACHED_SIGNAL,
+            format_params=self._hinted_uncached_params,
+            module_name=module_name,
+            module_desc=module_desc,
+        )
 
         # Initialize Command Devices
         for command, properties in module_desc["commands"].items():
@@ -386,6 +381,30 @@ class SECoPBaseDevice(StandardReadable):
                 readonly=readonly,
             )
             self.param_devices["status"] = getattr(self, "status")
+
+    def add_signals_by_format(
+        self, format, format_params: list, module_name, module_desc: dict
+    ):
+        # Add hinted readable Signals
+        with self.add_children_as_readables(format=format):
+            for parameter in format_params:
+                if parameter not in module_desc["parameters"].keys():
+                    continue
+                properties = module_desc["parameters"][parameter]
+
+                # generate new root path
+                param_path = Path(parameter_name=parameter, module_name=module_name)
+
+                # readonly propertyns to plans and plan stubs.
+                readonly = properties.get("readonly", None)
+
+                # Normal types + (struct and tuple as JSON object Strings)
+                self._signal_from_parameter(
+                    path=param_path,
+                    sig_name=parameter,
+                    readonly=readonly,
+                )
+                self.param_devices[parameter] = getattr(self, parameter)
 
     def generate_cmd_plan(
         self,
