@@ -168,3 +168,13 @@ async def test_nested_struct_of_arrays(nested_struct_sim, nested_node: SECoPNode
 
 
 # TODO Nested Arrays (2D) uniform and ragged
+
+
+async def test_hinted_signal(nested_struct_sim, nested_node: SECoPNodeDevice):
+    str_of_arr_mod: SECoPReadableDevice = nested_node.struct_of_arrays
+
+    reading = await str_of_arr_mod.read()
+
+    assert len(reading) == 2
+
+    await nested_node.disconnect_async()
