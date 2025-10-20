@@ -12,8 +12,12 @@ from secop_ophyd.SECoPDevices import (
 )
 
 
-async def test_stop_cmd(cryo_sim, cryo_node_internal_loop: SECoPNodeDevice):
-    cryo: SECoPMoveableDevice = cryo_node_internal_loop.cryo
+async def test_stop_cmd(cryo_sim, cryo_node_no_re: SECoPNodeDevice):
+    cryo: SECoPMoveableDevice = cryo_node_no_re.cryo
+
+    await cryo.window.set(5)
+    await cryo.tolerance.set(1)
+    await cryo.ramp.set(20)
 
     stat = cryo.set(15)
 
@@ -25,11 +29,13 @@ async def test_stop_cmd(cryo_sim, cryo_node_internal_loop: SECoPNodeDevice):
 
     assert cryo._stopped is False
 
-    await cryo_node_internal_loop.disconnect_async()
 
+async def test_stop_no_sucess_cmd(cryo_sim, cryo_node_no_re: SECoPNodeDevice):
+    cryo: SECoPMoveableDevice = cryo_node_no_re.cryo
 
-async def test_stop_no_sucess_cmd(cryo_sim, cryo_node_internal_loop: SECoPNodeDevice):
-    cryo: SECoPMoveableDevice = cryo_node_internal_loop.cryo
+    await cryo.window.set(5)
+    await cryo.tolerance.set(1)
+    await cryo.ramp.set(20)
 
     stat = cryo.set(15)
 
@@ -47,11 +53,9 @@ async def test_stop_no_sucess_cmd(cryo_sim, cryo_node_internal_loop: SECoPNodeDe
     assert cryo._stopped is True
     assert rt_error is True
 
-    await cryo_node_internal_loop.disconnect_async()
 
-
-async def test_struct_inp_cmd(nested_struct_sim, nested_node: SECoPNodeDevice):
-    test_cmd: SECoPCMDDevice = nested_node.ophy_struct.test_cmd_CMD
+async def test_struct_inp_cmd(nested_struct_sim, nested_node_no_re: SECoPNodeDevice):
+    test_cmd: SECoPCMDDevice = nested_node_no_re.ophy_struct.test_cmd_CMD
 
     input_dict = {"name": "test_name", "id": 900, "sort": False}
 
@@ -69,17 +73,17 @@ async def test_struct_inp_cmd(nested_struct_sim, nested_node: SECoPNodeDevice):
     print(reading_res)
     assert isinstance(reading_res.get(res.name)["value"], int)
 
-    await nested_node.disconnect_async()
 
-
-def test_triggerable(nested_struct_sim, nested_node: SECoPNodeDevice):
-    test_cmd: SECoPCMDDevice = nested_node.ophy_struct.test_cmd_CMD
+def test_triggerable(nested_struct_sim, nested_node_no_re: SECoPNodeDevice):
+    test_cmd: SECoPCMDDevice = nested_node_no_re.ophy_struct.test_cmd_CMD
 
     assert isinstance(test_cmd, Triggerable)
 
 
-async def test_secop_error_on_cmd(nested_struct_sim, nested_node: SECoPNodeDevice):
-    test_cmd: SECoPCMDDevice = nested_node.ophy_struct.test_cmd_CMD
+async def test_secop_error_on_cmd(
+    nested_struct_sim, nested_node_no_re: SECoPNodeDevice
+):
+    test_cmd: SECoPCMDDevice = nested_node_no_re.ophy_struct.test_cmd_CMD
 
     error_triggered = False
     # Triggers SECoP Error
@@ -103,13 +107,11 @@ async def test_secop_error_on_cmd(nested_struct_sim, nested_node: SECoPNodeDevic
     reading_res = await res.read()
     assert reading_res.get(res.name)["value"] is None
 
-    await nested_node.disconnect_async()
-
 
 async def test_secop_triggering_cmd_dev(
-    nested_struct_sim, nested_node: SECoPNodeDevice
+    nested_struct_sim, nested_node_no_re: SECoPNodeDevice
 ):
-    test_cmd: SECoPCMDDevice = nested_node.ophy_struct.test_cmd_CMD
+    test_cmd: SECoPCMDDevice = nested_node_no_re.ophy_struct.test_cmd_CMD
 
     input_dict = {"name": "test_name", "id": 900, "sort": False}
 
@@ -123,5 +125,3 @@ async def test_secop_triggering_cmd_dev(
 
     reading_res = await res.read()
     assert isinstance(reading_res.get(res.name)["value"], int)
-
-    await nested_node.disconnect_async()

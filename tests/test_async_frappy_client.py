@@ -11,7 +11,6 @@ async def test_asycnc_secopclient_conn(
     cryo_sim, async_frappy_client: AsyncFrappyClient
 ):
     assert async_frappy_client.online is True
-    await async_frappy_client.disconnect()
 
 
 async def test_asycnc_secopclient_get_param(
@@ -20,8 +19,6 @@ async def test_asycnc_secopclient_get_param(
     reading = await async_frappy_client.get_parameter("cryo", "value", False)
 
     assert isinstance(reading, CacheItem)
-
-    await async_frappy_client.disconnect()
 
 
 async def test_async_secopclient_disconnect(
@@ -72,8 +69,6 @@ async def test_async_secopclient_reconn(
 
     assert reading3.value != reading4.value
 
-    await async_frappy_client.disconnect(True)
-
 
 async def test_async_secopclient_shutdown_and_reconn(
     cryo_sim, async_frappy_client: AsyncFrappyClient
@@ -108,5 +103,3 @@ async def test_async_secopclient_shutdown_and_reconn(
     reading2 = await async_frappy_client.get_parameter("cryo", "value", False)
 
     assert reading1.value != reading2.value
-
-    await async_frappy_client.disconnect(True)

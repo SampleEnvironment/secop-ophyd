@@ -13,6 +13,7 @@ from frappy.datatypes import (
     StructOf,
     TupleOf,
 )
+from ophyd_async.core import init_devices
 from xprocess import ProcessStarter
 
 from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient
@@ -151,38 +152,49 @@ async def nested_client(nested_struct_sim, logger, port="10771"):
 
 
 @pytest.fixture
-async def run_engine():
+async def RE():  # noqa: N802
     re = RunEngine({})
     return re
 
 
 @pytest.fixture
-async def cryo_node(run_engine):
-    return SECoPNodeDevice.create(
-        host="localhost", port="10769", loop=run_engine.loop, loglevel="INFO"
-    )
+async def nested_node_no_re():
+    async with init_devices():
+        nested = SECoPNodeDevice(
+            sec_node_uri="localhost:10771",
+        )
+
+    return nested
 
 
 @pytest.fixture
-def nested_node_re(run_engine):
-    return SECoPNodeDevice.create(host="localhost", port="10771", loop=run_engine.loop)
+def nested_node(RE):  # noqa: N803
+    with init_devices():
+        nested = SECoPNodeDevice(
+            sec_node_uri="localhost:10771",
+        )
+
+    return nested
 
 
 @pytest.fixture
-async def cryo_node_internal_loop():
-    return await SECoPNodeDevice.create_async(
-        host="localhost",
-        port="10769",
-        loop=asyncio.get_running_loop(),
-        loglevel="DEBUG",
-    )
+async def cryo_node_no_re():
+    async with init_devices():
+        cryo = SECoPNodeDevice(
+            sec_node_uri="localhost:10769",
+        )
+
+    return cryo
 
 
 @pytest.fixture
-async def nested_node():
-    return await SECoPNodeDevice.create_async(
-        host="localhost", port="10771", loop=asyncio.get_running_loop()
-    )
+def cryo_node(RE):  # noqa: N803
+    with init_devices():
+        cryo = SECoPNodeDevice(
+            sec_node_uri="localhost:10769",
+        )
+
+    return cryo
 
 
 @pytest.fixture

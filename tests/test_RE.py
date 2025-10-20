@@ -15,20 +15,24 @@ warnings.filterwarnings(
 )
 
 
-async def test_run_engine_count(run_engine, cryo_sim, cryo_node: SECoPNodeDevice):
-    run_engine(count([cryo_node.cryo], num=5, delay=1))
-
-    cryo_node.disconnect()
+async def test_run_engine_count(RE, cryo_sim, cryo_node: SECoPNodeDevice):  # noqa: N803
+    RE(count([cryo_node.cryo], num=5, delay=1))
 
 
 async def test_run_engine_string_value(
-    nested_struct_sim, run_engine, nested_node_re: SECoPNodeDevice
+    nested_struct_sim, RE, nested_node_no_re: SECoPNodeDevice  # noqa: N803
 ):
-    # p = RE(read(nested_node_RE.str_test))
-    nested_node_re.disconnect()
+    def read_str():
+        val = yield from bps.rd(nested_node_no_re.str_test.value)
+        print(val)
+        assert val is not None
+
+    RE(read_str())
 
 
-async def test_abs_set_wait_behaviour(run_engine, cryo_sim, cryo_node: SECoPNodeDevice):
+async def test_abs_set_wait_behaviour(
+    RE, cryo_sim, cryo_node: SECoPNodeDevice  # noqa: N803
+):
 
     def wait_on_abs_set():
         yield from bps.abs_set(cryo_node.cryo.window, 10, wait=True)
@@ -46,4 +50,4 @@ async def test_abs_set_wait_behaviour(run_engine, cryo_sim, cryo_node: SECoPNode
 
         assert after - before < 5
 
-    run_engine(wait_on_abs_set())
+    RE(wait_on_abs_set())

@@ -2,7 +2,6 @@
 
 import pytest
 from bluesky import RunEngine
-from bluesky.callbacks.best_effort import BestEffortCallback
 from bluesky.plans import count
 from ophyd_async.core import SignalR
 
@@ -10,13 +9,10 @@ from secop_ophyd.SECoPDevices import SECoPNodeDevice, SECoPReadableDevice
 
 
 def test_primitive_arrays(
-    nested_struct_sim, run_engine: RunEngine, nested_node_re: SECoPNodeDevice
+    nested_struct_sim, RE: RunEngine, nested_node: SECoPNodeDevice  # noqa: N803
 ):
-    bec = BestEffortCallback()
-    run_engine.subscribe(bec)
-    run_engine.ignore_callback_exceptions = False
 
-    prim_arr: SECoPReadableDevice = nested_node_re.primitive_arrays
+    prim_arr: SECoPReadableDevice = nested_node.primitive_arrays
 
     prim_arr.add_readables(
         [
@@ -29,9 +25,7 @@ def test_primitive_arrays(
         ]
     )
 
-    run_engine(count([prim_arr], 1, 3))
-
-    nested_node_re.disconnect()
+    RE(count([prim_arr], 1, 3))
 
 
 @pytest.mark.parametrize(
@@ -47,17 +41,14 @@ def test_primitive_arrays(
 )
 async def test_primitive_float_array(
     nested_struct_sim,
-    run_engine: RunEngine,
-    nested_node_re: SECoPNodeDevice,
+    RE: RunEngine,  # noqa: N803
+    nested_node_no_re: SECoPNodeDevice,
     shape_expected,
     sig,
     dtype_numpy_expected,
 ):
-    bec = BestEffortCallback()
-    run_engine.subscribe(bec)
-    run_engine.ignore_callback_exceptions = False
 
-    prim_arr: SECoPReadableDevice = nested_node_re.primitive_arrays
+    prim_arr: SECoPReadableDevice = nested_node_no_re.primitive_arrays
 
     arr_signal: SignalR = getattr(prim_arr, sig)
 
@@ -70,5 +61,3 @@ async def test_primitive_float_array(
 
     assert shape == shape_expected
     assert dtype_numpy == dtype_numpy_expected
-
-    nested_node_re.disconnect()

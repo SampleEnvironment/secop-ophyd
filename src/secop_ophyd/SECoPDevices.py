@@ -2,7 +2,6 @@ import asyncio
 import inspect
 import logging
 import re
-import threading
 import time as ttime
 from logging import Logger
 from types import MethodType
@@ -32,7 +31,9 @@ from frappy.datatypes import (
     TupleOf,
 )
 from ophyd_async.core import (
+    DEFAULT_TIMEOUT,
     AsyncStatus,
+    LazyMock,
     SignalR,
     SignalRW,
     SignalX,
@@ -839,8 +840,17 @@ class SECoPNodeDevice(StandardReadable):
     to the Sec-node properties
     """
 
+    name: str = ""
+
     def __init__(
-        self, secclient: AsyncFrappyClient, logger: Logger, logdir: str | None = None
+        self,
+        sec_node_uri: str,
+        # `prefix` not used, it's just that the device connecter requires it for
+        # some reason.
+        prefix: str = "",
+        name: str = "",
+        loglevel: str = "INFO",
+        logdir: str | None = None,
     ):
         """Initializes the node device and generates all node signals and subdevices
         corresponding to the SECoP-modules of the secnode
@@ -849,170 +859,98 @@ class SECoPNodeDevice(StandardReadable):
         :type secclient: AsyncFrappyClient
         """
 
-        self.equipment_id: SignalR
-        self.description: SignalR
-        self.version: SignalR
+        self.host, self.port = sec_node_uri.rsplit(":", maxsplit=1)
 
-        self._secclient: AsyncFrappyClient = secclient
-
-        self._module_name: str = ""
-        self._node_cls_name: str = ""
-        self.mod_devices: Dict[str, SECoPReadableDevice] = {}
-        self.node_prop_devices: Dict[str, SignalR] = {}
-
-        self.genCode: GenNodeCode
-
-        # Name is set to sec-node equipment_id
-        name = self._secclient.properties[EQUIPMENT_ID].replace(".", "-")
-
-        config = []
-
-        self.logger: Logger = logger
-
-        self.logger.info(
-            "Initializing SECoPNodeDevice "
-            + f"({self._secclient.host}:{self._secclient.port})"
+        self.logger: Logger = setup_logging(
+            name=f"frappy:{self.host}:{self.port}",
+            level=LOG_LEVELS[loglevel],
+            log_dir=logdir,
         )
+        self.logdir = logdir
 
-        with self.add_children_as_readables(
-            format=StandardReadableFormat.CONFIG_SIGNAL
-        ):
-            for property in self._secclient.properties:
-                propb = PropertyBackend(property, self._secclient.properties, secclient)
-                setattr(self, property, SignalR(backend=propb))
-                config.append(getattr(self, property))
-                self.node_prop_devices[property] = getattr(self, property)
+        self.name = name
 
-        with self.add_children_as_readables(format=StandardReadableFormat.CHILD):
-            for module, module_desc in self._secclient.modules.items():
+    async def connect(
+        self,
+        mock: bool | LazyMock = False,
+        timeout: float = DEFAULT_TIMEOUT,
+        force_reconnect: bool = False,
+    ):
+        if not hasattr(self, "_secclient"):
+            secclient: AsyncFrappyClient
 
-                secop_dev_class = self.class_from_interface(module_desc["properties"])
-
-                if secop_dev_class is not None:
-                    setattr(
-                        self,
-                        module,
-                        secop_dev_class(
-                            self._secclient,
-                            module,
-                            loglevel=self.logger.level,
-                            logdir=logdir,
-                        ),
-                    )
-                    self.mod_devices[module] = getattr(self, module)
-
-        # register secclient callbacks (these are useful if sec node description
-        # changes after a reconnect)
-        secclient.client.register_callback(
-            None, self.descriptiveDataChange, self.nodeStateChange
-        )
-
-        super().__init__(name=name)
-
-    @classmethod
-    def create(
-        cls,
-        host: str,
-        port: str,
-        loop,
-        loglevel: str = "INFO",
-        logdir: str | None = None,
-    ) -> "SECoPNodeDevice":
-
-        secclient: AsyncFrappyClient
-
-        logger: Logger = setup_logging(
-            name=f"frappy:{host}:{port}", level=LOG_LEVELS[loglevel], log_dir=logdir
-        )
-
-        if not loop.is_running():
-            raise Exception("The provided Eventloop is not running")
-
-        if loop._thread_id != threading.current_thread().ident:
-            client_future = asyncio.run_coroutine_threadsafe(
-                AsyncFrappyClient.create(host=host, port=port, loop=loop, log=logger),
-                loop,
-            )
-            secclient = client_future.result()
-
-            secclient.external = True
-
-        else:
-            raise Exception(
-                "should be calles with an eventloop that is"
-                "running in a seperate thread"
-            )
-
-        return SECoPNodeDevice(secclient=secclient, logger=logger, logdir=logdir)
-
-    @classmethod
-    async def create_async(
-        cls,
-        host: str,
-        port: str,
-        loop,
-        loglevel: str = "INFO",
-        logdir: str | None = None,
-    ) -> "SECoPNodeDevice":
-
-        logger: Logger = setup_logging(
-            name=f"frappy:{host}:{port}", level=LOG_LEVELS[loglevel], log_dir=logdir
-        )
-
-        secclient: AsyncFrappyClient
-
-        if not loop.is_running():
-            raise Exception("The provided Eventloop is not running")
-
-        if loop._thread_id == threading.current_thread().ident:
             secclient = await AsyncFrappyClient.create(
-                host=host, port=port, loop=loop, log=logger
+                host=self.host,
+                port=self.port,
+                loop=asyncio.get_running_loop(),
+                log=self.logger,
             )
 
-            secclient.external = False
+            self.equipment_id: SignalR
+            self.description: SignalR
+            self.version: SignalR
 
-        else:
-            # Event loop is running in a different thread
-            client_future = asyncio.run_coroutine_threadsafe(
-                AsyncFrappyClient.create(host=host, port=port, loop=loop, log=logger),
-                loop,
-            )
-            secclient = await asyncio.wrap_future(future=client_future)
-            secclient.external = True
+            self._secclient: AsyncFrappyClient = secclient
 
-        return SECoPNodeDevice(secclient=secclient, logger=logger, logdir=logdir)
+            self._module_name: str = ""
+            self._node_cls_name: str = ""
+            self.mod_devices: Dict[str, SECoPReadableDevice] = {}
+            self.node_prop_devices: Dict[str, SignalR] = {}
 
-    def disconnect(self):
-        """shuts down secclient, eventloop must be running in external thread"""
-        if (
-            self._secclient.loop._thread_id == threading.current_thread().ident
-            and self._secclient.loop.is_running()
-        ):
-            raise Exception(
-                "Eventloop must be running in external thread,"
-                " try await node.disconnect_async()"
-            )
-        else:
-            future = asyncio.run_coroutine_threadsafe(
-                self._secclient.disconnect(True), self._secclient.loop
+            self.genCode: GenNodeCode
+
+            if self.name == "":
+                self.name = self._secclient.properties[EQUIPMENT_ID].replace(".", "-")
+
+            config = []
+
+            self.logger.info(
+                "Initializing SECoPNodeDevice "
+                + f"({self._secclient.host}:{self._secclient.port})"
             )
 
-            future.result(2)
+            with self.add_children_as_readables(
+                format=StandardReadableFormat.CONFIG_SIGNAL
+            ):
+                for property in self._secclient.properties:
+                    propb = PropertyBackend(
+                        property, self._secclient.properties, secclient
+                    )
+                    setattr(self, property, SignalR(backend=propb))
+                    config.append(getattr(self, property))
+                    self.node_prop_devices[property] = getattr(self, property)
 
-    async def disconnect_async(self):
-        """shuts down secclient using asyncio, eventloop can be running in same or
-        external thread
-        """
-        if (
-            self._secclient.loop._thread_id == threading.current_thread().ident
-            and self._secclient.loop.is_running()
-        ):
+            with self.add_children_as_readables(format=StandardReadableFormat.CHILD):
+                for module, module_desc in self._secclient.modules.items():
+
+                    secop_dev_class = self.class_from_interface(
+                        module_desc["properties"]
+                    )
+
+                    if secop_dev_class is not None:
+                        setattr(
+                            self,
+                            module,
+                            secop_dev_class(
+                                self._secclient,
+                                module,
+                                loglevel=self.logger.level,
+                                logdir=self.logdir,
+                            ),
+                        )
+                        self.mod_devices[module] = getattr(self, module)
+
+            # register secclient callbacks (these are useful if sec node description
+            # changes after a reconnect)
+            secclient.client.register_callback(
+                None, self.descriptiveDataChange, self.nodeStateChange
+            )
+
+            super().__init__(name=self.name)
+
+        elif force_reconnect or self._secclient.client.online is False:
             await self._secclient.disconnect(True)
-        else:
-            disconn_future = asyncio.run_coroutine_threadsafe(
-                self._secclient.disconnect(True), self._secclient.loop
-            )
-            await asyncio.wrap_future(future=disconn_future)
+            await self._secclient.connect(try_period=DEFAULT_TIMEOUT)
 
     def class_from_instance(self, path_to_module: str | None = None):
         """Dynamically generate python class file for the SECoP_Node_Device, this
