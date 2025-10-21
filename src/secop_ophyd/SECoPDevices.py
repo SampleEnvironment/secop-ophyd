@@ -869,6 +869,7 @@ class SECoPNodeDevice(StandardReadable):
         self.logdir = logdir
 
         self.name = name
+        self.prefix = prefix
 
     async def connect(
         self,
@@ -901,6 +902,8 @@ class SECoPNodeDevice(StandardReadable):
 
             if self.name == "":
                 self.name = self._secclient.properties[EQUIPMENT_ID].replace(".", "-")
+
+            self.name = self.prefix + self.name
 
             config = []
 
