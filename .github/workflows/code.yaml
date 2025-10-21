@@ -14,7 +14,7 @@ env:
 jobs:
 
   lint:
-    name: Lint Codebase 
+    name: Lint Codebase
     # pull requests are a duplicate of a branch push if within the same repo.
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-latest
@@ -51,24 +51,24 @@ jobs:
       uses: actions/setup-python@v4
       with:
         python-version: ${{ matrix.python-version }}
-   
-    
+
+
 
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
         python -m pip install .[dev]
-   
+
     - name: Add PATH envirnoment variable for xprocess
       run: |
         pip freeze
         echo "PATH_VAR=$PATH" >> "$GITHUB_ENV"
-    
-    - name: Run Tests 
+
+    - name: Run Tests
       run: |
         tox -e pytest
-        
-        
+
+
   build:
     name: Build distribution 📦
     runs-on: ubuntu-latest
@@ -113,14 +113,3 @@ jobs:
         path: dist/
     - name: Publish distribution 📦 to PyPI
       uses: pypa/gh-action-pypi-publish@release/v1
-
-
-
-
-
-
-
-
-
-
-

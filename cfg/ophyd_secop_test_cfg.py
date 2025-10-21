@@ -5,7 +5,7 @@ import os
 import sys
 
 # Get project root from environment variable
-project_root = os.environ.get('FRAPPY_PROJECT_ROOT')
+project_root = os.environ.get("FRAPPY_PROJECT_ROOT")
 
 # If project_root is provided and it's a valid directory, add it to sys.path
 if project_root and os.path.isdir(project_root):
@@ -28,7 +28,6 @@ Mod(
     "test module for reading String signals in Bluesky RE",
     group="test",
     value="blah",
-
 )
 
 

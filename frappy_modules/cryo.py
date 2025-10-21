@@ -289,11 +289,11 @@ class Cryostat(CryoBase):
         timestamp = time.time()
         heater = 0
         lastflow = 0
-        last_heaters = (0, 0)
+        last_heaters = (0.0, 0.0)
         delta = 0
         _I = _D = 0
         lastD = 0
-        damper = 1
+        damper = 1.0
         lastmode = self.mode
         while not self._stopflag:
             t = time.time()
@@ -393,7 +393,7 @@ class Cryostat(CryoBase):
             else:
                 # self.heaterpower is set manually, not by pid
                 heater = self.heater
-                last_heaters = (0, 0)
+                last_heaters = (0.0, 0.0)
 
             heater = round(heater, 1)
             sample = newsample

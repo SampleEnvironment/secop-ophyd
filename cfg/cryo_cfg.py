@@ -5,13 +5,12 @@ import os
 import sys
 
 # Get project root from environment variable
-project_root = os.environ.get('FRAPPY_PROJECT_ROOT')
+project_root = os.environ.get("FRAPPY_PROJECT_ROOT")
 
 # If project_root is provided and it's a valid directory, add it to sys.path
 if project_root and os.path.isdir(project_root):
     if project_root not in sys.path:
         sys.path.insert(0, project_root)
-
 
 
 Node(
