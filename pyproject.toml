@@ -12,22 +12,20 @@ description = "An Interface between bluesky and SECoP, using ophyd and frappy-cl
 dependencies = [
     'ophyd-async >= 0.10.0',
     'frappy-core == 0.20.4'
-    
+
 ]
 
 license.file = "LICENSE"
 readme = "README.md"
 requires-python = ">=3.10"
 
-[project.optional-dependencies]
+[dependency-groups]
 dev = [
+    'numpy',
     'isort',
-    'pytest == 7.4.2',
+    'pytest',
     'black',
-    'flake8',
-    "flake8-isort == 6.1.1",
     'pep8-naming',
-    "Flake8-pyproject",
     'mypy',
     'wheel',
     'cycler',
@@ -38,9 +36,7 @@ dev = [
     'pytest-cov',
     'pre-commit',
     'ipykernel',
-    'databroker[all]==2.0.0b64',
     'ophyd',
-    'tox',
     'mlzlog',
     'python-dotenv',
     'bluesky',
@@ -50,11 +46,8 @@ dev = [
 
 
 
-
-
-
 [tool.setuptools.packages.find]
-where = ["src"]  # Add this line
+where = ["src"]
 
 [tool.pytest.ini_options]
 minversion = "6.0"
@@ -78,48 +71,11 @@ name = "Peter Braun"
 
 
 
-[tool.flake8]
-extend-ignore = [
-    "E203", # See https://github.com/PyCQA/pycodestyle/issues/373
-    "F811", # support typing.overload decorator
-    "F722", # allow Annotated[typ, some_func("some string")]
-    "W504",
-    "W503",
-]
-max-line-length = 88 # Respect black's line length (default 88),
-exclude = [".tox", "venv","tests/cfg","tests/frappy_modules","tests/logs","tests/pid"]
-
-
-[tool.mypy]
-ignore_missing_imports = true          # Ignore missing stubs in imported modules
-plugins = ["numpy.typing.mypy_plugin"]
-check_untyped_defs = true
-exclude = ["tests/cfg","tests/frappy_modules","tests/logs","tests/pid"]
 
 
 [tool.black]
 line-length =  88
 
-# tox must currently be configured via an embedded ini string
-# See: https://github.com/tox-dev/tox/issues/999
-[tool.tox]
-legacy_tox_ini = """
-[tox]
-skipsdist=True
-
-[testenv:{pre-commit,mypy,pytest}]
-# Don't create a virtualenv for the command, requires tox-direct plugin
-direct = True
-passenv = *
-allowlist_externals = 
-    pytest 
-    pre-commit
-    mypy
-commands =
-    pytest: pytest -v .
-    mypy: mypy src tests {posargs}
-    pre-commit: pre-commit run --all-files {posargs}
-"""
 
 [tool.setuptools_scm]
 write_to = "src/secop_ophyd/_version.py"

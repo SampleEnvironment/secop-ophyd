@@ -2,23 +2,20 @@
 
 
 test: venv  ## 🎯 Unit tests for Bluesky SECoP Integration
-	. .venv/bin/activate && pytest -v . --ignore=frappy
-	
-
-
+	source .venv/bin/activate && pytest -v .
 
 
 
 venv: .venv/touchfile
 
-.venv/touchfile: pyproject.toml 
-	python3 -m venv .venv
-	. .venv/bin/activate; pip install --upgrade pip; pip install -e .[dev]
+.venv/touchfile: pyproject.toml
+	uv venv --python 3.11
+	uv sync --all-groups
 	touch .venv/touchfile
 
 
-pretty: venv 
-	. .venv/bin/activate; black src tests docs; isort src tests docs; flake8 src tests docs; mypy src tests docs ; pre-commit run --all-files
+pretty: venv
+	pre-commit run --all-files
 
 clean:  ## 🧹 Clean up project
 	rm -rf .venv
@@ -33,4 +30,3 @@ clean:  ## 🧹 Clean up project
 	rm -rf build
 	rm -rf dist
 	rm -rf .env
-

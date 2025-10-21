@@ -3,7 +3,7 @@ import string
 import time
 
 import numpy as np
-from frappy.core import Command, Drivable, IntRange, Parameter, Readable, Property
+from frappy.core import Command, Drivable, IntRange, Parameter, Property, Readable
 from frappy.datatypes import (
     ArrayOf,
     BoolType,
@@ -11,9 +11,9 @@ from frappy.datatypes import (
     FloatRange,
     StatusType,
     StringType,
-    TupleOf,
     StructOf,
-    ValueType
+    TupleOf,
+    ValueType,
 )
 from frappy.errors import ImpossibleError
 from frappy.lib import clamp, mkthread
@@ -24,7 +24,6 @@ from frappy.lib.enum import Enum
 
 class Test_Mod_str(Readable):
 
-    
     Status = Enum(Readable.Status)
 
     status = Parameter(datatype=StatusType(Status))
@@ -63,9 +62,7 @@ class Test_ND_arrays(Readable):
         "3D integer Array",
         datatype=ArrayOf(
             ArrayOf(
-                members=ArrayOf(
-                    members=IntRange(min=0, max=100), minlen=5, maxlen=5
-                ),
+                members=ArrayOf(members=IntRange(min=0, max=100), minlen=5, maxlen=5),
                 minlen=5,
                 maxlen=5,
             ),
@@ -86,14 +83,18 @@ class Test_ND_arrays(Readable):
     def read_arr3d(self):
         return self.arr3d
 
+
 class SignalFormatParameter(Parameter):
-    signal_format = Property('A Property for indicating the StandardReadable.Format for ophyd-async', StringType(), default='', export=True)
-    
+    signal_format = Property(
+        "A Property for indicating the StandardReadable.Format for ophyd-async",
+        StringType(),
+        default="",
+        export=True,
+    )
+
 
 class Test_Struct_of_arrays(Readable):
     Status = Enum(Readable.Status)
-    
-    
 
     status = Parameter(datatype=StatusType(Status))
 
@@ -115,7 +116,7 @@ class Test_Struct_of_arrays(Readable):
             floats=ArrayOf(FloatRange(), minlen=5, maxlen=5),
         ),
         readonly=False,
-        signal_format = "HINTED_SIGNAL"
+        signal_format="HINTED_SIGNAL",
     )
 
     def read_value(self):
@@ -290,9 +291,7 @@ class OPYD_test_struct(Drivable):
         return value
 
     @Command(
-        StructOf(
-            name=StringType(), id=IntRange(max=1000, min=0), sort=BoolType()
-        ),
+        StructOf(name=StringType(), id=IntRange(max=1000, min=0), sort=BoolType()),
         result=IntRange(),
     )
     def test_cmd(self, name, id, sort):
@@ -402,12 +401,6 @@ class OPYD_test_struct(Drivable):
             newpos = {"x": new_px, "y": new_py, "z": new_pz, "color": new_col}
 
             self.value = newpos
-            # temperature is stable when all recorded values in the window
-            # differ from setpoint by less than tolerance
-            currenttime = time.time()
-
-            # obtain min/max
-            deviation = 0
 
             maxdev = abs(max([dev_x, dev_y, dev_z]))
 

@@ -6,9 +6,8 @@ from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient
 from secop_ophyd.SECoPDevices import SECoPNodeDevice, SECoPReadableDevice
 
 
-async def test_nested_connect(nested_struct_sim, nested_node: SECoPNodeDevice):
-    assert isinstance(nested_node, SECoPNodeDevice)
-    await nested_node.disconnect_async()
+async def test_nested_connect(nested_struct_sim, nested_node_no_re: SECoPNodeDevice):
+    assert isinstance(nested_node_no_re, SECoPNodeDevice)
 
 
 async def test_tuple_dev(nested_client: AsyncFrappyClient):
@@ -31,8 +30,6 @@ async def test_tuple_dev(nested_client: AsyncFrappyClient):
 
     assert isinstance(stat1.item(), str)
 
-    await nested_client.disconnect(True)
-
 
 async def test_struct_dev(nested_client: AsyncFrappyClient):
     ophy_struct = SECoPReadableDevice(
@@ -42,13 +39,11 @@ async def test_struct_dev(nested_client: AsyncFrappyClient):
     nested_struct_sig: SignalR = ophy_struct.nested_struct
     await nested_struct_sig.read()
 
-    await nested_client.disconnect(True)
-
 
 async def test_nested_dtype_str_signal_generation(
-    nested_struct_sim, nested_node: SECoPNodeDevice
+    nested_struct_sim, nested_node_no_re: SECoPNodeDevice
 ):
-    struct_mod = nested_node.ophy_struct
+    struct_mod = nested_node_no_re.ophy_struct
 
     target: SignalRW = struct_mod.target
 
@@ -62,13 +57,12 @@ async def test_nested_dtype_str_signal_generation(
     assert isinstance(val, np.ndarray)
     assert descr["dtype"] == "array"
     assert "struct" in descr["SECOP_datainfo"]
-    await nested_node.disconnect_async()
 
 
 async def test_nested_dtype_set_str_struct(
-    nested_struct_sim, nested_node: SECoPNodeDevice
+    nested_struct_sim, nested_node_no_re: SECoPNodeDevice
 ):
-    struct_mod = nested_node.ophy_struct
+    struct_mod = nested_node_no_re.ophy_struct
 
     target: SignalRW = struct_mod.target
 
@@ -95,13 +89,11 @@ async def test_nested_dtype_set_str_struct(
     assert val["color"] == "yellow"
     assert isinstance(val, np.ndarray)
 
-    await nested_node.disconnect_async()
-
 
 async def test_nested_dtype_set_str_tuple(
-    nested_struct_sim, nested_node: SECoPNodeDevice
+    nested_struct_sim, nested_node_no_re: SECoPNodeDevice
 ):
-    struct_mod = nested_node.ophy_struct
+    struct_mod = nested_node_no_re.ophy_struct
 
     tuple_param: SignalRW = struct_mod.tuple_param
 
@@ -130,11 +122,11 @@ async def test_nested_dtype_set_str_tuple(
     assert val["f3"] == "blue"
     assert isinstance(val, np.ndarray)
 
-    await nested_node.disconnect_async()
 
-
-async def test_nested_struct_of_arrays(nested_struct_sim, nested_node: SECoPNodeDevice):
-    str_of_arr_mod: SECoPReadableDevice = nested_node.struct_of_arrays
+async def test_nested_struct_of_arrays(
+    nested_struct_sim, nested_node_no_re: SECoPNodeDevice
+):
+    str_of_arr_mod: SECoPReadableDevice = nested_node_no_re.struct_of_arrays
 
     reading = await str_of_arr_mod.read()
 
@@ -164,17 +156,13 @@ async def test_nested_struct_of_arrays(nested_struct_sim, nested_node: SECoPNode
 
     assert np.equal(rw_val["floats"], rw_old["floats"] + 0.2).all()
 
-    await nested_node.disconnect_async()
-
 
 # TODO Nested Arrays (2D) uniform and ragged
 
 
-async def test_hinted_signal(nested_struct_sim, nested_node: SECoPNodeDevice):
-    str_of_arr_mod: SECoPReadableDevice = nested_node.struct_of_arrays
+async def test_hinted_signal(nested_struct_sim, nested_node_no_re: SECoPNodeDevice):
+    str_of_arr_mod: SECoPReadableDevice = nested_node_no_re.struct_of_arrays
 
     reading = await str_of_arr_mod.read()
 
     assert len(reading) == 2
-
-    await nested_node.disconnect_async()

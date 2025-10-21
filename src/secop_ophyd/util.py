@@ -43,12 +43,12 @@ class SECoPDataKey(DataKey):
     A DataKey that is used to describe the SECoP Datatype.
     """
 
-    dtype_str: NotRequired[str]
+    dtype_str: NotRequired[str]  # type: ignore
     """
     The array-protocol typestring of the data-type object.
     """
 
-    dtype_descr: NotRequired[list]
+    dtype_descr: NotRequired[list]  # type: ignore
     """
     String representation of the numpy structured array dtype.
     """
@@ -58,7 +58,7 @@ class SECoPDataKey(DataKey):
     String representation of the original secop datatype.
     """
 
-    SECoP_dtype: NotRequired[str]
+    SECoP_dtype: NotRequired[str]  # type: ignore
     """
     The SECoP datatype of the data.
     """

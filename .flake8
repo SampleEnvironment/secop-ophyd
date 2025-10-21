@@ -1,0 +1,17 @@
+[flake8]
+ignore = E203, W503, W505, F722, F811
+exclude =
+    .git,
+    __pycache__,
+    .pytest_cache,
+    build,
+    dist,
+    info,
+    logs,
+    pid,
+    .vscode,
+    .venv,
+    .secop-ophyd,
+    cfg/*,
+    docs,
+max-line-length = 88
