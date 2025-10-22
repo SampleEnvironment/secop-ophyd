@@ -40,7 +40,13 @@ dev = [
     'mlzlog',
     'python-dotenv',
     'bluesky',
-    'sphinx',
+    "sphinx !=4.1.0, !=4.1.1, !=4.1.2, !=4.2.0",
+    "sphinx-click",
+    "sphinx-copybutton",
+    "sphinx_rtd_theme",
+    "sphinxcontrib-mermaid",
+    "myst-parser",
+    "numpydoc",
     'snakefmt'
 ]
 
