@@ -1,3 +1,5 @@
+[![CI](https://github.com/SampleEnvironment/secop-ophyd/actions/workflows/code.yaml/badge.svg)](https://github.com/SampleEnvironment/secop-ophyd/actions/workflows/code.yaml)
+
 # secop-ophyd
 
 This package allows seamless itegration of hardware that provides a SECoP interface into bluesky.
