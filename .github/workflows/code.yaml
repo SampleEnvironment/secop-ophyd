@@ -55,6 +55,10 @@ jobs:
         uv run pytest tests/ -v
 
   publish-pages:
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
     runs-on: ubuntu-latest
     #if: ${{startsWith(github.ref, 'refs/tags/')}}  # only publish to PyPI on tag pushes
 
