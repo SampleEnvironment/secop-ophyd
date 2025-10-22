@@ -55,12 +55,13 @@ jobs:
         uv run pytest tests/ -v
 
   build-pages:
+    if: github.ref == 'refs/heads/master'
     permissions:
       contents: read
       pages: write
       id-token: write
     runs-on: ubuntu-latest
-    #if: ${{startsWith(github.ref, 'refs/tags/')}}  # only publish pages on tag pushes
+
 
     strategy:
       matrix:
@@ -96,6 +97,7 @@ jobs:
 
   # Deployment job
   deploy-pages:
+    if: github.ref == 'refs/heads/master'
     permissions:
       contents: read
       pages: write
