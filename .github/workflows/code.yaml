@@ -1,4 +1,4 @@
-name: Lint, Test and Publish secop-ophyd to PyPI and TestPyPI
+name: CI/CD Pipeline
 
 
 on:

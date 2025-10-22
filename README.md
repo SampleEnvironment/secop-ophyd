@@ -1,4 +1,6 @@
 [![CI](https://github.com/SampleEnvironment/secop-ophyd/actions/workflows/code.yaml/badge.svg)](https://github.com/SampleEnvironment/secop-ophyd/actions/workflows/code.yaml)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
+[![PyPI](https://img.shields.io/pypi/v/secop-ophyd.svg)](https://pypi.org/project/secop-ophyd)
 
 # secop-ophyd
 
