@@ -56,10 +56,11 @@ jobs:
 
   build-pages:
     permissions:
-      contents: write
+      contents: read
+      pages: write
       id-token: write
     runs-on: ubuntu-latest
-    #if: ${{startsWith(github.ref, 'refs/tags/')}}  # only publish to PyPI on tag pushes
+    #if: ${{startsWith(github.ref, 'refs/tags/')}}  # only publish pages on tag pushes
 
     strategy:
       matrix:
@@ -92,11 +93,6 @@ jobs:
       uses: actions/upload-pages-artifact@v3
       with:
         path: ./docs/build/html
-
-    - name: Deploy to GitHub Pages
-      id: deployment
-      uses: actions/deploy-pages@v4
-
 
   # Deployment job
   deploy-pages:
