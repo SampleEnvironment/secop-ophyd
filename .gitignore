@@ -9,3 +9,5 @@ dist
 pid
 logs
 .secop-ophyd
+
+_api
