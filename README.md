@@ -8,18 +8,6 @@
 
 ![secop-ophyd-arch](https://github.com/user-attachments/assets/cd82cfbe-68dc-4b3c-b872-5b1b7c7db82a)
 
-## Documentation
+SECoP-Ophyd acts as a bridge between SECoP-enabled hardware and Bluesky's ophyd layer. It uses [Frappy](https://github.com/SampleEnvironment/frappy) to communicate with SECoP nodes over TCP, automatically generating [ophyd-async](https://blueskyproject.io/ophyd-async/main/index.html) device objects from the node's descriptive data. These devices can then be used in [Bluesky plans](https://blueskyproject.io/bluesky/main/tutorial.html#the-run-engine-and-plans) just like any other ophyd device, enabling seamless integration with EPICS, Tango, and other control system backends.
 
-|    Resource     |     Link                                                     |
-| :-------------: | :----------------------------------------------------------: |
-| Documentation   | <https://sampleenvironment.github.io/secop-ophyd/>           |
-| Demo Repository | <https://codebase.helmholtz.cloud/rock-it-secop/secop-sim>   |
-| PyPI            | <https://pypi.org/project/secop-ophyd>                       |
-| Issue Tracker   | <https://github.com/SampleEnvironment/secop-ophyd/issues>    |
-
-## Further Information
-
-- [SECoP Specification](https://sampleenvironment.github.io/secop-site/)
-- [Frappy (Framework for implementing SEC nodes)](https://github.com/SampleEnvironment/frappy)
-- [Ophyd-async Documentation](https://blueskyproject.io/ophyd-async/main/index.html)
-- [Bluesky Project](https://blueskyproject.io/)
+For more information, see the [full documentation](https://sampleenvironment.github.io/secop-ophyd/).

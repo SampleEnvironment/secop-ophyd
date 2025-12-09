@@ -79,7 +79,7 @@ The :class:`~secop_ophyd.SECoPDevices.SECoPNodeDevice` constructor accepts the f
 
 - ``loglevel`` (optional): Control logging verbosity. Options: ``"DEBUG"``, ``"INFO"``, ``"WARNING"``, ``"ERROR"``, ``"CRITICAL"``
 
-- ``logdir`` (optional): Directory path for storing log files. If ``None``, logs only to console.
+- ``logdir`` (optional): Directory path for storing log files. If ``None``, the default logdir ``.secop-ophyd/`` is set.
 
 **Examples:**
 
@@ -153,11 +153,11 @@ A SECoP-Ophyd device follows this structure:
 .. code-block:: text
 
     SECoPNodeDevice (Node)
-    ├── module_1 (Module)
+    ├── SECoPMoveableDevice (Module)
     │   ├── parameter_a (Signal)
     │   ├── parameter_b (Signal)
     │   └── command_x (Method)
-    └── module_2 (Module)
+    └── SECoPReadableDevice (Module)
         ├── parameter_c (Signal)
         └── command_y (Method)
 
@@ -168,28 +168,12 @@ Example with a temperature controller:
     device
     ├── temperature_controller
     │   ├── value          # Current temperature (readable)
-    │   ├── target         # Target temperature (readable/settable)
-    │   ├── ramp           # Ramp rate (readable/settable)
+    │   ├── target         # Target temperature (readable/writable)
+    │   ├── ramp           # Ramp rate (readable/writable)
     │   ├── status         # Device status
     │   └── reset()        # Reset command
     └── pressure_sensor
         └── value          # Current pressure (readable)
-
-Exploring Device Structure
-~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Without generated class files, explore the device interactively:
-
-.. code-block:: python
-
-    # List all modules
-    print(device.component_names)
-
-    # Access a module
-    temp_module = getattr(device, 'temperature_controller')
-
-    # List module's parameters
-    print(temp_module.component_names)
 
 Working with Signals
 --------------------
@@ -214,24 +198,44 @@ Read single values:
 Setting Signals
 ~~~~~~~~~~~~~~~
 
-Use ``abs_set`` for absolute positioning:
+There's an important distinction when setting values on movable devices (SECoP modules with the ``Drivable`` interface class):
+
+**Module-level vs Signal-level Setting**
+
+For a movable device like a temperature controller, you can set the target it should drive toward at two levels:
+
+1. **Module-level** (preferred): ``device.temperature_controller.set(value)``
+
+   - Sets the target parameter AND waits for the device to reach the setpoint
+   - Returns a status that completes only when the module returns to IDLE state
+   - Use this when you want to wait for the operation to complete
+
+2. **Signal-level**: ``device.temperature_controller.target.set(value)``
+
+   - Only sets the target parameter value
+   - Returns immediately once the parameter is written
+   - Use this for setting config parameters
+
+**Examples:**
 
 .. code-block:: python
 
     from bluesky.plan_stubs import mv, abs_set
 
-    # Simple set
-    RE(abs_set(device.temperature.target, 300))
+    # Module-level set - waits until temperature is reached
+    RE(abs_set(device.temperature_controller, 300))
 
-    # Set with wait=False (non-blocking)
-    RE(abs_set(device.temperature.target, 300, wait=False))
+    # Signal-level set - returns immediately after setting target
+    RE(abs_set(device.temperature_controller.target, 300))
 
-    # Set multiple parameters
-    RE(mv(
-        device.temp1.target, 300,
-        device.temp2.target, 350,
-        device.pressure.target, 1000
-    ))
+    # Explicitly control wait behavior
+    RE(abs_set(device.temperature_controller, 300, wait=True))   # Wait for completion
+    RE(abs_set(device.temperature_controller, 300, wait=False))  # Don't wait
+
+
+.. note::
+
+   For ``Drivable`` modules, prefer module-level ``set()`` to ensure operations complete before proceeding. For simple parameter updates on ``Readable`` or ``Writable`` modules, use signal-level ``set()``.
 
 Using SECoP Commands
 --------------------
@@ -239,7 +243,8 @@ Using SECoP Commands
 Command Basics
 ~~~~~~~~~~~~~~
 
-SECoP commands are methods that return Bluesky plan generators:
+SECoP commands are wrapped as bluesky plans. Use ``RE()`` to execute them. Commands should return immediately.
+For some long-running operations, the device will go into a BUSY state, and you may want to wait until the device returns to IDLE state.
 
 .. code-block:: python
 
@@ -247,9 +252,9 @@ SECoP commands are methods that return Bluesky plan generators:
     RE(device.module.reset())
 
     # Call a command with arguments
-    RE(device.module.configure(mode='auto', setpoint=100))
+    RE(device.module.configure(arg =  {'mode': 'auto', 'setpoint': 100}))
 
-All commands accept a ``wait_for_idle`` parameter:
+All commands plans accept a ``wait_for_idle`` parameter:
 
 .. code-block:: python
 
@@ -259,23 +264,10 @@ All commands accept a ``wait_for_idle`` parameter:
     # Wait for device to return to IDLE state
     RE(device.module.command(arg=value, wait_for_idle=True))
 
-Command Arguments
-~~~~~~~~~~~~~~~~~
+.. note::
 
-Commands can accept various data types:
+   For commands that trigger long operations, set ``wait_for_idle=True`` to ensure the plan waits until the operation completes.
 
-.. code-block:: python
-
-    # Simple types
-    RE(device.motor.move(position=100.5))
-
-    # Structured data (dicts)
-    RE(device.controller.configure(
-        arg={'param1': 'value', 'param2': 123, 'flag': True}
-    ))
-
-    # Arrays
-    RE(device.controller.set_profile(points=[0, 10, 20, 30]))
 
 Return Values
 ~~~~~~~~~~~~~
@@ -291,21 +283,6 @@ Capture command return values:
 
     info = RE(get_status())
 
-Status and Busy States
-~~~~~~~~~~~~~~~~~~~~~~~
-
-SECoP devices communicate their state through status codes. When a command
-or parameter change triggers a long operation, the device enters a BUSY state:
-
-.. code-block:: python
-
-    def move_and_wait():
-        # Start movement (device goes BUSY)
-        yield from device.motor.move(position=100, wait_for_idle=True)
-        # This line executes only after device returns to IDLE
-        print("Movement complete!")
-
-    RE(move_and_wait())
 
 
 Class File Generation
@@ -374,17 +351,6 @@ Always use ``init_devices()`` context manager:
     # Bad - no cleanup
     device = SECoPNodeDevice('localhost:10800')
 
-Avoid Hardcoded URIs
-~~~~~~~~~~~~~~~~~~~~
-
-Use configuration files or environment variables:
-
-.. code-block:: python
-
-    import os
-
-    node_uri = os.environ.get('SECOP_NODE_URI', 'localhost:10800')
-    device = SECoPNodeDevice(node_uri)
 
 Wait Strategies
 ~~~~~~~~~~~~~~~
@@ -423,3 +389,12 @@ Use SECoP devices alongside EPICS, Tango, or other protocols:
     # Use together in plans
     RE(scan([tango_detector], epics_motor, 0, 10, 11))
     RE(mv(secop_temp.target, 300))
+
+
+Further Resources
+-----------------
+
+- `SECoP Specification <https://sampleenvironment.github.io/secop-site/>`_
+- `Ophyd-async Documentation <https://blueskyproject.io/ophyd-async/>`_
+- `Bluesky Documentation <https://blueskyproject.io/bluesky/>`_
+- `Frappy (SECoP Framework) <https://github.com/SampleEnvironment/frappy>`_

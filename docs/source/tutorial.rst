@@ -384,22 +384,3 @@ Complete Catalysis Experiment
 
     # Execute the experiment
     RE(catalysis_experiment())
-
-Key Features Demonstrated
---------------------------
-
-This tutorial showcased:
-
-1. **Dynamic device generation** - No manual device class definition needed
-2. **Type hints and autocompletion** - Generated class files for better development
-3. **SECoP commands as plans** - Seamless integration with Bluesky
-4. **Complex experimental logic** - Temperature ramping, gas switching, and data acquisition
-5. **Metadata integration** - Adding experimental context to runs
-6. **Status handling** - Waiting for operations to complete
-
-Next Steps
-----------
-
-- Explore the :doc:`user_guide` for more advanced patterns
-- Check the :doc:`reference` for complete API documentation
-- Try integrating your own SECoP devices
