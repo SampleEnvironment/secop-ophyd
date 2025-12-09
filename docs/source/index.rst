@@ -1,18 +1,71 @@
-.. SECoP-Ophyd documentation master file, created by
-   sphinx-quickstart on Mon Feb 26 12:49:48 2024.
-   You can adapt this file completely to your liking, but it should at least
-   contain the root `toctree` directive.
+.. include:: ../../README.md
+   :parser: myst_parser.sphinx_
+   :end-before: For more information
 
-Welcome to SECoP-Ophyd's documentation!
-=======================================
+How the documentation is structured
+------------------------------------
 
-.. toctree::
-   :maxdepth: 2
-   :caption: Contents:
+.. grid:: 2
+    :gutter: 4
+
+    .. grid-item-card::
+        :text-align: left
+
+        **📖 Getting Started**
+        ^^^
+
+        .. toctree::
+           :maxdepth: 2
+
+           getting_started
+
+        +++
+        New users start here. Installation and basic setup.
+
+    .. grid-item-card::
+        :text-align: left
+
+        **🎓 Tutorial**
+        ^^^
+
+        .. toctree::
+           :maxdepth: 2
+
+           tutorial
+
+        +++
+        Step-by-step guides for typical usage patterns.
+
+    .. grid-item-card::
+        :text-align: left
+
+        **📚 User Guide**
+        ^^^
+
+        .. toctree::
+           :maxdepth: 2
+
+           user_guide
+
+        +++
+        Detailed explanations of features and concepts.
+
+    .. grid-item-card::
+        :text-align: left
+
+        **🔧 Reference**
+        ^^^
+
+        .. toctree::
+           :maxdepth: 2
+
+           reference
+
+        +++
+        Technical API documentation and specifications.
 
 
-
-Indices and tables
+Indices and Tables
 ==================
 
 * :ref:`genindex`
