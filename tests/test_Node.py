@@ -59,7 +59,7 @@ async def test_signal_read_cached(cryo_sim, cryo_node_no_re: SECoPNodeDevice):
 
     cryo_dev: SECoPMoveableDevice = cryo_node_no_re.cryo
 
-    cryo_dev.p.subscribe_value(lambda val: None)
+    cryo_dev.p.subscribe_reading(lambda val: None)
 
     p = await cryo_dev.p.get_value(cached=True)
 
