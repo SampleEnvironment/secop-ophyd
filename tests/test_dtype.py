@@ -1,7 +1,18 @@
 # mypy: disable-error-code="attr-defined"
+import numpy as np
 import pytest
 from frappy.client import CacheItem
-from frappy.datatypes import ArrayOf, FloatRange, StringType, StructOf, TupleOf
+from frappy.datatypes import (
+    ArrayOf,
+    EnumType,
+    FloatRange,
+    IntRange,
+    ScaledInteger,
+    StringType,
+    StructOf,
+    TupleOf,
+)
+from frappy.lib.enum import EnumMember
 
 from secop_ophyd.util import SECoPdtype, SECoPReading
 
@@ -176,6 +187,103 @@ def test_arrayof_update_dtype(start_dtype, data, expected_shape, expected_update
 )
 def test_describe_str(start_dtype, expected_dtype_descr, expected_shape, max_depth):
     sdtype = SECoPdtype(start_dtype)
+
     assert sdtype.shape == expected_shape
     assert sdtype.dtype_descr == expected_dtype_descr
     assert sdtype.max_depth == max_depth
+
+
+@pytest.mark.parametrize(
+    "start_dtype,np_input,expected_output,type_checks",
+    [
+        pytest.param(
+            StructOf(
+                float_val=FloatRange(),
+                string_val=StringType(),
+                int_val=IntRange(),
+                scaled_val=ScaledInteger(scale=0.01),
+                enum_val=EnumType(ON=1, OFF=0),
+            ),
+            np.array(
+                (3.14, "test", 42, 123, 1),
+                dtype=[
+                    ("float_val", "<f8"),
+                    ("string_val", "<U100"),
+                    ("int_val", "<i4"),
+                    ("scaled_val", "<f8"),
+                    ("enum_val", "<i4"),
+                ],
+            ),
+            {
+                "float_val": 3.14,
+                "string_val": "test",
+                "int_val": 42,
+                "scaled_val": 123,
+                "enum_val": 1,
+            },
+            lambda val: (
+                isinstance(val["float_val"], float)
+                and isinstance(val["string_val"], str)
+                and isinstance(val["int_val"], int)
+                and isinstance(val["scaled_val"], int)
+                and isinstance(val["enum_val"], int)
+            ),
+            id="Struct of all atomic types",
+        ),
+        pytest.param(
+            TupleOf(
+                FloatRange(),
+                StringType(),
+                IntRange(),
+                ScaledInteger(scale=0.1),
+                EnumType(ON=1, OFF=0),
+            ),
+            np.array(
+                (2.718, "hello", 99, 25, 0),
+                dtype=[
+                    ("f0", "<f8"),
+                    ("f1", "<U100"),
+                    ("f2", "<i4"),
+                    ("f3", "<f8"),
+                    ("f4", "<i4"),
+                ],
+            ),
+            (2.718, "hello", 99, 25, 0),
+            lambda val: (
+                isinstance(val[0], float)
+                and isinstance(val[1], str)
+                and isinstance(val[2], int)
+                and isinstance(val[3], int)
+                and isinstance(val[4], int)
+            ),
+            id="Tuple of all atomic types",
+        ),
+        pytest.param(
+            StructOf(value=FloatRange(), state=EnumType(IDLE=0, BUSY=1, ERROR=2)),
+            np.array((42.5, 2), dtype=[("value", "<f8"), ("state", "<i4")]),
+            {"value": 42.5, "state": 2},
+            lambda val: (
+                isinstance(val["value"], float) and isinstance(val["state"], int)
+            ),
+            id="Struct of Float and Enum",
+        ),
+        pytest.param(
+            ArrayOf(EnumType(ON=1, OFF=0)),
+            [1, 0, 1],
+            ArrayOf(EnumType(ON=1, OFF=0)).import_value([1, 0, 1]),
+            lambda val: isinstance(val, tuple)
+            and all(isinstance(v, EnumMember) for v in val),
+            id="Array of Enums",
+        ),
+    ],
+)
+def test_val2secop(start_dtype, np_input, expected_output, type_checks):
+    sdtype = SECoPdtype(start_dtype)
+
+    secop_val = sdtype.val2secop(np_input)
+
+    # Use numpy.testing for proper comparison with numpy arrays
+    np.testing.assert_equal(secop_val, expected_output)
+
+    # Verify types are correct (should be Python types, not numpy arrays)
+    assert type_checks(secop_val), f"Type check failed for {secop_val}"

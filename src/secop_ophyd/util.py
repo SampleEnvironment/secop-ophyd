@@ -268,7 +268,7 @@ class BoolNP(DtypeNP):
         return value
 
     def make_secop_compatible_object(self, value) -> Any:
-        return value
+        return bool(value)
 
 
 class EnumNP(DtypeNP):
@@ -289,7 +289,7 @@ class EnumNP(DtypeNP):
         return value
 
     def make_secop_compatible_object(self, value) -> Any:
-        return value
+        return int(value)
 
 
 class FloatNP(DtypeNP):
@@ -310,7 +310,7 @@ class FloatNP(DtypeNP):
         return value
 
     def make_secop_compatible_object(self, value) -> Any:
-        return value
+        return float(value)
 
 
 class IntNP(DtypeNP):
@@ -331,7 +331,7 @@ class IntNP(DtypeNP):
         return value
 
     def make_secop_compatible_object(self, value) -> Any:
-        return value
+        return int(value)
 
 
 class ScaledIntNP(DtypeNP):
@@ -352,7 +352,7 @@ class ScaledIntNP(DtypeNP):
         return value
 
     def make_secop_compatible_object(self, value) -> Any:
-        return value
+        return int(value)
 
 
 class StringNP(DtypeNP):
@@ -383,7 +383,7 @@ class StringNP(DtypeNP):
         return value
 
     def make_secop_compatible_object(self, value) -> Any:
-        return value
+        return str(value)
 
 
 class StructNP(DtypeNP):
