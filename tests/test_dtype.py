@@ -282,8 +282,6 @@ def test_val2secop(start_dtype, np_input, expected_output, type_checks):
 
     secop_val = sdtype.val2secop(np_input)
 
-    print(secop_val)
-
     # Use numpy.testing for proper comparison with numpy arrays
     np.testing.assert_equal(secop_val, expected_output)
 
