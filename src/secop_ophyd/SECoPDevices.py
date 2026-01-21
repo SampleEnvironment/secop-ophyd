@@ -871,27 +871,23 @@ class SECoPNodeDevice(StandardReadable):
         self.name = name
         self.prefix = prefix
 
+        self._secclient: AsyncFrappyClient = AsyncFrappyClient(
+            host=self.host, port=self.port, log=self.logger
+        )
+
     async def connect(
         self,
         mock: bool | LazyMock = False,
         timeout: float = DEFAULT_TIMEOUT,
         force_reconnect: bool = False,
     ):
-        if not hasattr(self, "_secclient"):
-            secclient: AsyncFrappyClient
+        if self._secclient.online is False and not force_reconnect:
 
-            secclient = await AsyncFrappyClient.create(
-                host=self.host,
-                port=self.port,
-                loop=asyncio.get_running_loop(),
-                log=self.logger,
-            )
+            await self._secclient.connect(3)
 
             self.equipment_id: SignalR
             self.description: SignalR
             self.version: SignalR
-
-            self._secclient: AsyncFrappyClient = secclient
 
             self._module_name: str = ""
             self._node_cls_name: str = ""
@@ -917,7 +913,7 @@ class SECoPNodeDevice(StandardReadable):
             ):
                 for property in self._secclient.properties:
                     propb = PropertyBackend(
-                        property, self._secclient.properties, secclient
+                        property, self._secclient.properties, self._secclient
                     )
                     setattr(self, property, SignalR(backend=propb))
                     config.append(getattr(self, property))
@@ -945,15 +941,11 @@ class SECoPNodeDevice(StandardReadable):
 
             # register secclient callbacks (these are useful if sec node description
             # changes after a reconnect)
-            secclient.client.register_callback(
+            self._secclient.client.register_callback(
                 None, self.descriptiveDataChange, self.nodeStateChange
             )
 
             super().__init__(name=self.name)
-
-        elif force_reconnect or self._secclient.client.online is False:
-            await self._secclient.disconnect(True)
-            await self._secclient.connect(try_period=DEFAULT_TIMEOUT)
 
     def class_from_instance(self, path_to_module: str | None = None):
         """Dynamically generate python class file for the SECoP_Node_Device, this

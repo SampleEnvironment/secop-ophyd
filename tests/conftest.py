@@ -1,5 +1,4 @@
 # mypy: disable-error-code="attr-defined"
-import asyncio
 import logging
 import os
 
@@ -135,20 +134,20 @@ def logger():
 
 @pytest.fixture
 async def async_frappy_client(cryo_sim, logger, port="10769"):
-    loop = asyncio.get_running_loop()
+    client = AsyncFrappyClient(host="localhost", port=port, log=logger)
 
-    return await AsyncFrappyClient.create(
-        host="localhost", port=port, loop=loop, log=logger
-    )
+    await client.connect(3)
+
+    return client
 
 
 @pytest.fixture
 async def nested_client(nested_struct_sim, logger, port="10771"):
-    loop = asyncio.get_running_loop()
+    client = AsyncFrappyClient(host="localhost", port=port, log=logger)
 
-    return await AsyncFrappyClient.create(
-        host="localhost", port=port, loop=loop, log=logger
-    )
+    await client.connect(3)
+
+    return client
 
 
 @pytest.fixture

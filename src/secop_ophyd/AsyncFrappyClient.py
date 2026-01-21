@@ -8,19 +8,19 @@ T = TypeVar("T")
 
 
 class AsyncFrappyClient:
-    def __init__(self, host: str, port: str, loop) -> None:
+    def __init__(self, host: str, port: str, log=Logger) -> None:
         self.host: str = host
         self.port: str = port
 
-        self.client: SecopClient = None
-
-        self.loop = loop
+        self.loop: asyncio.AbstractEventLoop
 
         self.external: bool = False
 
         self.conn_timestamp: float
 
-        self.log = None
+        self.client: SecopClient = SecopClient(uri=host + ":" + port, log=log)
+
+        self.log = self.client.log
 
     @property
     def state(self):
@@ -46,18 +46,10 @@ class AsyncFrappyClient:
     def nodename(self):
         return self.client.nodename
 
-    @classmethod
-    async def create(cls, host, port, loop, log=Logger):
-        self = AsyncFrappyClient(host=host, port=port, loop=loop)
-        self.client = SecopClient(uri=host + ":" + port, log=log)
-
-        self.log = self.client.log
-
-        await self.connect(3)
-
-        return self
-
     async def connect(self, try_period=0):
+
+        self.loop = asyncio.get_running_loop()
+
         await asyncio.to_thread(self.client.connect, try_period)
         self.conn_timestamp = time.time()
 
