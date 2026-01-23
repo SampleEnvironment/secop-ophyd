@@ -1,0 +1,72 @@
+{# Main template for generating ophyd device classes #}
+{# Imports section #}
+{% for module, classes in imports.items() %}
+{%- if classes is none %}
+import {{ module }}
+{%- elif classes %}
+from {{ module }} import {{ classes | sort | join(', ') }}
+{%- else %}
+import {{ module }}
+{%- endif %}
+{% endfor %}
+
+
+{# Enum classes section #}
+{% for enum_cls in enum_classes %}
+class {{ enum_cls.name }}({{ enum_cls.base_enum_class }}):
+    """{{ enum_cls.description or 'Generated enum class' }}"""
+{%- for member in enum_cls.members %}
+    {{ member.name }} = "{{ member.value }}"
+{%- endfor %}
+
+
+{% endfor %}
+
+{# Module classes section #}
+{% for module_cls in module_classes %}
+class {{ module_cls.name }}({{ module_cls.bases | join(', ') }}):
+    """{{ module_cls.description or 'Generated module class' }}"""
+{%- set properties = module_cls.attributes | selectattr('category', 'equalto', 'property') | list %}
+{%- set parameters = module_cls.attributes | selectattr('category', 'equalto', 'parameter') | list %}
+{%- if properties %}
+
+    # Module Properties
+{%- for attr in properties %}
+    {{ attr.name }}: {{ attr.type }}
+{%- if attr.type_param %}[{{ attr.type_param }}]{% endif %}
+{%- if attr.description %}  # {{ attr.description }}{% endif %}
+{%- endfor %}
+{%- endif %}
+{%- if parameters %}
+
+    # Module Parameters
+{%- for attr in parameters %}
+    {{ attr.name }}: {{ attr.type }}
+{%- if attr.type_param %}[{{ attr.type_param }}]{% endif %}
+{%- if attr.description %}  # {{ attr.description }}{% endif %}
+{%- endfor %}
+{%- endif %}
+{%- if module_cls.methods %}
+
+    # SECoP Commands wrapped as Bluesky Plans:
+{%- for method in module_cls.methods %}
+    @abstractmethod
+    def {{ method.name }}{{ method.signature }}:
+        """{{ method.description }}"""
+{%- endfor %}
+{%- endif %}
+
+
+{% endfor %}
+
+{# Node classes section #}
+{% for node_cls in node_classes %}
+class {{ node_cls.name }}({{ node_cls.bases | join(', ') }}):
+    """{{ node_cls.description or 'Generated node class' }}"""
+{%- for attr in node_cls.attributes %}
+    {{ attr.name }}: {{ attr.type }}
+{%- if attr.type_param %}[{{ attr.type_param }}]{% endif %}
+{%- if attr.description %}  # {{ attr.description }}{% endif %}
+{%- endfor %}
+
+{% endfor %}

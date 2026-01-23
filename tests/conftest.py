@@ -1,6 +1,7 @@
 # mypy: disable-error-code="attr-defined"
 import logging
 import os
+from pathlib import Path
 
 import pytest
 from bluesky import RunEngine
@@ -17,6 +18,26 @@ from xprocess import ProcessStarter
 
 from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient
 from secop_ophyd.SECoPDevices import SECoPNodeDevice
+
+
+@pytest.fixture
+def clean_generated_file():
+    """Clean up generated genNodeClass.py file before test runs.
+
+    This fixture ensures a fresh start for code generation tests while
+    allowing inspection of results after the test completes.
+
+    Returns:
+        Path to the testgen directory where files should be generated
+    """
+    testgen_dir = Path(__file__).parent / "testgen"
+    testgen_dir.mkdir(exist_ok=True)
+
+    gen_file = testgen_dir / "genNodeClass.py"
+    if gen_file.exists():
+        gen_file.unlink()
+
+    return testgen_dir
 
 
 @pytest.fixture

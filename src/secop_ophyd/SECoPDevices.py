@@ -44,7 +44,7 @@ from ophyd_async.core import (
 from ophyd_async.core._utils import Callback
 
 from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient
-from secop_ophyd.GenNodeCode import GenNodeCode, Method
+from secop_ophyd.GenNodeCode import GenNodeCode, Method, get_python_type_from_signal
 from secop_ophyd.logs import LOG_LEVELS, setup_logging
 from secop_ophyd.propertykeys import DATAINFO, EQUIPMENT_ID, INTERFACE_CLASSES
 from secop_ophyd.SECoPSignal import (
@@ -80,6 +80,28 @@ UNKNOWN = 401  # not in SECoP standard (yet)
 
 def clean_identifier(anystring):
     return str(re.sub(r"\W+|^(?=\d)", "_", anystring))
+
+
+def secop_enum_name_to_python(member_name: str) -> str:
+    """Convert SECoP enum member name to Python identifier.
+
+    Examples:
+        'Low Energy' -> 'LOW_ENERGY'
+        'high-power' -> 'HIGH_POWER'
+        'Mode 1' -> 'MODE_1'
+
+    :param member_name: Original SECoP enum member name
+    :return: Python-compatible identifier in UPPER_CASE
+    """
+    # Replace spaces and hyphens with underscores, remove other special chars
+    cleaned = re.sub(r"[\s-]+", "_", member_name)
+    cleaned = re.sub(r"[^a-zA-Z0-9_]", "", cleaned)
+    # Convert to uppercase
+    cleaned = cleaned.upper()
+    # Ensure it doesn't start with a digit
+    if cleaned and cleaned[0].isdigit():
+        cleaned = "_" + cleaned
+    return cleaned
 
 
 class SECoPCMDDevice(StandardReadable, Flyable, Triggerable):
@@ -963,9 +985,9 @@ class SECoPNodeDevice(StandardReadable):
         # NodeClass Name
         self._node_cls_name = self.name.replace("-", "_").capitalize()
 
-        node_bases = [self.__class__.__name__, "ABC"]
+        node_bases = [self.__class__.__name__]
 
-        node_class_attrs = []
+        node_class_attrs: list[tuple[str, str] | tuple[str, str, str | None]] = []
 
         for attr_name, attr_value in node_dict.items():
             # Modules
@@ -986,10 +1008,8 @@ class SECoPNodeDevice(StandardReadable):
                 # add imports for module attributes
                 self.genCode.add_import(module, attr_type.__name__)
 
-                module_dict = attr_value.__dict__
-
                 # modclass is baseclass of derived class
-                mod_bases = [attr_value.__class__.__name__, "ABC"]
+                mod_bases = [attr_value.__class__.__name__]
 
                 module_class_attrs = []
 
@@ -998,35 +1018,130 @@ class SECoPNodeDevice(StandardReadable):
                 if attr_value.impl is not None:
                     module_class_name = attr_value.impl.split(".").pop()
 
-                # Module:Acessibles
-                for module_attr_name, module_attr_value in module_dict.items():
-                    if isinstance(
-                        module_attr_value,
-                        (SignalR, SignalX, SignalRW, SignalR, SECoPCMDDevice),
-                    ):
-                        # add imports for module attributes
-                        self.genCode.add_import(
-                            module_attr_value.__module__,
-                            type(module_attr_value).__name__,
+                # Track enum classes for this module
+                module_enum_classes = []
+
+                # Separate properties from parameters
+                module_properties = []
+                module_parameters = []
+
+                # Process module properties
+                for prop_name, prop_signal in attr_value.mod_prop_devices.items():
+                    type_param = get_python_type_from_signal(prop_signal)
+
+                    module_properties.append(
+                        (
+                            prop_name,
+                            type(prop_signal).__name__,
+                            type_param,
+                            None,
+                            "property",
+                        )
+                    )
+
+                # Process module parameters
+                for param_name, param_signal in attr_value.param_devices.items():
+                    if not isinstance(param_signal, (SignalR, SignalRW)):
+                        continue
+
+                    # Extract type parameter for signals
+                    type_param = get_python_type_from_signal(param_signal)
+
+                    try:
+                        param_props = param_signal._connector.backend._get_param_desc()
+                        descr = param_props["description"]
+                        unit = param_props["datainfo"].get("unit")
+                        attr_descr = f"{descr}; Unit: ({unit})" if unit else descr
+                        datainfo = param_props.get("datainfo", {})
+                    except Exception:
+                        attr_descr = None
+                        datainfo = {}
+
+                    # Handle StrictEnum types - generate enum class
+                    if type_param and "StrictEnum" in type_param:
+                        # Generate unique enum class name:
+                        # ModuleClass + ParamName + Enum
+                        enum_class_name = (
+                            f"{module_class_name}{param_name.capitalize()}Enum"
                         )
 
-                        module_class_attrs.append(
-                            (module_attr_name, type(module_attr_value).__name__)
+                        # Extract enum members from datainfo
+                        enum_members_dict = datainfo.get("members", {})
+                        if enum_members_dict:
+                            from secop_ophyd.GenNodeCode import EnumClass, EnumMember
+
+                            enum_members = []
+                            for member_value, _ in enum_members_dict.items():
+                                # Convert member name to Python identifier
+                                python_name = secop_enum_name_to_python(member_value)
+                                enum_members.append(
+                                    EnumMember(
+                                        name=python_name,
+                                        value=member_value,
+                                        description=None,
+                                    )
+                                )
+
+                            # Create enum class definition
+                            enum_descr = f"{param_name} enum for `{module_class_name}`."
+
+                            enum_cls = EnumClass(
+                                name=enum_class_name,
+                                members=enum_members,
+                                description=enum_descr,
+                            )
+                            module_enum_classes.append(enum_cls)
+
+                            # Use the specific enum class name instead of generic
+                            # StrictEnum
+                            type_param = enum_class_name
+
+                    module_parameters.append(
+                        (
+                            param_name,
+                            type(param_signal).__name__,
+                            type_param,
+                            attr_descr,
+                            "parameter",
                         )
-                self.genCode.add_mod_class(
-                    module_class_name, mod_bases, module_class_attrs, attr_value.plans
+                    )
+
+                # Combine properties and parameters with category markers
+                module_class_attrs = module_properties + module_parameters
+
+                module_description: str = (
+                    self._secclient.modules[attr_name]
+                    .get("properties")
+                    .get("description")
                 )
 
-                node_class_attrs.append((attr_name, module_class_name))
+                self.genCode.add_mod_class(
+                    module_class_name,
+                    mod_bases,
+                    module_class_attrs,
+                    attr_value.plans,
+                    module_description,
+                    module_enum_classes,
+                )
+
+                # Type the None explicitly as str | None to match other entries
+                type_param_none: str | None = None
+                node_class_attrs.append((attr_name, module_class_name, type_param_none))
 
             # Poperty Signals
             if isinstance(attr_value, (SignalR)):
-                self.genCode.add_import(
-                    attr_value.__module__, type(attr_value).__name__
-                )
-                node_class_attrs.append((attr_name, attr_value.__class__.__name__))
 
-        self.genCode.add_node_class(self._node_cls_name, node_bases, node_class_attrs)
+                # Extract type parameter for node-level signals
+                type_param = get_python_type_from_signal(attr_value)
+
+                node_class_attrs.append(
+                    (attr_name, str(attr_value.__class__.__name__), type_param)
+                )
+
+        node_description: str = self._secclient.properties.get("description")
+        self.genCode.add_node_class(
+            self._node_cls_name, node_bases, node_class_attrs, node_description
+        )
 
         self.genCode.write_gen_node_class_file()
 

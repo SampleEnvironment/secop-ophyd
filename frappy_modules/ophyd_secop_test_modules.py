@@ -43,6 +43,22 @@ class Test_Mod_str(Readable):
         return self.status
 
 
+class Test_Enum(Readable):
+    value = Parameter("dummy val", IntRange())
+
+    gas_type = Parameter("gas type", EnumType(ZERO=0, ONE=1, THREE=3), readonly=False)
+
+    def read_value(self):
+        return random.choice([1, 2, 3])
+
+    def read_gas_type(self):
+        return self.gas_type
+
+    def write_gas_type(self, val):
+        self.gas_type = val
+        return val
+
+
 class Test_ND_arrays(Readable):
     Status = Enum(Readable.Status)
 

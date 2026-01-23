@@ -4,6 +4,8 @@
 import os
 import sys
 
+from frappy.core import EnumType
+
 # Get project root from environment variable
 project_root = os.environ.get("FRAPPY_PROJECT_ROOT")
 
@@ -101,4 +103,36 @@ Mod(
     # pid = Group('p', 'i', 'd'),
     # pollinterval = Param(export=False),
     # value = Param(unit = 'K', test = 'customized value'),
+)
+
+
+class GasEnum(EnumType):
+    def __init__(self, gas_names):
+        gas_dict = {name: idx for idx, name in enumerate(gas_names)}
+        super().__init__(**gas_dict)
+
+
+Mod(
+    "enum1",
+    "frappy_modules.ophyd_secop_test_modules.Test_Enum",
+    "test module for enum codegen testing",
+    group="test",
+    value=1,
+    gas_type=Param(
+        description="gaslist of MFC",
+        datatype=GasEnum(["AR", "N2", "H2"]),
+    ),
+)
+
+
+Mod(
+    "enum2",
+    "frappy_modules.ophyd_secop_test_modules.Test_Enum",
+    "test module for enum codegen testing",
+    group="test",
+    value=1,
+    gas_type=Param(
+        description="gaslist of MFC",
+        datatype=GasEnum(["AR", "N2", "H2", "CO2"]),
+    ),
 )
