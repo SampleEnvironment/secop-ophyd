@@ -11,8 +11,25 @@ from types import ModuleType
 
 import autoflake
 import black
+from frappy.client import get_datatype
+from frappy.datatypes import DataType
 from jinja2 import Environment, PackageLoader, select_autoescape
-from ophyd_async.core import Signal
+from ophyd_async.core import SignalR, SignalRW
+
+from secop_ophyd.SECoPDevices import (
+    IGNORED_PROPS,
+    class_from_interface,
+    secop_enum_name_to_python,
+)
+from secop_ophyd.SECoPSignal import secop_dtype_obj_from_json
+from secop_ophyd.util import SECoPdtype
+
+
+def internalize_name(name: str) -> str:
+    """how to create internal names"""
+    if name.startswith("_"):
+        return name[1:]
+    return name
 
 
 @dataclass
@@ -75,21 +92,6 @@ class Method:
         self.name: str = cmd_name
         self.signature: str = sig_str
         self.description: str = description
-        self.sig_str: str = self.signature  # For backward compatibility
-
-    @classmethod
-    def from_cmd(cls, cmd_name: str, description: str, cmd_sign: Signature) -> "Method":
-        """Create Method from command signature.
-
-        Args:
-            cmd_name: Name of the command
-            description: Description of the command
-            cmd_sign: Signature of the command
-
-        Returns:
-            Method instance
-        """
-        return cls(cmd_name, description, cmd_sign)
 
 
 @dataclass
@@ -112,37 +114,6 @@ class NodeClass:
     bases: list[str]
     attributes: list[Attribute] = field(default_factory=list)
     description: str = ""
-
-
-def get_python_type_from_signal(signal_obj: Signal) -> str | None:
-    """Extract Python type from signal backend datatype.
-
-    Args:
-        signal_obj: Signal object (SignalR, SignalRW, etc.)
-        debug: If True, print debug information
-
-    Returns:
-        Python type string (e.g., 'float', 'int', 'str') or None
-    """
-    try:
-
-        type_obj = signal_obj.datatype
-
-        # Get the module name
-        module = type_obj.__module__
-
-        # For builtins, just return the name without module prefix
-        if module == "builtins":
-            return type_obj.__name__
-
-        return f"{module}.{type_obj.__name__}"
-
-    except Exception as e:
-        print(f"DEBUG: Exception occurred: {type(e).__name__}: {e}")
-        import traceback
-
-        traceback.print_exc()
-        return None
 
 
 class GenNodeCode:
@@ -381,7 +352,7 @@ class GenNodeCode:
                 method_source = inspect.getsource(method)
                 description = self._extract_method_description(method_source)
                 methods.append(
-                    Method.from_cmd(method_name, description, inspect.signature(method))
+                    Method(method_name, description, inspect.signature(method))
                 )
 
         bases = [base.__name__ for base in class_obj.__bases__]
@@ -541,7 +512,7 @@ class GenNodeCode:
         self,
         node_cls: str,
         bases: list[str],
-        attrs: list[tuple[str, str] | tuple[str, str, str | None]],
+        attrs: list[tuple[str, str, str | None, str | None, str]],
         description: str = "",
     ):
         """Add a node class to be generated.
@@ -549,8 +520,10 @@ class GenNodeCode:
         Args:
             node_cls: Name of the node class
             bases: Base classes
-            attrs: List of attribute tuples (name, type) or (name, type, type_param)
-            description: Optional class description
+            attrs: List of attribute tuples. Supported formats:
+                   - (name, type)
+                   - (name, type, type_param)
+                   - (name, type, type_param, description, category)
         """
         # Check if class already exists (loaded from file)
         existing_class = next(
@@ -563,14 +536,23 @@ class GenNodeCode:
             return
 
         attributes = []
+
         for attr in attrs:
-            if len(attr) == 3:
-                # Clean the type_param to extract just the type name
-                attributes.append(
-                    Attribute(name=attr[0], type=attr[1], type_param=attr[2])
+            # attr[0] is name, attr[1] is type (both required)
+            name = str(attr[0])
+            attr_type = str(attr[1])
+            type_param = str(attr[2]) if len(attr) > 2 and attr[2] else None
+            descr = str(attr[3]) if len(attr) > 3 and attr[3] else None
+            category = str(attr[4]) if len(attr) > 4 and attr[4] else "property"
+            attributes.append(
+                Attribute(
+                    name=name,
+                    type=attr_type,
+                    type_param=type_param,
+                    description=descr,
+                    category=category,
                 )
-            else:
-                attributes.append(Attribute(name=attr[0], type=attr[1]))
+            )
 
         node_class = NodeClass(
             name=node_cls,
@@ -580,6 +562,29 @@ class GenNodeCode:
         )
         self.node_classes.append(node_class)
 
+    def _parse_command_signature(
+        self, cmd_name: str, datainfo: dict, description: str
+    ) -> Method:
+        """Parse command datainfo to create Method signature.
+
+        Args:
+            cmd_name: Name of the command
+            datainfo: Command datainfo with argument/result types
+            description: Command description
+
+        Returns:
+            Method object with signature
+        """
+        # Extract argument and result types
+        arg_type = datainfo.get("argument")
+
+        # Create a basic signature object
+        sig = Signature.from_callable(lambda self, wait_for_idle=False: None)
+        if arg_type is not None:
+            sig = Signature.from_callable(lambda self, arg, wait_for_idle=False: None)
+
+        return Method(cmd_name=cmd_name, description=description, cmd_sign=sig)
+
     def from_json_describe(self, json_data: str | dict):
         """Generate classes from a SECoP JSON describe message.
 
@@ -588,14 +593,217 @@ class GenNodeCode:
         """
         # Parse JSON if string
         if isinstance(json_data, str):
-            _ = json.loads(json_data)
+            describe_data = json.loads(json_data)
+        else:
+            describe_data = json_data
 
-        # TODO: Implement parsing of SECoP JSON describe format
-        # This will extract module and node information from the JSON
-        # and populate self.module_classes and self.node_classes
-        raise NotImplementedError(
-            "Generation from JSON describe message is not yet implemented"
+        modules: dict[str, dict] = describe_data.get("modules", {})
+        node_properties = {k: v for k, v in describe_data.items() if k != "modules"}
+
+        # Parse modules
+        node_attrs: list[tuple[str, str, str | None, str | None, str]] = []
+        for modname, moddescr in modules.items():
+            #  separate accessibles into command and parameters
+            parameters = {}
+            commands = {}
+            accessibles = moddescr["accessibles"]
+            for aname, aentry in accessibles.items():
+                iname = internalize_name(aname)
+                datatype = get_datatype(aentry["datainfo"], iname)
+
+                aentry = dict(aentry, datatype=datatype)
+
+                if datatype.IS_COMMAND:
+                    commands[iname] = aentry
+                else:
+                    parameters[iname] = aentry
+
+            properties = {k: v for k, v in moddescr.items() if k != "accessibles"}
+
+            # Add module class (highest secop interface class) that the actual
+            # module class is derived from
+            secop_ophyd_modclass = class_from_interface(properties)
+            module_bases = [secop_ophyd_modclass.__name__]
+
+            # Add the module class, use self reported "implementation" module property,
+            # if not present use the module name
+            module_class = modname
+            if properties.get("implementation") is not None:
+                module_class = properties.get("implementation", "").split(".").pop()
+
+            # Module enum classes
+            module_enum_classes = []
+
+            # Prepare attributes
+
+            # Module Commands
+            command_plans = []
+
+            for command, command_data in commands.items():
+                # Stop is already an ophyd native operation
+                if command == "stop":
+                    continue
+
+                argument = command_data["datainfo"].get("argument")
+                result = command_data["datainfo"].get("result")
+
+                description: str = ""
+                description += f"{command_data['description']}\n"
+
+                if argument:
+                    description += (
+                        f"       argument: {command_data['datainfo'].get('argument')}\n"
+                    )
+                if result:
+                    description += (
+                        f"       result: {command_data['datainfo'].get('result')}"
+                    )
+
+                def command_plan(self, arg, wait_for_idle: bool = False):
+                    pass
+
+                def command_plan_no_arg(self, wait_for_idle: bool = False):
+                    pass
+
+                plan = Method(
+                    cmd_name=command,
+                    description=description,
+                    cmd_sign=inspect.signature(
+                        command_plan if argument else command_plan_no_arg
+                    ),
+                )
+
+                command_plans.append(plan)
+
+            # Module parameters
+            mod_params: list[tuple[str, str, str | None, str | None, str]] = []
+
+            for param_name, param_data in parameters.items():
+
+                descr = param_data["description"]
+                unit = param_data["datainfo"].get("unit")
+
+                param_descr = f"{descr}; Unit: ({unit})" if unit else descr
+                signal_base = SignalR if param_data["readonly"] else SignalRW
+
+                datainfo = param_data.get("datainfo", {})
+
+                # infer the ophyd type from secop datatype
+                type_param = get_type_param(param_data["datatype"])
+
+                # Handle StrictEnum types - generate enum class
+                if type_param and "StrictEnum" in type_param:
+                    # Generate unique enum class name:
+                    # ModuleClass + ParamName + Enum
+                    enum_class_name = f"{module_class}{param_name.capitalize()}Enum"
+
+                    # Extract enum members from datainfo
+                    enum_members_dict = datainfo.get("members", {})
+                    if enum_members_dict:
+                        from secop_ophyd.GenNodeCode import EnumClass, EnumMember
+
+                        enum_members = []
+                        for member_value, _ in enum_members_dict.items():
+                            # Convert member name to Python identifier
+                            python_name = secop_enum_name_to_python(member_value)
+                            enum_members.append(
+                                EnumMember(
+                                    name=python_name,
+                                    value=member_value,
+                                    description=None,
+                                )
+                            )
+
+                        # Create enum class definition
+                        enum_descr = f"{param_name} enum for `{module_class}`."
+
+                        enum_cls = EnumClass(
+                            name=enum_class_name,
+                            members=enum_members,
+                            description=enum_descr,
+                        )
+                        module_enum_classes.append(enum_cls)
+
+                        # Use the specific enum class name instead of generic
+                        # StrictEnum
+                        type_param = enum_class_name
+
+                mod_params.append(
+                    (
+                        param_name,
+                        signal_base.__name__,
+                        type_param,
+                        param_descr,
+                        "parameter",
+                    )
+                )
+
+            # Module properties
+            mod_props: list[tuple[str, str, str | None, str | None, str]] = []
+
+            # Process module properties
+            for prop_name, property_value in properties.items():
+
+                if prop_name in IGNORED_PROPS:
+                    continue
+
+                type_param = get_type_param(secop_dtype_obj_from_json(property_value))
+
+                mod_props.append(
+                    (
+                        prop_name,
+                        SignalR.__name__,
+                        type_param,
+                        None,
+                        "property",
+                    )
+                )
+
+            self.add_mod_class(
+                module_cls=module_class,
+                bases=module_bases,
+                attrs=mod_params + mod_props,
+                cmd_plans=command_plans,
+                description=properties.get("description", ""),
+                enum_classes=module_enum_classes,
+            )
+
+            # Add to node attributes
+            # Type the None explicitly as str | None to match other entries
+
+            node_attrs.append((modname, module_class, None, None, "module"))
+
+        # Process module properties
+        for prop_name, property_value in node_properties.items():
+            type_param = get_type_param(secop_dtype_obj_from_json(property_value))
+
+            node_attrs.append(
+                (str(prop_name), str(SignalR.__name__), type_param, None, "property")
+            )
+
+        # Add node class
+        node_bases = ["SECoPNodeDevice"]
+
+        equipment_id: str = node_properties["equipment_id"]
+
+        # format node class accordingly
+        node_class_name = equipment_id.replace(".", "_").replace("-", "_").capitalize()
+
+        self.add_node_class(
+            node_cls=node_class_name,
+            bases=node_bases,
+            attrs=node_attrs,
+            description=node_properties.get("description", ""),
         )
+
+        # Add required imports
+        self.add_import("secop_ophyd.SECoPDevices", "SECoPNodeDevice")
+        self.add_import("secop_ophyd.SECoPDevices", "SECoPBaseDevice")
+        self.add_import("secop_ophyd.SECoPDevices", "SECoPCommunicatorDevice")
+        self.add_import("secop_ophyd.SECoPDevices", "SECoPReadableDevice")
+        self.add_import("secop_ophyd.SECoPDevices", "SECoPWritableDevice")
+        self.add_import("secop_ophyd.SECoPDevices", "SECoPMoveableDevice")
+        self.add_import("secop_ophyd.SECoPDevices", "SECoPTriggerableDevice")
 
     def generate_code(self) -> str:
         """Generate Python code using Jinja2 template.
@@ -729,3 +937,16 @@ class GenNodeCode:
         # Reload the module
         if self.node_mod is not None:
             reload(self.node_mod)
+
+
+def get_type_param(secop_dtype: DataType) -> str | None:
+    sig_type = SECoPdtype(secop_dtype).np_datatype
+
+    # Get the module name
+    module = sig_type.__module__
+
+    # For builtins, just return the name without module prefix
+    if module == "builtins":
+        return sig_type.__name__
+
+    return f"{module}.{sig_type.__name__}"

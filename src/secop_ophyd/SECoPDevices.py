@@ -1,5 +1,4 @@
 import asyncio
-import inspect
 import logging
 import re
 import time as ttime
@@ -44,7 +43,6 @@ from ophyd_async.core import (
 from ophyd_async.core._utils import Callback
 
 from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient
-from secop_ophyd.GenNodeCode import GenNodeCode, Method, get_python_type_from_signal
 from secop_ophyd.logs import LOG_LEVELS, setup_logging
 from secop_ophyd.propertykeys import DATAINFO, EQUIPMENT_ID, INTERFACE_CLASSES
 from secop_ophyd.SECoPSignal import (
@@ -76,6 +74,9 @@ ERROR = 400
 ERROR_STANDBY = 430
 ERROR_PREPARED = 450
 UNKNOWN = 401  # not in SECoP standard (yet)
+
+
+IGNORED_PROPS = ["meaning", "_plotly"]
 
 
 def clean_identifier(anystring):
@@ -263,7 +264,6 @@ class SECoPBaseDevice(StandardReadable):
 
         self._module = module_name
         module_desc = secclient.modules[module_name]
-        self.plans: list[Method] = []
         self.mod_prop_devices: Dict[str, SignalR] = {}
         self.param_devices: Dict[str, Any] = {}
 
@@ -299,7 +299,7 @@ class SECoPBaseDevice(StandardReadable):
                 if property == "implementation":
                     self.impl = module_desc["properties"]["implementation"]
 
-                if property in ["meaning", "_plotly"]:
+                if property in IGNORED_PROPS:
                     continue
 
                 propb = PropertyBackend(property, module_desc["properties"], secclient)
@@ -374,19 +374,6 @@ class SECoPBaseDevice(StandardReadable):
             )
 
             setattr(self, command, MethodType(cmd_plan, self))
-
-            description: str = ""
-            description += f"{cmd_dev.description}\n"
-            description += f"       argument: {str(cmd_dev.arg_dtype)}\n"
-            description += f"       result: {str(cmd_dev.res_dtype)}"
-
-            plan = Method(
-                cmd_name=command,
-                description=description,
-                cmd_sign=inspect.signature(getattr(self, command)),
-            )
-
-            self.plans.append(plan)
 
         self.set_name(module_name)
 
@@ -916,8 +903,6 @@ class SECoPNodeDevice(StandardReadable):
             self.mod_devices: Dict[str, SECoPReadableDevice] = {}
             self.node_prop_devices: Dict[str, SignalR] = {}
 
-            self.genCode: GenNodeCode
-
             if self.name == "":
                 self.name = self._secclient.properties[EQUIPMENT_ID].replace(".", "-")
 
@@ -944,9 +929,7 @@ class SECoPNodeDevice(StandardReadable):
             with self.add_children_as_readables(format=StandardReadableFormat.CHILD):
                 for module, module_desc in self._secclient.modules.items():
 
-                    secop_dev_class = self.class_from_interface(
-                        module_desc["properties"]
-                    )
+                    secop_dev_class = class_from_interface(module_desc["properties"])
 
                     if secop_dev_class is not None:
                         setattr(
@@ -970,180 +953,16 @@ class SECoPNodeDevice(StandardReadable):
             super().__init__(name=self.name)
 
     def class_from_instance(self, path_to_module: str | None = None):
-        """Dynamically generate python class file for the SECoP_Node_Device, this
-        allows autocompletion in IDEs and eases working with the generated Ophyd
-        devices
-        """
+        from secop_ophyd.GenNodeCode import GenNodeCode
+
+        description = self._secclient.client.request("describe")[2]
 
         # parse genClass file if already present
-        self.genCode = GenNodeCode(path=path_to_module, log=self._secclient.log)
+        genCode = GenNodeCode(path=path_to_module, log=self._secclient.log)
 
-        self.genCode.add_import(self.__module__, self.__class__.__name__)
+        genCode.from_json_describe(description)
 
-        node_dict = self.__dict__
-
-        # NodeClass Name
-        self._node_cls_name = self.name.replace("-", "_").capitalize()
-
-        node_bases = [self.__class__.__name__]
-
-        node_class_attrs: list[tuple[str, str] | tuple[str, str, str | None]] = []
-
-        for attr_name, attr_value in node_dict.items():
-            # Modules
-            if isinstance(
-                attr_value,
-                (
-                    SECoPBaseDevice,
-                    SECoPCommunicatorDevice,
-                    SECoPReadableDevice,
-                    SECoPWritableDevice,
-                    SECoPMoveableDevice,
-                    SECoPTriggerableDevice,
-                ),
-            ):
-                attr_type = type(attr_value)
-                module = str(getattr(attr_type, "__module__", None))
-
-                # add imports for module attributes
-                self.genCode.add_import(module, attr_type.__name__)
-
-                # modclass is baseclass of derived class
-                mod_bases = [attr_value.__class__.__name__]
-
-                module_class_attrs = []
-
-                # Name for derived class
-                module_class_name = attr_name
-                if attr_value.impl is not None:
-                    module_class_name = attr_value.impl.split(".").pop()
-
-                # Track enum classes for this module
-                module_enum_classes = []
-
-                # Separate properties from parameters
-                module_properties = []
-                module_parameters = []
-
-                # Process module properties
-                for prop_name, prop_signal in attr_value.mod_prop_devices.items():
-                    type_param = get_python_type_from_signal(prop_signal)
-
-                    module_properties.append(
-                        (
-                            prop_name,
-                            type(prop_signal).__name__,
-                            type_param,
-                            None,
-                            "property",
-                        )
-                    )
-
-                # Process module parameters
-                for param_name, param_signal in attr_value.param_devices.items():
-                    if not isinstance(param_signal, (SignalR, SignalRW)):
-                        continue
-
-                    # Extract type parameter for signals
-                    type_param = get_python_type_from_signal(param_signal)
-
-                    try:
-                        param_props = param_signal._connector.backend._get_param_desc()
-                        descr = param_props["description"]
-                        unit = param_props["datainfo"].get("unit")
-                        attr_descr = f"{descr}; Unit: ({unit})" if unit else descr
-                        datainfo = param_props.get("datainfo", {})
-                    except Exception:
-                        attr_descr = None
-                        datainfo = {}
-
-                    # Handle StrictEnum types - generate enum class
-                    if type_param and "StrictEnum" in type_param:
-                        # Generate unique enum class name:
-                        # ModuleClass + ParamName + Enum
-                        enum_class_name = (
-                            f"{module_class_name}{param_name.capitalize()}Enum"
-                        )
-
-                        # Extract enum members from datainfo
-                        enum_members_dict = datainfo.get("members", {})
-                        if enum_members_dict:
-                            from secop_ophyd.GenNodeCode import EnumClass, EnumMember
-
-                            enum_members = []
-                            for member_value, _ in enum_members_dict.items():
-                                # Convert member name to Python identifier
-                                python_name = secop_enum_name_to_python(member_value)
-                                enum_members.append(
-                                    EnumMember(
-                                        name=python_name,
-                                        value=member_value,
-                                        description=None,
-                                    )
-                                )
-
-                            # Create enum class definition
-                            enum_descr = f"{param_name} enum for `{module_class_name}`."
-
-                            enum_cls = EnumClass(
-                                name=enum_class_name,
-                                members=enum_members,
-                                description=enum_descr,
-                            )
-                            module_enum_classes.append(enum_cls)
-
-                            # Use the specific enum class name instead of generic
-                            # StrictEnum
-                            type_param = enum_class_name
-
-                    module_parameters.append(
-                        (
-                            param_name,
-                            type(param_signal).__name__,
-                            type_param,
-                            attr_descr,
-                            "parameter",
-                        )
-                    )
-
-                # Combine properties and parameters with category markers
-                module_class_attrs = module_properties + module_parameters
-
-                module_description: str = (
-                    self._secclient.modules[attr_name]
-                    .get("properties")
-                    .get("description")
-                )
-
-                self.genCode.add_mod_class(
-                    module_class_name,
-                    mod_bases,
-                    module_class_attrs,
-                    attr_value.plans,
-                    module_description,
-                    module_enum_classes,
-                )
-
-                # Type the None explicitly as str | None to match other entries
-                type_param_none: str | None = None
-                node_class_attrs.append((attr_name, module_class_name, type_param_none))
-
-            # Poperty Signals
-            if isinstance(attr_value, (SignalR)):
-
-                # Extract type parameter for node-level signals
-                type_param = get_python_type_from_signal(attr_value)
-
-                node_class_attrs.append(
-                    (attr_name, str(attr_value.__class__.__name__), type_param)
-                )
-
-        node_description: str = self._secclient.properties.get("description")
-        self.genCode.add_node_class(
-            self._node_cls_name, node_bases, node_class_attrs, node_description
-        )
-
-        self.genCode.write_gen_node_class_file()
+        genCode.write_gen_node_class_file()
 
     def descriptiveDataChange(self, module, description):  # noqa: N802
         """called when the description has changed
@@ -1180,7 +999,7 @@ class SECoPNodeDevice(StandardReadable):
         else:
             # Refresh changed modules
             module_desc = self._secclient.modules[module]
-            secop_dev_class = self.class_from_interface(module_desc["properties"])
+            secop_dev_class = class_from_interface(module_desc["properties"])
 
             setattr(self, module, secop_dev_class(self._secclient, module))
 
@@ -1195,22 +1014,23 @@ class SECoPNodeDevice(StandardReadable):
         if state == "connected" and online is True:
             self._secclient.conn_timestamp = ttime.time()
 
-    def class_from_interface(self, mod_properties: dict):
-        ophyd_class = None
 
-        # infer highest level IF class
-        module_interface_classes: dict = mod_properties[INTERFACE_CLASSES]
-        for interface_class in IF_CLASSES.keys():
-            if interface_class in module_interface_classes:
-                ophyd_class = IF_CLASSES[interface_class]
-                break
+def class_from_interface(mod_properties: dict):
+    ophyd_class = None
 
-        # No predefined IF class was a match --> use base class (loose collection of
-        # accessibles)
-        if ophyd_class is None:
-            ophyd_class = SECoPBaseDevice  # type: ignore
+    # infer highest level IF class
+    module_interface_classes: dict = mod_properties[INTERFACE_CLASSES]
+    for interface_class in IF_CLASSES.keys():
+        if interface_class in module_interface_classes:
+            ophyd_class = IF_CLASSES[interface_class]
+            break
 
-        return ophyd_class
+    # No predefined IF class was a match --> use base class (loose collection of
+    # accessibles)
+    if ophyd_class is None:
+        ophyd_class = SECoPBaseDevice  # type: ignore
+
+    return ophyd_class
 
 
 IF_CLASSES = {

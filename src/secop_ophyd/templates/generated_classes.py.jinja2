@@ -63,10 +63,25 @@ class {{ module_cls.name }}({{ module_cls.bases | join(', ') }}):
 {% for node_cls in node_classes %}
 class {{ node_cls.name }}({{ node_cls.bases | join(', ') }}):
     """{{ node_cls.description or 'Generated node class' }}"""
-{%- for attr in node_cls.attributes %}
+{%- set modules = node_cls.attributes | selectattr('category', 'equalto', 'module') | list %}
+{%- set properties = node_cls.attributes | selectattr('category', 'equalto', 'property') | list %}
+{%- if modules %}
+
+    # Module Devices
+{%- for attr in modules %}
     {{ attr.name }}: {{ attr.type }}
 {%- if attr.type_param %}[{{ attr.type_param }}]{% endif %}
 {%- if attr.description %}  # {{ attr.description }}{% endif %}
 {%- endfor %}
+{%- endif %}
+{%- if properties %}
+
+    # Node Properties
+{%- for attr in properties %}
+    {{ attr.name }}: {{ attr.type }}
+{%- if attr.type_param %}[{{ attr.type_param }}]{% endif %}
+{%- if attr.description %}  # {{ attr.description }}{% endif %}
+{%- endfor %}
+{%- endif %}
 
 {% endfor %}

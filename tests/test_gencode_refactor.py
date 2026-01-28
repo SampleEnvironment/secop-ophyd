@@ -58,8 +58,8 @@ def test_basic_functionality(clean_generated_file):
         node_cls="TestNode",
         bases=["Device"],
         attrs=[
-            ("module1", "TestModule"),
-            ("status", "SignalR", "str"),
+            ("module1", "TestModule", None, None, "module"),
+            ("status", "SignalR", "str", None, "property"),
         ],
         description="Test node class",
     )
@@ -185,9 +185,9 @@ def test_subsequent_node_generation(clean_generated_file):
         node_cls="NodeA",
         bases=["Device"],
         attrs=[
-            ("modA", "Type1"),
-            ("modB", "Type2"),
-            ("status", "SignalR", "str"),
+            ("modA", "Type1", None, None, "module"),
+            ("modB", "Type2", None, None, "module"),
+            ("status", "SignalR", "str", None, "property"),
         ],
         description="NodeA with Type1 and Type2 modules",
     )
@@ -258,9 +258,9 @@ def test_subsequent_node_generation(clean_generated_file):
         node_cls="NodeB",
         bases=["Device"],
         attrs=[
-            ("modA", "Type1"),
-            ("modB", "Type3"),
-            ("name", "SignalR", "str"),
+            ("modA", "Type1", None, None, "module"),
+            ("modB", "Type3", None, None, "module"),
+            ("name", "SignalR", "str", None, "property"),
         ],
         description="NodeB with Type1 and Type3 modules",
     )
@@ -300,21 +300,16 @@ def test_subsequent_node_generation(clean_generated_file):
     assert "# Module Properties" in code2
     assert "# Module Parameters" in code2
 
-    print("\n✓ Subsequent node generation test passed!")
-    print("✓ Type1 module defined only ONCE (not duplicated)")
-    print("✓ NodeA present with Type1 and Type2")
-    print("✓ NodeB present with Type1 and Type3")
-    print("✓ All classes in the same file after appending")
-    print("✓ Properties and Parameters properly separated")
 
-
-def test_real_node(clean_generated_file, cryo_sim, cryo_node_no_re: SECoPNodeDevice):
+def test_gen_cryo_node(
+    clean_generated_file, cryo_sim, cryo_node_no_re: SECoPNodeDevice
+):
     """Test generating code for a real SECoP node."""
 
     cryo_node_no_re.class_from_instance(clean_generated_file)
 
 
-async def test_cmd_real_node(
+async def test_gen_real_node(
     clean_generated_file,
     nested_struct_sim,
     RE,
@@ -323,14 +318,34 @@ async def test_cmd_real_node(
 
     nested_node_no_re.class_from_instance(clean_generated_file)
 
+    # Read the generated file and verify its contents
+    gen_file = clean_generated_file / "genNodeClass.py"
+    assert gen_file.exists(), "Generated file should exist"
 
-async def test_gas_dosing(clean_generated_file):
+    generated_code = gen_file.read_text()
 
-    from ophyd_async.core import init_devices
+    # ===== Assertions for generated command plans =====
+    # The ophy_struct module has a test_cmd command
+    assert "def test_cmd" in generated_code, "test_cmd plan should be generated"
+    assert (
+        "@abstractmethod" in generated_code
+    ), "Command methods should be marked as abstract"
 
-    async with init_devices():
-        gas_dosing = SECoPNodeDevice(
-            sec_node_uri="localhost:10801",
-        )
+    # ===== Assertions for generated enum classes =====
+    # Enum classes should be generated for enum parameters
+    # The gas_type parameter in enum1/enum2 modules should generate enum classes
+    assert (
+        "class Test_EnumGas_typeEnum(SupersetEnum):" in generated_code
+    ), "Enum class for gas_type should be generated"
 
-    gas_dosing.class_from_instance(clean_generated_file)
+    # Verify enum members are present
+    # gas_type enums should have AR, N2, H2 (and CO2 for enum2)
+    assert "AR" in generated_code, "AR enum member should be present"
+    assert "N2" in generated_code, "N2 enum member should be present"
+    assert "H2" in generated_code, "H2 enum member should be present"
+    assert "CO2" in generated_code, "CO2 enum member should be present"
+
+    # Verify SupersetEnum import
+    assert (
+        "from enum import Enum" in generated_code or "SupersetEnum" in generated_code
+    ), "Enum import should be present"
