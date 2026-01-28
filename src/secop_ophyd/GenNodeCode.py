@@ -2,7 +2,9 @@
 
 import inspect
 import json
+import linecache
 import re
+import sys
 from dataclasses import dataclass, field
 from importlib import import_module, reload
 from inspect import Signature
@@ -169,14 +171,13 @@ class GenNodeCode:
 
     def _load_existing_module(self):
         """Load existing generated module if present."""
+
         mod_path = self.ModName
 
         if self.module_folder_path is not None:
             # For absolute paths, we need to add to sys.path and import just the module
             # name
             if self.module_folder_path.is_absolute():
-                import sys
-
                 str_path = str(self.module_folder_path)
                 if str_path not in sys.path:
                     sys.path.insert(0, str_path)
@@ -187,6 +188,16 @@ class GenNodeCode:
                 str_path = str(self.module_folder_path)
                 rep_slash = str_path.replace("/", ".").replace("\\", ".")
                 mod_path = f"{rep_slash}.{self.ModName}"
+
+        # Remove cached module to ensure fresh import (important when module file
+        # has been modified or recreated between imports)
+        if mod_path in sys.modules:
+            del sys.modules[mod_path]
+
+        # Clear linecache for the module file to ensure inspect.getsource() works
+        if self.module_folder_path is not None:
+            module_file = self.module_folder_path / f"{self.ModName}.py"
+            linecache.checkcache(str(module_file))
 
         try:
             self.node_mod = import_module(mod_path)
