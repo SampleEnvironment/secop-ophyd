@@ -17,7 +17,12 @@ from frappy.datatypes import (
     StructOf,
     TupleOf,
 )
-from ophyd_async.core import Callback, SignalBackend, SignalDatatypeT
+from ophyd_async.core import (
+    Callback,
+    SignalBackend,
+    SignalDatatypeT,
+    StandardReadableFormat,
+)
 
 from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient
 from secop_ophyd.util import Path, SECoPDataKey, SECoPdtype, SECoPReading, deep_get
@@ -120,7 +125,6 @@ class LocalBackend(SignalBackend):
         self.callback = callback  # type: ignore[assignment]
 
 
-# TODO add return of Asyncstatus
 class SECoPXBackend(SignalBackend):
     """
     Signal backend for SignalX of a SECoP_CMD_Device, that handles command execution
@@ -216,30 +220,64 @@ class SECoPXBackend(SignalBackend):
         )
 
 
-class SECoPParamBackend(SignalBackend):
+class SECoPParamBackend(SignalBackend[SignalDatatypeT]):
     """Standard backend for a Signal that represents SECoP Parameter"""
 
-    def __init__(self, path: Path, secclient: AsyncFrappyClient) -> None:
-        """_summary_
+    def __init__(
+        self,
+        datatype: type[SignalDatatypeT] | None,
+        path: str | None = None,
+        secclient: AsyncFrappyClient | None = None,
+    ):
 
-        :param path: Path to the parameter in the secclient module dict
-        :type path: Path
-        :param secclient: SECoP client providing communication to the SEC Node
-        :type secclient: AsyncFrappyClient
-        """
+        if path and secclient:
+            module_name, parameter_name = path.split(":", maxsplit=1)
 
-        # secclient
+            self._module_name: str = module_name
+            self._parameter_name: str = parameter_name
+            self._secclient: AsyncFrappyClient = secclient
+
+            self.path_str: str = path
+
+        super().__init__(datatype)
+
+    def init_from_introspection(
+        self,
+        datatype: type[SignalDatatypeT],
+        path: str,
+        secclient: AsyncFrappyClient,
+    ):
+        module_name, parameter_name = path.split(":", maxsplit=1)
+
+        self._module_name: str = module_name
+        self._parameter_name: str = parameter_name
         self._secclient: AsyncFrappyClient = secclient
 
-        # module:acessible Path for reading/writing (module,accessible)
-        self.path: Path = path
+        self.path_str: str = path
+
+        self.datatype = datatype
+
+    def source(self, name: str, read: bool) -> str:
+        return self.path_str
+
+    async def connect(self, timeout: float):
+
+        await self._secclient.connect()
 
         self._param_description: dict = self._get_param_desc()
 
+        match self._param_description.get("_signal_format", None):
+            case "HINTED_SIGNAL":
+                self.format = StandardReadableFormat.HINTED_SIGNAL
+            case "HINTED_UNCACHED_SIGNAL":
+                self.format = StandardReadableFormat.HINTED_UNCACHED_SIGNAL
+            case "UNCACHED_SIGNAL":
+                self.format = StandardReadableFormat.UNCACHED_SIGNAL
+            case _:
+                self.format = StandardReadableFormat.CONFIG_SIGNAL
+
         # Root datainfo or memberinfo for nested datatypes
-        self.datainfo: dict = deep_get(
-            self._param_description["datainfo"], self.path.get_memberinfo_path()
-        )
+        self.datainfo: dict = self._param_description["datainfo"]
 
         self.readonly = self._param_description.get("readonly")
 
@@ -250,7 +288,7 @@ class SECoPParamBackend(SignalBackend):
 
         if self.SECoP_type_info.max_depth > MAX_DEPTH:
             warnings.warn(
-                f"The datatype of parameter '{path._accessible_name}' has a maximum "
+                f"The datatype of parameter '{self._parameter_name}' has a maximum "
                 f"depth of {self.SECoP_type_info.max_depth}. Tiled & Databroker only "
                 f"support a Depth upto {MAX_DEPTH} "
                 f"dtype_descr: {self.SECoP_type_info.dtype_descr}"
@@ -259,13 +297,13 @@ class SECoPParamBackend(SignalBackend):
         self.describe_dict: dict = {}
 
         self.source_name = (
-            secclient.uri
+            self._secclient.uri
             + ":"
-            + secclient.nodename
+            + self._secclient.nodename
             + ":"
-            + self.path._module_name
+            + self._module_name
             + ":"
-            + self.path._accessible_name
+            + self._parameter_name
         )
 
         # SECoP metadata is static and can only change when connection is reset
@@ -289,13 +327,7 @@ class SECoPParamBackend(SignalBackend):
                 property_name = "units"
             self.describe_dict[property_name] = prop_val
 
-        super().__init__(datatype=self.SECoP_type_info.np_datatype)
-
-    def source(self, name: str, read: bool) -> str:
-        return self.source_name
-
-    async def connect(self, timeout: float):
-        pass
+        self.datatype = self.SECoP_type_info.np_datatype
 
     async def put(self, value: Any | None, wait=True):
         # convert to frappy compatible Format
@@ -367,25 +399,16 @@ class SECoPParamBackend(SignalBackend):
             self._secclient.unregister_callback(self.get_path_tuple(), updateItem)
 
     def _get_param_desc(self) -> dict:
-        return deep_get(self._secclient.modules, self.path.get_param_desc_path())
+        return deep_get(
+            self._secclient.modules,
+            [self._module_name, "parameters", self._parameter_name],
+        )
 
     def get_param_path(self):
-        return self.path.get_param_path()
+        return {"module": self._module_name, "parameter": self._parameter_name}
 
     def get_path_tuple(self):
-        return self.path.get_path_tuple()
-
-    def get_unit(self):
-        return self.describe_dict.get("units", None)
-
-    def is_number(self) -> bool:
-        if (
-            self.describe_dict["dtype"] == "number"
-            or self.describe_dict["dtype"] == "integer"
-        ):
-            return True
-
-        return False
+        return (self._module_name, self._parameter_name)
 
 
 class PropertyBackend(SignalBackend):
