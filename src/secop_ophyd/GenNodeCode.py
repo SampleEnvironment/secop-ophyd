@@ -215,8 +215,8 @@ class GenNodeCode:
 
         try:
             from secop_ophyd.SECoPDevices import (
-                SECoPBaseDevice,
                 SECoPCommunicatorDevice,
+                SECoPDevice,
                 SECoPMoveableDevice,
                 SECoPNodeDevice,
                 SECoPReadableDevice,
@@ -249,7 +249,7 @@ class GenNodeCode:
                     elif issubclass(
                         class_obj,
                         (
-                            SECoPBaseDevice,
+                            SECoPDevice,
                             SECoPCommunicatorDevice,
                             SECoPMoveableDevice,
                             SECoPReadableDevice,

@@ -2,6 +2,8 @@ import asyncio
 import logging
 import re
 import time as ttime
+import warnings
+from abc import abstractmethod
 from logging import Logger
 from types import MethodType
 from typing import Any, Dict, Iterator, Optional, Type
@@ -47,7 +49,7 @@ from ophyd_async.core import (
 from ophyd_async.core._utils import Callback
 
 from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient
-from secop_ophyd.logs import LOG_LEVELS, setup_logging
+from secop_ophyd.logs import setup_logging
 from secop_ophyd.propertykeys import DATAINFO, EQUIPMENT_ID, INTERFACE_CLASSES
 from secop_ophyd.SECoPSignal import (
     LocalBackend,
@@ -109,16 +111,51 @@ def secop_enum_name_to_python(member_name: str) -> str:
     return cleaned
 
 
+def format_assigned(device: StandardReadable, signal: SignalR) -> bool:
+    if (
+        signal.describe in device._describe_funcs
+        or signal.describe in device._describe_config_funcs
+    ):
+        # Standard readable format already assigned
+        return True
+
+    return False
+
+
+def is_read_signal(device: StandardReadable, signal: SignalR | SignalRW) -> bool:
+    if signal.describe() in device._describe_funcs:
+        return True
+
+    return False
+
+
+def is_config_signal(device: StandardReadable, signal: SignalR | SignalRW) -> bool:
+    if signal.describe() in device._describe_config_funcs:
+        return True
+
+    return False
+
+
 class SECoPDeviceConnector(DeviceConnector):
+
+    sri: str
+    module: str | None
+    node_id: str
+    _auto_fill_signals: bool
+
     def __init__(
         self,
-        sri: str | None,
+        sri: str,
         auto_fill_signals: bool = True,
+        loglevel=logging.INFO,
+        logdir: str | None = None,
     ) -> None:
 
-        self.sri: str | None = sri
+        self.sri = sri
         self.node_id = sri.split(":")[0] + ":" + sri.split(":")[1]
         self._auto_fill_signals = auto_fill_signals
+        self.loglevel = loglevel
+        self.logdir = logdir
 
         if sri.count(":") == 2:
             self.module = sri.split(":")[2]
@@ -146,7 +183,7 @@ class SECoPDeviceConnector(DeviceConnector):
                 device=device,
                 signal_backend_factory=SECoPParamBackend,
                 device_connector_factory=lambda: SECoPDeviceConnector(
-                    self.sri, self._auto_fill_signals
+                    self.sri, self._auto_fill_signals, self.loglevel, self.logdir
                 ),
             )
             list(self.filler.create_devices_from_annotations(filled=False))
@@ -159,7 +196,7 @@ class SECoPDeviceConnector(DeviceConnector):
         self.filler.create_device_vector_entries_to_mock(2)
         # Set the name of the device to name all children
         device.set_name(device.name)
-        return await super().connect_mock(device, mock)
+        await super().connect_mock(device, mock)
 
     async def connect_real(self, device: Device, timeout: float, force_reconnect: bool):
         if not self.sri:
@@ -218,7 +255,36 @@ class SECoPDeviceConnector(DeviceConnector):
 
         # Set the name of the device to name all children
         device.set_name(device.name)
-        return await super().connect_real(device, timeout, force_reconnect)
+        await super().connect_real(device, timeout, force_reconnect)
+
+        # All Signals and child devs should be filled and connected now, in the next
+        # all signals and child devices need to be added to the according
+        # StandardReadableFormat with the hierarchiy:
+        # 1. Format given in Annotation
+        #       --> these will already have been set by the DeviceFiller
+        # 2. Module Interface Class definition (value, target,...)
+        #       --> these are set at the end of a .connect() method of the according
+        #           SECoPDevice subclass skipping any signals that have already been
+        #           set by annotations (should emit warning if there is a conflict
+        #           config vs read sig)
+        # 3. & 4. Definition in Parameter property "_signal_format" + Defaults
+        #   - _signal_format property + default CONFIG_SIGNAL for all other Signals
+        #       --> these are set here at the end of SECoPDeviceConnector.connect_real()
+        #           for all Signals that have not yet been set to a format
+        #   - CHILD format for all child devices (SECoPDevice instances)
+        #       --> these are set at the end of SECoPNodeDevice.connect() method
+        #           the device tree has only a depth of 2 levels (Node -> Modules)
+        #
+
+        # device has to be standard readable for this to make sense
+        if not isinstance(device, SECoPDevice):
+            return
+
+        # 2. Module Interface Class definition (value, target,...)
+        await device._assign_interface_formats()
+
+        # 3. & 4. Definition in Parameter property "_signal_format" + Defaults
+        await device._assign_default_formats()
 
 
 class SECoPCMDDevice(StandardReadable, Flyable, Triggerable):
@@ -354,12 +420,22 @@ class SECoPCMDDevice(StandardReadable, Flyable, Triggerable):
 class SECoPDevice(StandardReadable):
 
     clients: Dict[str, AsyncFrappyClient] = {}
+    node_id: str
+    sri: str
+    host: str
+    port: str
+    module: str | None
+    mod_prop_devices: Dict[str, SignalR]
+    param_devices: Dict[str, Any]
+    logger: Logger
 
     def __init__(
         self,
         sri: str = "",  # SECoP resource identifier host:port:optional[module]
         name: str = "",
         connector: SECoPDeviceConnector | None = None,
+        loglevel=logging.INFO,
+        logdir: str | None = None,
     ) -> None:
 
         if connector and sri:
@@ -367,29 +443,36 @@ class SECoPDevice(StandardReadable):
 
         if connector:
             sri = connector.sri
+            loglevel = connector.loglevel
+            logdir = connector.logdir
 
         self.sri = sri
-        self.host: str = sri.split(":")[0]
-        self.port: str = sri.split(":")[1]
-        self.mod_prop_devices: Dict[str, SignalR] = {}
-        self.param_devices: Dict[str, Any] = {}
+        self.host = sri.split(":")[0]
+        self.port = sri.split(":")[1]
+        self.mod_prop_devices = {}
+        self.param_devices = {}
+        self.node_id = sri.split(":")[0] + ":" + sri.split(":")[1]
 
-        self.module: str | None = None
+        self.logger = setup_logging(
+            name=f"frappy:{self.host}:{self.port}",
+            level=loglevel,
+            log_dir=logdir,
+        )
+
+        self.module = None
         if len(sri.split(":")) > 2:
             self.module = sri.split(":")[2]
 
-        if SECoPDevice.clients.get(sri) is None:
-            SECoPDevice.clients[sri] = AsyncFrappyClient(host=self.host, port=self.port)
+        if SECoPDevice.clients.get(self.node_id) is None:
+            SECoPDevice.clients[self.node_id] = AsyncFrappyClient(
+                host=self.host, port=self.port, log=self.logger
+            )
 
         connector = connector or SECoPDeviceConnector(sri=sri)
 
-        self._client: AsyncFrappyClient = SECoPDevice.clients[sri]
+        self._client: AsyncFrappyClient = SECoPDevice.clients[self.node_id]
 
         super().__init__(name=name, connector=connector)
-
-        for child_name, child_dev in self.children():
-            if isinstance(child_dev, Signal):
-                child_dev.set_name(self.name + "_" + child_name)
 
     def set_module(self, module_name: str):
         if self.module is not None:
@@ -457,8 +540,6 @@ class SECoPDevice(StandardReadable):
 
                 setattr(self, command, MethodType(cmd_plan, self))
 
-            self.set_name(self.module)
-
         else:
             # Signals for module properties
             with self.add_children_as_readables(
@@ -471,6 +552,12 @@ class SECoPDevice(StandardReadable):
                     setattr(self, property, SignalR(backend=propb))
 
         await super().connect(mock, timeout, force_reconnect)
+
+        if self.module is None:
+            # set device name from equipment id property
+            self.set_name(self._client.properties[EQUIPMENT_ID].replace(".", "-"))
+        else:
+            self.set_name(self.module)
 
     def generate_cmd_plan(
         self,
@@ -547,12 +634,71 @@ class SECoPDevice(StandardReadable):
 
         return cmd_meth
 
+    @abstractmethod
+    async def _assign_interface_formats(self):
+        """Assign signal formats specific to this device's interface class.
+        Subclasses override this to assign formats before default fallback."""
+
+    async def _assign_default_formats(self):
+        config_signals = []
+        hinted_signals = []
+        uncached_signals = []
+        hinted_uncached_signals = []
+
+        def assert_device_is_signalr(device: Device) -> SignalR:
+            if not isinstance(device, SignalR):
+                raise TypeError(f"{device} is not a SignalR")
+            return device
+
+        for _, child in self.children():
+
+            if not isinstance(child, Signal):
+                continue
+
+            backend = child._connector.backend
+            if not isinstance(backend, SECoPParamBackend):
+                continue
+
+            # child is a Signal with SECoPParamBackend
+
+            # check if signal already has a format assigned
+            signalr_device = assert_device_is_signalr(child)
+
+            if format_assigned(self, signalr_device):
+                # format already assigned by annotation or module IF class
+                continue
+
+            match backend.format:
+                case StandardReadableFormat.CHILD:
+                    raise RuntimeError("Signal cannot have CHILD format")
+                case StandardReadableFormat.CONFIG_SIGNAL:
+                    config_signals.append(signalr_device)
+                case StandardReadableFormat.HINTED_SIGNAL:
+                    hinted_signals.append(signalr_device)
+                case StandardReadableFormat.UNCACHED_SIGNAL:
+                    uncached_signals.append(signalr_device)
+                case StandardReadableFormat.HINTED_UNCACHED_SIGNAL:
+                    hinted_uncached_signals.append(signalr_device)
+
+        # add signals to device in the order of their priority
+        self.add_readables(config_signals, StandardReadableFormat.CONFIG_SIGNAL)
+
+        self.add_readables(hinted_signals, StandardReadableFormat.HINTED_SIGNAL)
+
+        self.add_readables(uncached_signals, StandardReadableFormat.UNCACHED_SIGNAL)
+
+        self.add_readables(
+            hinted_uncached_signals, StandardReadableFormat.HINTED_UNCACHED_SIGNAL
+        )
+
 
 class SECoPNodeDevice(SECoPDevice):
     def __init__(
         self,
         sec_node_uri: str = "",  # SECoP resource identifier host:port:optional[module]
         name: str = "",
+        loglevel=logging.INFO,
+        logdir: str | None = None,
     ):
         # ensure sec_node_uri only contains host:port
         if sec_node_uri.count(":") != 1:
@@ -560,7 +706,7 @@ class SECoPNodeDevice(SECoPDevice):
                 f"SECoPNodeDevice SRI must only contain host:port {sec_node_uri}"
             )
 
-        super().__init__(sri=sec_node_uri, name=name)
+        super().__init__(sri=sec_node_uri, name=name, loglevel=loglevel, logdir=logdir)
 
     async def connect(self, mock=False, timeout=DEFAULT_TIMEOUT, force_reconnect=False):
         await super().connect(mock, timeout, force_reconnect)
@@ -572,6 +718,31 @@ class SECoPNodeDevice(SECoPDevice):
 
         self.add_readables(moddevs, StandardReadableFormat.CHILD)
 
+        # register secclient callbacks (these are useful if sec node description
+        # changes after a reconnect)
+        self._client.register_callback(
+            None, self.descriptiveDataChange, self.nodeStateChange
+        )
+
+    def descriptiveDataChange(self, module, description):  # noqa: N802
+        raise RuntimeError(
+            "The descriptive data has changed upon reconnect. Descriptive data changes"
+            "are not supported: reinstantiate device"
+        )
+
+    def nodeStateChange(self, online, state):  # noqa: N802
+        """called when the state of the connection changes
+
+        'online' is True when connected or reconnecting, False when disconnected
+        or connecting 'state' is the connection state as a string
+        """
+        if state == "connected" and online is True:
+            self._client.conn_timestamp = ttime.time()
+
+    async def _assign_interface_formats(self):
+        # Node device has no specific interface class formats
+        pass
+
 
 class SECoPCommunicatorDevice(SECoPDevice):
     def __init__(
@@ -579,8 +750,16 @@ class SECoPCommunicatorDevice(SECoPDevice):
         sri: str = "",  # SECoP resource identifier host:port:optional[module]
         name: str = "",
         connector: SECoPDeviceConnector | None = None,
+        loglevel=logging.INFO,
+        logdir: str | None = None,
     ) -> None:
-        super().__init__(sri=sri, name=name, connector=connector)
+        super().__init__(
+            sri=sri, name=name, connector=connector, loglevel=loglevel, logdir=logdir
+        )
+
+    async def _assign_interface_formats(self):
+        # Communicator has no specific interface class formats
+        pass
 
 
 class SECoPReadableDevice(SECoPDevice, Triggerable, Subscribable):
@@ -594,6 +773,8 @@ class SECoPReadableDevice(SECoPDevice, Triggerable, Subscribable):
         sri: str = "",  # SECoP resource identifier host:port:optional[module]
         name: str = "",
         connector: SECoPDeviceConnector | None = None,
+        loglevel=logging.INFO,
+        logdir: str | None = None,
     ):
         """Initializes the SECoPReadableDevice
 
@@ -607,7 +788,9 @@ class SECoPReadableDevice(SECoPDevice, Triggerable, Subscribable):
         self.value: SignalR
         self.status: SignalR
 
-        super().__init__(sri=sri, name=name, connector=connector)
+        super().__init__(
+            sri=sri, name=name, connector=connector, loglevel=loglevel, logdir=logdir
+        )
 
     async def connect(self, mock=False, timeout=DEFAULT_TIMEOUT, force_reconnect=False):
         await super().connect(mock, timeout, force_reconnect)
@@ -624,15 +807,28 @@ class SECoPReadableDevice(SECoPDevice, Triggerable, Subscribable):
                 + "but is needed for Readable interface class"
             )
 
+    async def _assign_interface_formats(self):
+
+        if format_assigned(self, self.value):
+            if not is_read_signal(self, self.value):
+                warnings.warn(
+                    f"Signal 'value' of device {self.name} has format assigned "
+                    + "that is not compatible with Readable interface class"
+                )
+        else:
+            self.add_readables([self.value], StandardReadableFormat.HINTED_SIGNAL)
+
+        # TODO ensure status signal must be neither config nor read format
+
     async def wait_for_idle(self):
         """asynchronously waits until module is IDLE again. this is helpful,
         for running commands that are not done immediately
         """
 
-        # self.logger.info(f"Waiting for {self.name} to be IDLE")
+        self.logger.info(f"Waiting for {self.name} to be IDLE")
 
         if self.status is None:
-            # self.logger.error("Status Signal not initialized")
+            self.logger.error("Status Signal not initialized")
             raise Exception("status Signal not initialized")
 
         # force reading of fresh status from device
@@ -646,7 +842,7 @@ class SECoPReadableDevice(SECoPDevice, Triggerable, Subscribable):
 
             # Module is in IDLE/WARN state
             if IDLE <= stat_code < BUSY:
-                # self.logger.info(f"Module {self.name} --> IDLE")
+                self.logger.info(f"Module {self.name} --> IDLE")
                 break
 
             if hasattr(self, "_stopped"):
@@ -657,7 +853,7 @@ class SECoPReadableDevice(SECoPDevice, Triggerable, Subscribable):
             # Error State or DISABLED
             if hasattr(self, "_success"):
                 if stat_code >= ERROR or stat_code < IDLE:
-                    # self.logger.error(f"Module {self.name} --> ERROR/DISABLED")
+                    self.logger.error(f"Module {self.name} --> ERROR/DISABLED")
                     self._success = False
                     break
 
@@ -679,7 +875,7 @@ class SECoPReadableDevice(SECoPDevice, Triggerable, Subscribable):
         yield from bps.wait_for([switch_from_status_factory])
 
     def trigger(self) -> AsyncStatus:
-        # self.logger.info(f"Triggering {self.name}: read fresh data from device")
+        self.logger.info(f"Triggering {self.name}: read fresh data from device")
         # get fresh reading of the value Parameter from the SEC Node
         return AsyncStatus(
             awaitable=self._client.get_parameter(self.module, "value", trycache=False)
@@ -705,6 +901,8 @@ class SECoPTriggerableDevice(SECoPReadableDevice, Stoppable):
         sri: str = "",  # SECoP resource identifier host:port:optional[module]
         name: str = "",
         connector: SECoPDeviceConnector | None = None,
+        loglevel=logging.INFO,
+        logdir: str | None = None,
     ):
         """Initialize SECoPTriggerableDevice
 
@@ -720,14 +918,16 @@ class SECoPTriggerableDevice(SECoPReadableDevice, Stoppable):
         self._success = True
         self._stopped = False
 
-        super().__init__(sri=sri, name=name, connector=connector)
+        super().__init__(
+            sri=sri, name=name, connector=connector, loglevel=loglevel, logdir=logdir
+        )
 
 
 class SECoPWritableDevice(SECoPReadableDevice):
     pass
 
 
-class SECoPMoveableDevice(SECoPWritableDevice, Locatable, Stoppable):
+class SECoPMoveableDevice(SECoPReadableDevice, Locatable, Stoppable):
     """
     Standard movable SECoP device, corresponding to a SECoP module with the
     interface class "Drivable"
@@ -738,6 +938,8 @@ class SECoPMoveableDevice(SECoPWritableDevice, Locatable, Stoppable):
         sri: str = "",  # SECoP resource identifier host:port:optional[module]
         name: str = "",
         connector: SECoPDeviceConnector | None = None,
+        loglevel=logging.INFO,
+        logdir: str | None = None,
     ):
         """Initialize SECoPMovableDevice
 
@@ -750,7 +952,9 @@ class SECoPMoveableDevice(SECoPWritableDevice, Locatable, Stoppable):
 
         self.target: SignalRW
 
-        super().__init__(sri=sri, name=name, connector=connector)
+        super().__init__(
+            sri=sri, name=name, connector=connector, loglevel=loglevel, logdir=logdir
+        )
 
         self._success = True
         self._stopped = False
@@ -783,7 +987,7 @@ class SECoPMoveableDevice(SECoPWritableDevice, Locatable, Stoppable):
         self._stopped = False
 
         await self.target.set(new_target, wait=False)
-        # self.logger.info(f"Moving {self.name} to {new_target}")
+        self.logger.info(f"Moving {self.name} to {new_target}")
 
         # force reading of status from device
         await self.status.read(False)
@@ -797,13 +1001,13 @@ class SECoPMoveableDevice(SECoPWritableDevice, Locatable, Stoppable):
 
             # Error State or DISABLED
             if stat_code >= ERROR or stat_code < IDLE:
-                # self.logger.error(f"Module {self.name} --> ERROR/DISABLED")
+                self.logger.error(f"Module {self.name} --> ERROR/DISABLED")
                 self._success = False
                 break
 
             # Module is in IDLE/WARN state
             if IDLE <= stat_code < BUSY:
-                # self.logger.info(f"Reached Target Module {self.name} --> IDLE")
+                self.logger.info(f"Reached Target Module {self.name} --> IDLE")
                 break
 
             # TODO other status transitions
@@ -823,7 +1027,7 @@ class SECoPMoveableDevice(SECoPWritableDevice, Locatable, Stoppable):
         self._success = success
 
         if not success:
-            # self.logger.info(f"Stopping {self.name} success={success}")
+            self.logger.info(f"Stopping {self.name} success={success}")
             await self._client.exec_command(self.module, "stop")
             self._stopped = True
 
@@ -838,6 +1042,18 @@ class SECoPMoveableDevice(SECoPWritableDevice, Locatable, Stoppable):
             "readback": readback.value,
         }
         return location
+
+    async def _assign_interface_formats(self):
+        await super()._assign_interface_formats()
+
+        if format_assigned(self, self.target):
+            if not is_read_signal(self, self.target):
+                warnings.warn(
+                    f"Signal 'target' of device {self.name} has format assigned "
+                    + "that is not compatible with Movable interface class"
+                )
+        else:
+            self.add_readables([self.target], StandardReadableFormat.HINTED_SIGNAL)
 
 
 def class_from_interface(mod_properties: dict):

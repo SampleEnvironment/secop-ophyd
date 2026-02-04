@@ -15,7 +15,9 @@ async def test_node_structure(cryo_sim, cryo_node_no_re: SECoPNodeDevice):
 
 async def test_node_read(cryo_sim, cryo_node_no_re: SECoPNodeDevice):
     # Node device should return the readbacks of the read signals of the child devices
+
     val_read = await cryo_node_no_re.read()
+    print(val_read)
     assert val_read != {}
 
 

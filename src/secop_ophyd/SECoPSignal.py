@@ -223,6 +223,12 @@ class SECoPXBackend(SignalBackend):
 class SECoPParamBackend(SignalBackend[SignalDatatypeT]):
     """Standard backend for a Signal that represents SECoP Parameter"""
 
+    format: StandardReadableFormat
+    _module_name: str
+    _parameter_name: str
+    _secclient: AsyncFrappyClient
+    path_str: str
+
     def __init__(
         self,
         datatype: type[SignalDatatypeT] | None,
@@ -233,11 +239,11 @@ class SECoPParamBackend(SignalBackend[SignalDatatypeT]):
         if path and secclient:
             module_name, parameter_name = path.split(":", maxsplit=1)
 
-            self._module_name: str = module_name
-            self._parameter_name: str = parameter_name
-            self._secclient: AsyncFrappyClient = secclient
+            self._module_name = module_name
+            self._parameter_name = parameter_name
+            self._secclient = secclient
 
-            self.path_str: str = path
+            self.path_str = path
 
         super().__init__(datatype)
 
@@ -249,11 +255,11 @@ class SECoPParamBackend(SignalBackend[SignalDatatypeT]):
     ):
         module_name, parameter_name = path.split(":", maxsplit=1)
 
-        self._module_name: str = module_name
-        self._parameter_name: str = parameter_name
-        self._secclient: AsyncFrappyClient = secclient
+        self._module_name = module_name
+        self._parameter_name = parameter_name
+        self._secclient = secclient
 
-        self.path_str: str = path
+        self.path_str = path
 
         self.datatype = datatype
 
