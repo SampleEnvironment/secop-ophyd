@@ -8,6 +8,7 @@ import sys
 from dataclasses import dataclass, field
 from importlib import import_module, reload
 from inspect import Signature
+from logging import Logger
 from pathlib import Path
 from types import ModuleType
 
@@ -137,7 +138,7 @@ class GenNodeCode:
             path: Optional path to the module folder
             log: Optional logger instance
         """
-        self.log = log
+        self.log: Logger | None = log
         self.module_folder_path: Path | None = None
         if path is not None:
             self.module_folder_path = Path(path)

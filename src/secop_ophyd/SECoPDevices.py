@@ -4,6 +4,7 @@ import re
 import time as ttime
 import warnings
 from abc import abstractmethod
+from dataclasses import dataclass
 from logging import Logger
 from types import MethodType
 from typing import Any, Dict, Iterator, Optional, Type
@@ -52,9 +53,9 @@ from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient
 from secop_ophyd.logs import setup_logging
 from secop_ophyd.propertykeys import DATAINFO, EQUIPMENT_ID, INTERFACE_CLASSES
 from secop_ophyd.SECoPSignal import (
+    AttributeType,
     LocalBackend,
-    PropertyBackend,
-    SECoPParamBackend,
+    SECoPBackend,
     SECoPXBackend,
 )
 from secop_ophyd.util import Path
@@ -136,6 +137,36 @@ def is_config_signal(device: StandardReadable, signal: SignalR | SignalRW) -> bo
     return False
 
 
+@dataclass
+class ParamPath:
+    """Annotation for Parameter Signals, defines the path to the parameter
+    in the secclient module dict"""
+
+    module: str
+    param: str
+
+    def __repr__(self) -> str:
+        """Return repr suitable for code generation in annotations."""
+        return f'ParamPath("{self.module}", "{self.param}")'
+
+
+@dataclass
+class PropPath:
+    """Annotation for Module Property Signals, defines the path to the property"""
+
+    key: str
+
+    # if module is None, property is assumed to be at node level,
+    # otherwise at module level
+    module: str | None = None
+
+    def __repr__(self) -> str:
+        """Return repr suitable for code generation in annotations."""
+        if self.module is None:
+            return f'PropPath("{self.key}")'
+        return f'PropPath("{self.key}", module="{self.module}")'
+
+
 class SECoPDeviceConnector(DeviceConnector):
 
     sri: str
@@ -181,7 +212,7 @@ class SECoPDeviceConnector(DeviceConnector):
         if not hasattr(self, "filler"):
             self.filler = DeviceFiller(
                 device=device,
-                signal_backend_factory=SECoPParamBackend,
+                signal_backend_factory=SECoPBackend,
                 device_connector_factory=lambda: SECoPDeviceConnector(
                     self.sri, self._auto_fill_signals, self.loglevel, self.logdir
                 ),
@@ -229,7 +260,7 @@ class SECoPDeviceConnector(DeviceConnector):
                     from secop_ophyd.GenNodeCode import get_type_param
 
                     datatype = get_type_param(parameters[param_name]["datatype"])
-                    backend.init_from_introspection(
+                    backend.init_parameter_from_introspection(
                         datatype=datatype,
                         path=self.module + ":" + param_name,
                         secclient=self.client,
@@ -509,8 +540,11 @@ class SECoPDevice(StandardReadable):
                     if property in IGNORED_PROPS:
                         continue
 
-                    propb = PropertyBackend(
-                        property, module_desc["properties"], self._client
+                    propb = SECoPBackend(
+                        datatype=None,
+                        path=self.module + ":" + property,
+                        secclient=self._client,
+                        attribute_type=AttributeType.PROPERTY,
                     )
 
                     setattr(self, property, SignalR(backend=propb))
@@ -541,13 +575,16 @@ class SECoPDevice(StandardReadable):
                 setattr(self, command, MethodType(cmd_plan, self))
 
         else:
-            # Signals for module properties
+            # Signals for Node properties
             with self.add_children_as_readables(
                 format=StandardReadableFormat.CONFIG_SIGNAL
             ):
                 for property in self._client.properties:
-                    propb = PropertyBackend(
-                        property, self._client.properties, self._client
+                    propb = SECoPBackend(
+                        datatype=None,
+                        path=property,
+                        secclient=self._client,
+                        attribute_type=AttributeType.PROPERTY,
                     )
                     setattr(self, property, SignalR(backend=propb))
 
@@ -656,7 +693,7 @@ class SECoPDevice(StandardReadable):
                 continue
 
             backend = child._connector.backend
-            if not isinstance(backend, SECoPParamBackend):
+            if not isinstance(backend, SECoPBackend):
                 continue
 
             # child is a Signal with SECoPParamBackend
@@ -742,6 +779,18 @@ class SECoPNodeDevice(SECoPDevice):
     async def _assign_interface_formats(self):
         # Node device has no specific interface class formats
         pass
+
+    def class_from_instance(self, path_to_module: str | None = None):
+        from secop_ophyd.GenNodeCode import GenNodeCode
+
+        description = self._client.client.request("describe")[2]
+
+        # parse genClass file if already present
+        genCode = GenNodeCode(path=path_to_module, log=self.logger)
+
+        genCode.from_json_describe(description)
+
+        genCode.write_gen_node_class_file()
 
 
 class SECoPCommunicatorDevice(SECoPDevice):
