@@ -18,9 +18,12 @@ from frappy.client import get_datatype
 from frappy.datatypes import DataType
 from jinja2 import Environment, PackageLoader, select_autoescape
 from ophyd_async.core import SignalR, SignalRW
+from ophyd_async.core import StandardReadableFormat as Format
 
 from secop_ophyd.SECoPDevices import (
     IGNORED_PROPS,
+    ParamPath,
+    PropPath,
     class_from_interface,
     secop_enum_name_to_python,
 )
@@ -67,6 +70,10 @@ class Attribute:
     category: str = (
         "parameter"  # "property" or "parameter" - for organizing generated code
     )
+    path_annotation: str | None = (
+        None  # Annotation like ParamPath(...) or PropPath(...)
+    )
+    format_annotation: str | None = None  # StandardReadableFormat.CONFIG_SIGNAL, etc.
 
 
 class Method:
@@ -151,12 +158,17 @@ class GenNodeCode:
 
         # Required imports for abstract classes
         self.add_import("abc", "abstractmethod")
+        self.add_import("typing", "Annotated as A")
         self.add_import("ophyd_async.core", "SignalR")
         self.add_import("ophyd_async.core", "SignalRW")
+        self.add_import("ophyd_async.core", "SignalX")
+        self.add_import("ophyd_async.core", "StandardReadableFormat as Format")
         self.add_import("ophyd_async.core", "StrictEnum")
         self.add_import("ophyd_async.core", "SupersetEnum")
         self.add_import("typing", "Any")
         self.add_import("numpy")
+        self.add_import("secop_ophyd.SECoPDevices", "ParamPath")
+        self.add_import("secop_ophyd.SECoPDevices", "PropPath")
 
         # Setup Jinja2 environment
         self.jinja_env = Environment(
@@ -465,7 +477,7 @@ class GenNodeCode:
         self,
         module_cls: str,
         bases: list[str],
-        attrs: list[tuple[str, str, str | None, str | None, str]],
+        attrs: list[tuple[str, str, str | None, str | None, str, str, str | None]],
         cmd_plans: list[Method],
         description: str = "",
         enum_classes: list[EnumClass] | None = None,
@@ -496,9 +508,11 @@ class GenNodeCode:
 
         attributes = []
         for attr in attrs:
-            type_param = attr[2] if attr[2] else None
+            type_param = attr[2] if len(attr) > 2 and attr[2] else None
             descr = attr[3] if len(attr) > 3 else None
             category = attr[4] if len(attr) > 4 else "parameter"
+            path_annotation = attr[5] if len(attr) > 5 else None
+            format_annotation = attr[6] if len(attr) > 6 else None
 
             attributes.append(
                 Attribute(
@@ -507,6 +521,8 @@ class GenNodeCode:
                     type_param=type_param,
                     description=descr,
                     category=category,
+                    path_annotation=path_annotation,
+                    format_annotation=format_annotation,
                 )
             )
 
@@ -524,7 +540,7 @@ class GenNodeCode:
         self,
         node_cls: str,
         bases: list[str],
-        attrs: list[tuple[str, str, str | None, str | None, str]],
+        attrs: list[tuple[str, str, str | None, None, str, str | None]],
         description: str = "",
     ):
         """Add a node class to be generated.
@@ -556,6 +572,8 @@ class GenNodeCode:
             type_param = str(attr[2]) if len(attr) > 2 and attr[2] else None
             descr = str(attr[3]) if len(attr) > 3 and attr[3] else None
             category = str(attr[4]) if len(attr) > 4 and attr[4] else "property"
+            path_annotation = str(attr[5]) if len(attr) > 5 and attr[5] else None
+            format_annotation = str(attr[6]) if len(attr) > 6 and attr[6] else None
             attributes.append(
                 Attribute(
                     name=name,
@@ -563,6 +581,8 @@ class GenNodeCode:
                     type_param=type_param,
                     description=descr,
                     category=category,
+                    path_annotation=path_annotation,
+                    format_annotation=format_annotation,
                 )
             )
 
@@ -613,7 +633,7 @@ class GenNodeCode:
         node_properties = {k: v for k, v in describe_data.items() if k != "modules"}
 
         # Parse modules
-        node_attrs: list[tuple[str, str, str | None, str | None, str]] = []
+        node_attrs: list[tuple[str, str, str | None, None, str, str | None]] = []
         for modname, moddescr in modules.items():
             #  separate accessibles into command and parameters
             parameters = {}
@@ -687,8 +707,9 @@ class GenNodeCode:
 
                 command_plans.append(plan)
 
-            # Module parameters
-            mod_params: list[tuple[str, str, str | None, str | None, str]] = []
+            mod_params: list[
+                tuple[str, str, str | None, str | None, str, str, str | None]
+            ] = []
 
             for param_name, param_data in parameters.items():
 
@@ -697,6 +718,29 @@ class GenNodeCode:
 
                 param_descr = f"{descr}; Unit: ({unit})" if unit else descr
                 signal_base = SignalR if param_data["readonly"] else SignalRW
+
+                format = None
+
+                # infer format from parameter property
+                match param_data.get("_signal_format", None):
+                    case "HINTED_SIGNAL":
+                        format = Format.HINTED_SIGNAL
+                    case "HINTED_UNCACHED_SIGNAL":
+                        format = Format.HINTED_UNCACHED_SIGNAL
+                    case "UNCACHED_SIGNAL":
+                        format = Format.UNCACHED_SIGNAL
+                    case _:
+                        format = None
+
+                # depending on the Interface class other parameter need to be declared
+                # as readsignals as well
+                if param_name in secop_ophyd_modclass.hinted_signals:
+                    format = format or Format.HINTED_SIGNAL
+
+                # Remove "StandardReadable" prefix from format for cleaner annotation
+                format = (
+                    str(format).removeprefix("StandardReadable") if format else None
+                )
 
                 datainfo = param_data.get("datainfo", {})
 
@@ -740,6 +784,8 @@ class GenNodeCode:
                         # StrictEnum
                         type_param = enum_class_name
 
+                # Default format for parameters is CONFIG_SIGNAL
+
                 mod_params.append(
                     (
                         param_name,
@@ -747,11 +793,15 @@ class GenNodeCode:
                         type_param,
                         param_descr,
                         "parameter",
+                        str(ParamPath(f"{modname}:{param_name}")),
+                        format,
                     )
                 )
 
             # Module properties
-            mod_props: list[tuple[str, str, str | None, str | None, str]] = []
+            mod_props: list[
+                tuple[str, str, str | None, str | None, str, str, str | None]
+            ] = []
 
             # Process module properties
             for prop_name, property_value in properties.items():
@@ -768,6 +818,8 @@ class GenNodeCode:
                         type_param,
                         None,
                         "property",
+                        str(PropPath(f"{modname}:{prop_name}")),
+                        None,
                     )
                 )
 
@@ -783,14 +835,23 @@ class GenNodeCode:
             # Add to node attributes
             # Type the None explicitly as str | None to match other entries
 
-            node_attrs.append((modname, module_class, None, None, "module"))
+            node_attrs.append((modname, module_class, None, None, "module", None))
 
         # Process module properties
         for prop_name, property_value in node_properties.items():
             type_param = get_type_param(secop_dtype_obj_from_json(property_value))
 
+            # Generate PropPath annotation for node-level properties
+
             node_attrs.append(
-                (str(prop_name), str(SignalR.__name__), type_param, None, "property")
+                (
+                    str(prop_name),
+                    str(SignalR.__name__),
+                    type_param,
+                    None,
+                    "property",
+                    str(PropPath(prop_name)),
+                )
             )
 
         # Add node class
@@ -853,7 +914,7 @@ class GenNodeCode:
 
         # Format with Black
         try:
-            code = black.format_str(code, mode=black.Mode())
+            code = black.format_str(code, mode=black.Mode(line_length=200))
         except Exception as e:
             if self.log:
                 self.log.warning(f"Black formatting failed: {e}")
@@ -962,3 +1023,8 @@ def get_type_param(secop_dtype: DataType) -> str | None:
         return sig_type.__name__
 
     return f"{module}.{sig_type.__name__}"
+
+
+def get_type_prop(prop_value) -> str | None:
+    secop_dtype: DataType = secop_dtype_obj_from_json(prop_value)
+    return get_type_param(secop_dtype)

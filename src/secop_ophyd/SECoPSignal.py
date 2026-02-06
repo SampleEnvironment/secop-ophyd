@@ -330,15 +330,16 @@ class SECoPBackend(SignalBackend[SignalDatatypeT]):
         """Initialize as a parameter signal."""
         self._param_description: dict = self._get_param_desc()
 
-        match self._param_description.get("_signal_format", None):
-            case "HINTED_SIGNAL":
-                self.format = StandardReadableFormat.HINTED_SIGNAL
-            case "HINTED_UNCACHED_SIGNAL":
-                self.format = StandardReadableFormat.HINTED_UNCACHED_SIGNAL
-            case "UNCACHED_SIGNAL":
-                self.format = StandardReadableFormat.UNCACHED_SIGNAL
-            case _:
-                self.format = StandardReadableFormat.CONFIG_SIGNAL
+        if not hasattr(self, "format"):
+            match self._param_description.get("_signal_format", None):
+                case "HINTED_SIGNAL":
+                    self.format = StandardReadableFormat.HINTED_SIGNAL
+                case "HINTED_UNCACHED_SIGNAL":
+                    self.format = StandardReadableFormat.HINTED_UNCACHED_SIGNAL
+                case "UNCACHED_SIGNAL":
+                    self.format = StandardReadableFormat.UNCACHED_SIGNAL
+                case _:
+                    self.format = StandardReadableFormat.CONFIG_SIGNAL
 
         # Root datainfo or memberinfo for nested datatypes
         self.datainfo: dict = self._param_description["datainfo"]

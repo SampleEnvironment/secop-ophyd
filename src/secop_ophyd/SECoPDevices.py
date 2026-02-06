@@ -137,34 +137,52 @@ def is_config_signal(device: StandardReadable, signal: SignalR | SignalRW) -> bo
     return False
 
 
-@dataclass
+@dataclass(init=False)
 class ParamPath:
     """Annotation for Parameter Signals, defines the path to the parameter
     in the secclient module dict"""
 
     module: str
-    param: str
+    parameter: str
+
+    def __init__(self, param_path: str) -> None:
+        # Parse from delimited string
+        parts = param_path.split(":")
+        if len(parts) != 2:
+            raise ValueError(f"Expected 'module:param', got '{param_path}'")
+        self.module = parts[0].strip()
+        self.parameter = parts[1].strip()
 
     def __repr__(self) -> str:
         """Return repr suitable for code generation in annotations."""
-        return f'ParamPath("{self.module}", "{self.param}")'
+        return f'ParamPath("{self.module}:{self.parameter}")'
 
 
-@dataclass
+@dataclass(init=False)
 class PropPath:
     """Annotation for Module Property Signals, defines the path to the property"""
 
-    key: str
+    property: str
 
     # if module is None, property is assumed to be at node level,
     # otherwise at module level
     module: str | None = None
 
+    def __init__(self, property_path: str) -> None:
+        # Parse from delimited string
+        parts = property_path.split(":")
+        if len(parts) == 2:
+            self.module = parts[0].strip()
+            self.property = parts[1].strip()
+        else:
+            self.property = property_path.strip()
+            self.module = None  # --> node level property
+
     def __repr__(self) -> str:
         """Return repr suitable for code generation in annotations."""
         if self.module is None:
-            return f'PropPath("{self.key}")'
-        return f'PropPath("{self.key}", module="{self.module}")'
+            return f'PropPath("{self.property}")'
+        return f'PropPath("{self.module}:{self.property}")'
 
 
 class SECoPDeviceConnector(DeviceConnector):
@@ -217,10 +235,46 @@ class SECoPDeviceConnector(DeviceConnector):
                     self.sri, self._auto_fill_signals, self.loglevel, self.logdir
                 ),
             )
-            list(self.filler.create_devices_from_annotations(filled=False))
-            list(self.filler.create_signals_from_annotations(filled=False))
 
-            self.filler.check_created()
+        for backend, annotations in self.filler.create_signals_from_annotations():
+            self.fill_backend_with_path(backend, annotations)
+
+        list(self.filler.create_devices_from_annotations(filled=False))
+
+        self.filler.check_created()
+
+    def fill_backend_with_path(self, backend: SECoPBackend, annotations: list[Any]):
+        unhandled = []
+        while annotations:
+            annotation = annotations.pop(0)
+
+            if isinstance(annotation, StandardReadableFormat):
+                backend.format = annotation
+
+            elif isinstance(annotation, ParamPath):
+                backend.attribute_type = AttributeType.PARAMETER
+
+                backend._module_name = annotation.module
+                backend._attribute_name = annotation.parameter
+                backend._secclient = self.client
+                backend.path_str = annotation.module + ":" + annotation.parameter
+
+            elif isinstance(annotation, PropPath):
+                backend.attribute_type = AttributeType.PROPERTY
+
+                backend._module_name = annotation.module
+                backend._attribute_name = annotation.property
+                backend._secclient = self.client
+
+                if annotation.module:
+                    backend.path_str = annotation.module + ":" + annotation.property
+                else:
+                    backend.path_str = annotation.property
+            else:
+                unhandled.append(annotation)
+
+        annotations.extend(unhandled)
+        # These leftover annotations will now be handled by the iterator
 
     async def connect_mock(self, device: Device, mock: LazyMock):
         # Make 2 entries for each DeviceVector
@@ -236,38 +290,69 @@ class SECoPDeviceConnector(DeviceConnector):
         # Establish connection to SEC Node
         await self.client.connect(3)
 
-        # Module Device: fill Parameters (commands are done via annotated plans)
+        # Module Device: fill Parameters & Pproperties
+        # (commands are done via annotated plans)
         if self.module:
-            parameters = self.client.modules[self.module]["parameters"]
+
+            # Fill Parmeters
+            parameter_dict = self.client.modules[self.module]["parameters"]
             # remove ignored signals
-            children = [
+            parameters = [
                 child
-                for child in parameters.keys()
+                for child in parameter_dict.keys()
                 if child not in self.filler.ignored_signals
             ]
 
             # Dertermine children that are declared but not yet filled
             not_filled = {unfilled for unfilled, _ in device.children()}
 
-            for param_name in children:
+            for param_name in parameters:
                 if self._auto_fill_signals or param_name in not_filled:
                     signal_type = (
-                        SignalR if parameters[param_name]["readonly"] else SignalRW
+                        SignalR if parameter_dict[param_name]["readonly"] else SignalRW
                     )
 
                     backend = self.filler.fill_child_signal(param_name, signal_type)
 
                     from secop_ophyd.GenNodeCode import get_type_param
 
-                    datatype = get_type_param(parameters[param_name]["datatype"])
+                    datatype = get_type_param(parameter_dict[param_name]["datatype"])
                     backend.init_parameter_from_introspection(
                         datatype=datatype,
                         path=self.module + ":" + param_name,
                         secclient=self.client,
                     )
 
+            # Fill Properties
+            module_property_dict = self.client.modules[self.module]["properties"]
+
+            # remove ignored signals
+            module_properties = [
+                child
+                for child in module_property_dict.keys()
+                if child not in self.filler.ignored_signals
+            ]
+
+            for mod_property_name in module_properties:
+                if self._auto_fill_signals or mod_property_name in not_filled:
+
+                    # properties are always read only
+                    backend = self.filler.fill_child_signal(mod_property_name, SignalR)
+
+                    from secop_ophyd.GenNodeCode import get_type_prop
+
+                    datatype = get_type_prop(module_property_dict[mod_property_name])
+
+                    backend.init_property_from_introspection(
+                        datatype=datatype,
+                        path=self.module + ":" + mod_property_name,
+                        secclient=self.client,
+                    )
+
         # Node Device: fill child devices (modules)
         else:
+
+            # Fill Module devices
             modules = self.client.modules
 
             not_filled = {unfilled for unfilled, _ in device.children()}
@@ -281,6 +366,32 @@ class SECoPDeviceConnector(DeviceConnector):
 
                     mod_dev: SECoPDevice = getattr(device, module_name)
                     mod_dev.set_module(module_name)
+
+            # Fill Node properties
+            node_property_dict = self.client.properties
+
+            # remove ignored signals
+            node_properties = [
+                child
+                for child in node_property_dict.keys()
+                if child not in self.filler.ignored_signals
+            ]
+
+            for node_property_name in node_properties:
+                if self._auto_fill_signals or node_property_name in not_filled:
+
+                    # properties are always read only
+                    backend = self.filler.fill_child_signal(node_property_name, SignalR)
+
+                    from secop_ophyd.GenNodeCode import get_type_prop
+
+                    datatype = get_type_prop(node_property_dict[node_property_name])
+
+                    backend.init_property_from_introspection(
+                        datatype=datatype,
+                        path=node_property_name,
+                        secclient=self.client,
+                    )
 
         self.filler.check_filled(f"{self.node_id}")
 
@@ -460,6 +571,8 @@ class SECoPDevice(StandardReadable):
     param_devices: Dict[str, Any]
     logger: Logger
 
+    hinted_signals: list[str] = []
+
     def __init__(
         self,
         sri: str = "",  # SECoP resource identifier host:port:optional[module]
@@ -527,31 +640,8 @@ class SECoPDevice(StandardReadable):
         if self.module:
             module_desc = self._client.modules[self.module]
 
-            # Add Signals for Module Properties
-            with self.add_children_as_readables(
-                format=StandardReadableFormat.CONFIG_SIGNAL
-            ):
-                # generate Signals from Module Properties
-                for property in module_desc["properties"]:
-
-                    if property == "implementation":
-                        self.impl = module_desc["properties"]["implementation"]
-
-                    if property in IGNORED_PROPS:
-                        continue
-
-                    propb = SECoPBackend(
-                        datatype=None,
-                        path=self.module + ":" + property,
-                        secclient=self._client,
-                        attribute_type=AttributeType.PROPERTY,
-                    )
-
-                    setattr(self, property, SignalR(backend=propb))
-                    self.mod_prop_devices[property] = getattr(self, property)
-
             # Initialize Command Devices
-            for command, properties in module_desc["commands"].items():
+            for command, _ in module_desc["commands"].items():
                 # generate new root path
                 cmd_path = Path(parameter_name=command, module_name=self.module)
                 cmd_dev_name = command + "_CMD"
@@ -573,20 +663,6 @@ class SECoPDevice(StandardReadable):
                 )
 
                 setattr(self, command, MethodType(cmd_plan, self))
-
-        else:
-            # Signals for Node properties
-            with self.add_children_as_readables(
-                format=StandardReadableFormat.CONFIG_SIGNAL
-            ):
-                for property in self._client.properties:
-                    propb = SECoPBackend(
-                        datatype=None,
-                        path=property,
-                        secclient=self._client,
-                        attribute_type=AttributeType.PROPERTY,
-                    )
-                    setattr(self, property, SignalR(backend=propb))
 
         await super().connect(mock, timeout, force_reconnect)
 
@@ -730,6 +806,9 @@ class SECoPDevice(StandardReadable):
 
 
 class SECoPNodeDevice(SECoPDevice):
+
+    hinted_signals: list[str] = []
+
     def __init__(
         self,
         sec_node_uri: str = "",  # SECoP resource identifier host:port:optional[module]
@@ -794,6 +873,9 @@ class SECoPNodeDevice(SECoPDevice):
 
 
 class SECoPCommunicatorDevice(SECoPDevice):
+
+    hinted_signals: list[str] = []
+
     def __init__(
         self,
         sri: str = "",  # SECoP resource identifier host:port:optional[module]
@@ -816,6 +898,8 @@ class SECoPReadableDevice(SECoPDevice, Triggerable, Subscribable):
     Standard readable SECoP device, corresponding to a SECoP module with the
     interface class "Readable"
     """
+
+    hinted_signals: list[str] = ["value"]
 
     def __init__(
         self,
@@ -945,6 +1029,8 @@ class SECoPTriggerableDevice(SECoPReadableDevice, Stoppable):
     interface class "Triggerable"
     """
 
+    hinted_signals: list[str] = ["value"]
+
     def __init__(
         self,
         sri: str = "",  # SECoP resource identifier host:port:optional[module]
@@ -973,6 +1059,8 @@ class SECoPTriggerableDevice(SECoPReadableDevice, Stoppable):
 
 
 class SECoPWritableDevice(SECoPReadableDevice):
+    hinted_signals: list[str] = ["target", "value"]
+
     pass
 
 
@@ -981,6 +1069,8 @@ class SECoPMoveableDevice(SECoPReadableDevice, Locatable, Stoppable):
     Standard movable SECoP device, corresponding to a SECoP module with the
     interface class "Drivable"
     """
+
+    hinted_signals: list[str] = ["target", "value"]
 
     def __init__(
         self,

@@ -32,8 +32,13 @@ class {{ module_cls.name }}({{ module_cls.bases | join(', ') }}):
 
     # Module Properties
 {%- for attr in properties %}
-    {{ attr.name }}: {{ attr.type }}
-{%- if attr.type_param %}[{{ attr.type_param }}]{% endif %}
+{%- if attr.path_annotation and attr.format_annotation %}
+    {{ attr.name }}: A[{{ attr.type }}{% if attr.type_param %}[{{ attr.type_param }}]{% endif %}, {{ attr.path_annotation }}, {{ attr.format_annotation }}]
+{%- elif attr.path_annotation %}
+    {{ attr.name }}: A[{{ attr.type }}{% if attr.type_param %}[{{ attr.type_param }}]{% endif %}, {{ attr.path_annotation }}]
+{%- else %}
+    {{ attr.name }}: {{ attr.type }}{% if attr.type_param %}[{{ attr.type_param }}]{% endif %}
+{%- endif %}
 {%- if attr.description %}  # {{ attr.description }}{% endif %}
 {%- endfor %}
 {%- endif %}
@@ -41,8 +46,13 @@ class {{ module_cls.name }}({{ module_cls.bases | join(', ') }}):
 
     # Module Parameters
 {%- for attr in parameters %}
-    {{ attr.name }}: {{ attr.type }}
-{%- if attr.type_param %}[{{ attr.type_param }}]{% endif %}
+{%- if attr.path_annotation and attr.format_annotation %}
+    {{ attr.name }}: A[{{ attr.type }}{% if attr.type_param %}[{{ attr.type_param }}]{% endif %}, {{ attr.path_annotation }}, {{ attr.format_annotation }}]
+{%- elif attr.path_annotation %}
+    {{ attr.name }}: A[{{ attr.type }}{% if attr.type_param %}[{{ attr.type_param }}]{% endif %}, {{ attr.path_annotation }}]
+{%- else %}
+    {{ attr.name }}: {{ attr.type }}{% if attr.type_param %}[{{ attr.type_param }}]{% endif %}
+{%- endif %}
 {%- if attr.description %}  # {{ attr.description }}{% endif %}
 {%- endfor %}
 {%- endif %}
@@ -69,8 +79,7 @@ class {{ node_cls.name }}({{ node_cls.bases | join(', ') }}):
 
     # Module Devices
 {%- for attr in modules %}
-    {{ attr.name }}: {{ attr.type }}
-{%- if attr.type_param %}[{{ attr.type_param }}]{% endif %}
+    {{ attr.name }}: {{ attr.type }}{% if attr.type_param %}[{{ attr.type_param }}]{% endif %}
 {%- if attr.description %}  # {{ attr.description }}{% endif %}
 {%- endfor %}
 {%- endif %}
@@ -78,8 +87,13 @@ class {{ node_cls.name }}({{ node_cls.bases | join(', ') }}):
 
     # Node Properties
 {%- for attr in properties %}
-    {{ attr.name }}: {{ attr.type }}
-{%- if attr.type_param %}[{{ attr.type_param }}]{% endif %}
+{%- if attr.path_annotation and attr.format_annotation %}
+    {{ attr.name }}: A[{{ attr.type }}{% if attr.type_param %}[{{ attr.type_param }}]{% endif %}, {{ attr.path_annotation }}, {{ attr.format_annotation }}]
+{%- elif attr.path_annotation %}
+    {{ attr.name }}: A[{{ attr.type }}{% if attr.type_param %}[{{ attr.type_param }}]{% endif %}, {{ attr.path_annotation }}]
+{%- else %}
+    {{ attr.name }}: {{ attr.type }}{% if attr.type_param %}[{{ attr.type_param }}]{% endif %}
+{%- endif %}
 {%- if attr.description %}  # {{ attr.description }}{% endif %}
 {%- endfor %}
 {%- endif %}

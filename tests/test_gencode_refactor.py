@@ -3,6 +3,8 @@
 import sys
 from pathlib import Path
 
+from ophyd_async.core import init_devices
+
 from secop_ophyd.GenNodeCode import (
     Attribute,
     GenNodeCode,
@@ -45,9 +47,17 @@ def test_basic_functionality(clean_generated_file):
         module_cls="TestModule",
         bases=["Device"],
         attrs=[
-            ("temperature", "SignalR", "float", None, "parameter"),
-            ("pressure", "SignalR", "float", None, "parameter"),
-            ("count", "SignalRW", "int", None, "parameter"),
+            (
+                "temperature",
+                "SignalR",
+                "float",
+                None,
+                "parameter",
+                "test:temperature",
+                None,
+            ),
+            ("pressure", "SignalR", "float", None, "parameter", "test:pressure", None),
+            ("count", "SignalRW", "int", None, "parameter", "test:count", None),
         ],
         cmd_plans=[method],
         description="Test module class",
@@ -58,8 +68,8 @@ def test_basic_functionality(clean_generated_file):
         node_cls="TestNode",
         bases=["Device"],
         attrs=[
-            ("module1", "TestModule", None, None, "module"),
-            ("status", "SignalR", "str", None, "property"),
+            ("module1", "TestModule", None, None, "module", None),
+            ("status", "SignalR", "str", None, "property", "status"),
         ],
         description="Test node class",
     )
@@ -158,10 +168,42 @@ def test_subsequent_node_generation(clean_generated_file):
         module_cls="Type1",
         bases=["Device"],
         attrs=[
-            ("description", "SignalR", "str", None, "property"),
-            ("interface_classes", "SignalR", "list", None, "property"),
-            ("temperature", "SignalR", "float", None, "parameter"),
-            ("setpoint", "SignalRW", "float", None, "parameter"),
+            (
+                "description",
+                "SignalR",
+                "str",
+                None,
+                "property",
+                "type1:description",
+                None,
+            ),
+            (
+                "interface_classes",
+                "SignalR",
+                "list",
+                None,
+                "property",
+                "type1:interface_classes",
+                None,
+            ),
+            (
+                "temperature",
+                "SignalR",
+                "float",
+                None,
+                "parameter",
+                "type1:temperature",
+                None,
+            ),
+            (
+                "setpoint",
+                "SignalRW",
+                "float",
+                None,
+                "parameter",
+                "type1:setpoint",
+                None,
+            ),
         ],
         cmd_plans=[method_type1],
         description="Type1 module - shared between nodes",
@@ -172,9 +214,17 @@ def test_subsequent_node_generation(clean_generated_file):
         module_cls="Type2",
         bases=["Device"],
         attrs=[
-            ("implementation", "SignalR", "str", None, "property"),
-            ("pressure", "SignalR", "float", None, "parameter"),
-            ("mode", "SignalRW", "str", None, "parameter"),
+            (
+                "implementation",
+                "SignalR",
+                "str",
+                None,
+                "property",
+                "type2:implementation",
+                None,
+            ),
+            ("pressure", "SignalR", "float", None, "parameter", "type2:pressure", None),
+            ("mode", "SignalRW", "str", None, "parameter", "type2:mode", None),
         ],
         cmd_plans=[method_type2],
         description="Type2 module - only in nodeA",
@@ -185,9 +235,9 @@ def test_subsequent_node_generation(clean_generated_file):
         node_cls="NodeA",
         bases=["Device"],
         attrs=[
-            ("modA", "Type1", None, None, "module"),
-            ("modB", "Type2", None, None, "module"),
-            ("status", "SignalR", "str", None, "property"),
+            ("modA", "Type1", None, None, "module", None),
+            ("modB", "Type2", None, None, "module", None),
+            ("status", "SignalR", "str", None, "property", "status"),
         ],
         description="NodeA with Type1 and Type2 modules",
     )
@@ -231,10 +281,42 @@ def test_subsequent_node_generation(clean_generated_file):
         module_cls="Type1",
         bases=["Device"],
         attrs=[
-            ("description", "SignalR", "str", None, "property"),
-            ("interface_classes", "SignalR", "list", None, "property"),
-            ("temperature", "SignalR", "float", None, "parameter"),
-            ("setpoint", "SignalRW", "float", None, "parameter"),
+            (
+                "description",
+                "SignalR",
+                "str",
+                None,
+                "property",
+                "type1:description",
+                None,
+            ),
+            (
+                "interface_classes",
+                "SignalR",
+                "list",
+                None,
+                "property",
+                "type1:interface_classes",
+                None,
+            ),
+            (
+                "temperature",
+                "SignalR",
+                "float",
+                None,
+                "parameter",
+                "type1:temperature",
+                None,
+            ),
+            (
+                "setpoint",
+                "SignalRW",
+                "float",
+                None,
+                "parameter",
+                "type1:setpoint",
+                None,
+            ),
         ],
         cmd_plans=[method_type1],
         description="Type1 module - shared between nodes",
@@ -245,9 +327,9 @@ def test_subsequent_node_generation(clean_generated_file):
         module_cls="Type3",
         bases=["Device"],
         attrs=[
-            ("group", "SignalR", "str", None, "property"),
-            ("count", "SignalRW", "int", None, "parameter"),
-            ("enabled", "SignalR", "bool", None, "parameter"),
+            ("group", "SignalR", "str", None, "property", "type3:group", None),
+            ("count", "SignalRW", "int", None, "parameter", "type3:count", None),
+            ("enabled", "SignalR", "bool", None, "parameter", "type3:enabled", None),
         ],
         cmd_plans=[method_type3],
         description="Type3 module - only in nodeB",
@@ -258,9 +340,9 @@ def test_subsequent_node_generation(clean_generated_file):
         node_cls="NodeB",
         bases=["Device"],
         attrs=[
-            ("modA", "Type1", None, None, "module"),
-            ("modB", "Type3", None, None, "module"),
-            ("name", "SignalR", "str", None, "property"),
+            ("modA", "Type1", None, None, "module", None),
+            ("modB", "Type3", None, None, "module", None),
+            ("name", "SignalR", "str", None, "property", "name"),
         ],
         description="NodeB with Type1 and Type3 modules",
     )
@@ -301,12 +383,61 @@ def test_subsequent_node_generation(clean_generated_file):
     assert "# Module Parameters" in code2
 
 
-def test_gen_cryo_node(
+async def test_gen_cryo_node(
     clean_generated_file, cryo_sim, cryo_node_no_re: SECoPNodeDevice
 ):
     """Test generating code for a real SECoP node."""
 
     cryo_node_no_re.class_from_instance(clean_generated_file)
+
+    from tests.testgen.genNodeClass import Cryo_7_frappy_demo
+
+    async with init_devices():
+        cryo_gen_code = Cryo_7_frappy_demo(sec_node_uri="localhost:10769")
+
+    cryo_val = await cryo_gen_code.read()
+
+    # target and value shoule be present in readback, since they are read signals with
+    # HINTED Format --> this is tested to verify that the correct annotations are
+    # generated and interpreted in the generated code
+    val_name = cryo_gen_code.cryo.value.name
+    target_name = cryo_gen_code.cryo.target.name
+    read_val = cryo_val[val_name].get("value")
+    read_target = cryo_val[target_name].get("value")
+
+    print(cryo_val)
+
+    assert read_val is not None
+    assert read_val > 5
+
+    assert read_target is not None
+    assert read_target == 10
+
+
+async def test_gen_cryo_status_not_in_cfg(
+    clean_generated_file, cryo_sim, cryo_node_no_re: SECoPNodeDevice
+):
+    """Test that Status signal is not marked as configuration signal but is still
+    instantiated."""
+
+    cryo_node_no_re.class_from_instance(clean_generated_file)
+
+    cryo_cfg = await cryo_node_no_re.cryo.read_configuration()
+
+    stat_name = cryo_node_no_re.cryo.status.name
+
+    print(cryo_cfg[stat_name])
+
+    from tests.testgen.genNodeClass import Cryo_7_frappy_demo
+
+    async with init_devices():
+        cryo_gen_code = Cryo_7_frappy_demo(sec_node_uri="localhost:10769")
+
+    cryo_cfg = await cryo_gen_code.cryo.read_configuration()
+
+    stat_name = cryo_gen_code.cryo.status.name
+
+    print(cryo_cfg[stat_name])
 
 
 async def test_gen_real_node(

@@ -143,7 +143,17 @@ def test_same_class_different_instances():
     gen_code.add_mod_class(
         module_cls="Test_Enum",
         bases=["Device"],
-        attrs=[("gas_type", "SignalRW", "Test_EnumGas_typeEnum", None, "parameter")],
+        attrs=[
+            (
+                "gas_type",
+                "SignalRW",
+                "Test_EnumGas_typeEnum",
+                None,
+                "parameter",
+                "balh:gas_type",
+                None,
+            )
+        ],
         cmd_plans=[],
         enum_classes=[enum1],
     )
@@ -152,7 +162,17 @@ def test_same_class_different_instances():
     gen_code.add_mod_class(
         module_cls="Test_Enum",
         bases=["Device"],
-        attrs=[("gas_type", "SignalRW", "Test_EnumGas_typeEnum", None, "parameter")],
+        attrs=[
+            (
+                "gas_type",
+                "SignalRW",
+                "Test_EnumGas_typeEnum",
+                None,
+                "parameter",
+                "balh:gas_type",
+                None,
+            )
+        ],
         cmd_plans=[],
         enum_classes=[enum2],
     )
