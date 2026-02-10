@@ -3,7 +3,7 @@
 import sys
 from pathlib import Path
 
-from ophyd_async.core import init_devices
+from ophyd_async.core import SignalR, init_devices
 
 from secop_ophyd.GenNodeCode import (
     Attribute,
@@ -12,7 +12,7 @@ from secop_ophyd.GenNodeCode import (
     ModuleClass,
     NodeClass,
 )
-from secop_ophyd.SECoPDevices import SECoPNodeDevice
+from secop_ophyd.SECoPDevices import ParamPath, PropPath, SECoPNodeDevice
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
@@ -45,7 +45,7 @@ def test_basic_functionality(clean_generated_file):
     # Add a module class
     gen_code.add_mod_class(
         module_cls="TestModule",
-        bases=["Device"],
+        bases=["SECoPDevice"],
         attrs=[
             (
                 "temperature",
@@ -53,11 +53,27 @@ def test_basic_functionality(clean_generated_file):
                 "float",
                 None,
                 "parameter",
-                "test:temperature",
+                "ParamPath('test:temperature')",
                 None,
             ),
-            ("pressure", "SignalR", "float", None, "parameter", "test:pressure", None),
-            ("count", "SignalRW", "int", None, "parameter", "test:count", None),
+            (
+                "pressure",
+                "SignalR",
+                "float",
+                None,
+                "parameter",
+                "ParamPath('test:pressure')",
+                None,
+            ),
+            (
+                "count",
+                "SignalRW",
+                "int",
+                None,
+                "parameter",
+                "ParamPath('test:count')",
+                None,
+            ),
         ],
         cmd_plans=[method],
         description="Test module class",
@@ -66,10 +82,10 @@ def test_basic_functionality(clean_generated_file):
     # Add a node class
     gen_code.add_node_class(
         node_cls="TestNode",
-        bases=["Device"],
+        bases=["SECoPNodeDevice"],
         attrs=[
             ("module1", "TestModule", None, None, "module", None),
-            ("status", "SignalR", "str", None, "property", "status"),
+            ("status", "SignalR", "str", None, "property", "PropPath('status')"),
         ],
         description="Test node class",
     )
@@ -87,12 +103,12 @@ def test_basic_functionality(clean_generated_file):
 
     # Verify code contains expected elements
     assert "from abc import abstractmethod" in code
-    assert "class TestModule(Device):" in code
-    assert "temperature: SignalR[float]" in code
-    assert "count: SignalRW[int]" in code
-    assert "class TestNode(Device):" in code
+    assert "class TestModule(SECoPDevice):" in code
+    assert 'temperature: A[SignalR[float], ParamPath("test:temperature")]' in code
+    assert 'count: A[SignalRW[int], ParamPath("test:count")]' in code
+    assert "class TestNode(SECoPNodeDevice):" in code
     assert "module1: TestModule" in code
-    assert "status: SignalR[str]" in code
+    assert 'status: A[SignalR[str], PropPath("status")]' in code
     assert "def sample_command" in code
 
     print("\n✓ All basic tests passed!")
@@ -130,17 +146,12 @@ def test_subsequent_node_generation(clean_generated_file):
     - Type1 should appear only once in the final file (not duplicated)
     - All classes (Type1, Type2, Type3, NodeA, NodeB) are in the final file
     """
-    print("\nTesting subsequent node generation with file appending...")
-    print(f"Using output directory: {clean_generated_file}")
 
     from inspect import signature
 
     # ===== STEP 1: Generate and write first node (NodeA) =====
-    print("\n--- Step 1: Generating NodeA ---")
-    gen_code1 = GenNodeCode(path=str(clean_generated_file), log=None)
 
-    # Add necessary imports
-    gen_code1.add_import("ophyd_async.core", "Device")
+    gen_code1 = GenNodeCode(path=str(clean_generated_file), log=None)
 
     # Create sample methods
     def type1_command(self, value: float) -> float:
@@ -166,7 +177,7 @@ def test_subsequent_node_generation(clean_generated_file):
     # Add module class Type1 (will be shared)
     gen_code1.add_mod_class(
         module_cls="Type1",
-        bases=["Device"],
+        bases=["SECoPDevice"],
         attrs=[
             (
                 "description",
@@ -174,25 +185,25 @@ def test_subsequent_node_generation(clean_generated_file):
                 "str",
                 None,
                 "property",
-                "type1:description",
+                str(PropPath("type1:description")),
                 None,
             ),
             (
                 "interface_classes",
                 "SignalR",
-                "list",
+                "int",
                 None,
                 "property",
-                "type1:interface_classes",
+                str(PropPath("type1:interface_classes")),
                 None,
             ),
             (
                 "temperature",
                 "SignalR",
                 "float",
-                None,
+                "this has to be in the final output",
                 "parameter",
-                "type1:temperature",
+                str(ParamPath("type1:temperature")),
                 None,
             ),
             (
@@ -201,7 +212,7 @@ def test_subsequent_node_generation(clean_generated_file):
                 "float",
                 None,
                 "parameter",
-                "type1:setpoint",
+                str(ParamPath("type1:setpoint")),
                 None,
             ),
         ],
@@ -212,7 +223,7 @@ def test_subsequent_node_generation(clean_generated_file):
     # Add module class Type2 (only in nodeA)
     gen_code1.add_mod_class(
         module_cls="Type2",
-        bases=["Device"],
+        bases=["SECoPDevice"],
         attrs=[
             (
                 "implementation",
@@ -220,11 +231,27 @@ def test_subsequent_node_generation(clean_generated_file):
                 "str",
                 None,
                 "property",
-                "type2:implementation",
+                str(PropPath("type2:implementation")),
                 None,
             ),
-            ("pressure", "SignalR", "float", None, "parameter", "type2:pressure", None),
-            ("mode", "SignalRW", "str", None, "parameter", "type2:mode", None),
+            (
+                "pressure",
+                "SignalR",
+                "float",
+                None,
+                "parameter",
+                str(ParamPath("type2:pressure")),
+                None,
+            ),
+            (
+                "mode",
+                "SignalRW",
+                "str",
+                None,
+                "parameter",
+                str(ParamPath("type2:mode")),
+                None,
+            ),
         ],
         cmd_plans=[method_type2],
         description="Type2 module - only in nodeA",
@@ -233,11 +260,11 @@ def test_subsequent_node_generation(clean_generated_file):
     # Add nodeA
     gen_code1.add_node_class(
         node_cls="NodeA",
-        bases=["Device"],
+        bases=["SECoPNodeDevice"],
         attrs=[
             ("modA", "Type1", None, None, "module", None),
             ("modB", "Type2", None, None, "module", None),
-            ("status", "SignalR", "str", None, "property", "status"),
+            ("status", "SignalR", "str", None, "property", str(PropPath("status"))),
         ],
         description="NodeA with Type1 and Type2 modules",
     )
@@ -246,24 +273,20 @@ def test_subsequent_node_generation(clean_generated_file):
     code1 = gen_code1.generate_code()
     gen_code1.write_gen_node_class_file()
 
-    print("\n" + "=" * 60)
-    print("First Generation (NodeA):")
-    print("=" * 60)
-    print(code1)
-
     # Verify first generation
-    assert "class Type1(Device):" in code1
-    assert "class Type2(Device):" in code1
-    assert "class NodeA(Device):" in code1
+    assert "class Type1(SECoPDevice):" in code1
+    assert "class Type2(SECoPDevice):" in code1
+    assert "class NodeA(SECoPNodeDevice):" in code1
     assert "modA: Type1" in code1
     assert "modB: Type2" in code1
 
     # ===== STEP 2: Load existing file and add second node (NodeB) =====
-    print("\n--- Step 2: Loading file and adding NodeB ---")
+
     gen_code2 = GenNodeCode(path=str(clean_generated_file), log=None)
 
     # Add necessary imports again
-    gen_code2.add_import("ophyd_async.core", "Device")
+    gen_code2.add_import("secop_ophyd.SECoPDevices", "SECoPDevice")
+    gen_code2.add_import("secop_ophyd.SECoPDevices", "SECoPNodeDevice")
 
     # Create method for Type3
     def type3_command(self, count: int) -> int:
@@ -279,7 +302,7 @@ def test_subsequent_node_generation(clean_generated_file):
     # Add Type1 again - GenNodeCode should detect it already exists
     gen_code2.add_mod_class(
         module_cls="Type1",
-        bases=["Device"],
+        bases=["SECoPDevice"],
         attrs=[
             (
                 "description",
@@ -287,7 +310,7 @@ def test_subsequent_node_generation(clean_generated_file):
                 "str",
                 None,
                 "property",
-                "type1:description",
+                str(PropPath("type1:description")),
                 None,
             ),
             (
@@ -296,7 +319,7 @@ def test_subsequent_node_generation(clean_generated_file):
                 "list",
                 None,
                 "property",
-                "type1:interface_classes",
+                str(PropPath("type1:interface_classes")),
                 None,
             ),
             (
@@ -305,7 +328,7 @@ def test_subsequent_node_generation(clean_generated_file):
                 "float",
                 None,
                 "parameter",
-                "type1:temperature",
+                str(ParamPath("type1:temperature")),
                 None,
             ),
             (
@@ -314,7 +337,7 @@ def test_subsequent_node_generation(clean_generated_file):
                 "float",
                 None,
                 "parameter",
-                "type1:setpoint",
+                str(ParamPath("type1:setpoint")),
                 None,
             ),
         ],
@@ -325,11 +348,35 @@ def test_subsequent_node_generation(clean_generated_file):
     # Add module class Type3 (only in nodeB)
     gen_code2.add_mod_class(
         module_cls="Type3",
-        bases=["Device"],
+        bases=["SECoPDevice"],
         attrs=[
-            ("group", "SignalR", "str", None, "property", "type3:group", None),
-            ("count", "SignalRW", "int", None, "parameter", "type3:count", None),
-            ("enabled", "SignalR", "bool", None, "parameter", "type3:enabled", None),
+            (
+                "group",
+                "SignalR",
+                "str",
+                None,
+                "property",
+                str(PropPath("type3:group")),
+                None,
+            ),
+            (
+                "count",
+                "SignalRW",
+                "int",
+                "this is a description",
+                "parameter",
+                str(ParamPath("type3:count")),
+                None,
+            ),
+            (
+                "enabled",
+                "SignalR",
+                "bool",
+                None,
+                "parameter",
+                str(ParamPath("type3:enabled")),
+                None,
+            ),
         ],
         cmd_plans=[method_type3],
         description="Type3 module - only in nodeB",
@@ -338,11 +385,11 @@ def test_subsequent_node_generation(clean_generated_file):
     # Add nodeB
     gen_code2.add_node_class(
         node_cls="NodeB",
-        bases=["Device"],
+        bases=["SECoPNodeDevice"],
         attrs=[
             ("modA", "Type1", None, None, "module", None),
             ("modB", "Type3", None, None, "module", None),
-            ("name", "SignalR", "str", None, "property", "name"),
+            ("name", "SignalR", "str", None, "property", str(PropPath("name"))),
         ],
         description="NodeB with Type1 and Type3 modules",
     )
@@ -351,27 +398,22 @@ def test_subsequent_node_generation(clean_generated_file):
     code2 = gen_code2.generate_code()
     gen_code2.write_gen_node_class_file()
 
-    print("\n" + "=" * 60)
-    print("Second Generation (NodeA + NodeB):")
-    print("=" * 60)
-    print(code2)
-
     # ===== VERIFICATION =====
     # Verify that Type1 appears only once in the final code
-    type1_count = code2.count("class Type1(Device):")
-    print(f"\nType1 class count: {type1_count}")
+    type1_count = code2.count("class Type1(SECoPDevice):")
+
     assert (
         type1_count == 1
     ), f"Type1 should appear exactly once, but appears {type1_count} times"
 
     # Verify all module classes are present
-    assert "class Type1(Device):" in code2
-    assert "class Type2(Device):" in code2
-    assert "class Type3(Device):" in code2
+    assert "class Type1(SECoPDevice):" in code2
+    assert "class Type2(SECoPDevice):" in code2
+    assert "class Type3(SECoPDevice):" in code2
 
     # Verify both node classes are present
-    assert "class NodeA(Device):" in code2
-    assert "class NodeB(Device):" in code2
+    assert "class NodeA(SECoPNodeDevice):" in code2
+    assert "class NodeB(SECoPNodeDevice):" in code2
 
     # Verify all methods are present
     assert "def type1_cmd" in code2
@@ -381,6 +423,10 @@ def test_subsequent_node_generation(clean_generated_file):
     # Verify section comments are present
     assert "# Module Properties" in code2
     assert "# Module Parameters" in code2
+
+    # Verify that descriptive  comments are preserved in generated code
+    assert "# this is a description" in code2
+    assert "# this has to be in the final output" in code2
 
 
 async def test_gen_cryo_node(
@@ -422,22 +468,51 @@ async def test_gen_cryo_status_not_in_cfg(
 
     cryo_node_no_re.class_from_instance(clean_generated_file)
 
-    cryo_cfg = await cryo_node_no_re.cryo.read_configuration()
+    cryo_cfg = await cryo_node_no_re.read_configuration()
+    cryo_reading = await cryo_node_no_re.read()
+
+    print(cryo_reading)
+
+    assert hasattr(cryo_node_no_re.cryo, "status")
+    assert isinstance(cryo_node_no_re.cryo.status, SignalR)
 
     stat_name = cryo_node_no_re.cryo.status.name
 
-    print(cryo_cfg[stat_name])
+    assert (
+        cryo_cfg.get(stat_name) is None
+    ), "Status signal should not be in configuration"
+    assert cryo_reading.get(stat_name) is None, "Status signal should be readable"
 
+    # check if status signal is working
+    status_reding = await cryo_node_no_re.cryo.status.read()
+
+    assert status_reding.get(stat_name) is not None, "Status signal should be readable"
+
+    # Import generated class
     from tests.testgen.genNodeClass import Cryo_7_frappy_demo
 
     async with init_devices():
         cryo_gen_code = Cryo_7_frappy_demo(sec_node_uri="localhost:10769")
 
-    cryo_cfg = await cryo_gen_code.cryo.read_configuration()
+    # Status signal should still be present and functional in the generated code, even
+    # though it's not in the configuration
+    assert hasattr(cryo_gen_code.cryo, "status")
+    assert isinstance(cryo_gen_code.cryo.status, SignalR)
+
+    cryo_cfg = await cryo_gen_code.read_configuration()
+    cryo_reading = await cryo_gen_code.read()
 
     stat_name = cryo_gen_code.cryo.status.name
 
-    print(cryo_cfg[stat_name])
+    assert (
+        cryo_cfg.get(stat_name) is None
+    ), "Status signal should not be in configuration"
+    assert cryo_reading.get(stat_name) is None, "Status signal should be readable"
+
+    # check if status signal is working
+    status_reding = await cryo_gen_code.cryo.status.read()
+
+    assert status_reding.get(stat_name) is not None, "Status signal should be readable"
 
 
 async def test_gen_real_node(

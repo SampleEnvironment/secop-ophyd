@@ -11,14 +11,16 @@ from inspect import Signature
 from logging import Logger
 from pathlib import Path
 from types import ModuleType
+from typing import get_type_hints
 
 import autoflake
 import black
 from frappy.client import get_datatype
 from frappy.datatypes import DataType
 from jinja2 import Environment, PackageLoader, select_autoescape
-from ophyd_async.core import SignalR, SignalRW
+from ophyd_async.core import Signal, SignalR, SignalRW, StandardReadable
 from ophyd_async.core import StandardReadableFormat as Format
+from ophyd_async.core._utils import get_origin_class
 
 from secop_ophyd.SECoPDevices import (
     IGNORED_PROPS,
@@ -169,6 +171,14 @@ class GenNodeCode:
         self.add_import("numpy")
         self.add_import("secop_ophyd.SECoPDevices", "ParamPath")
         self.add_import("secop_ophyd.SECoPDevices", "PropPath")
+        # Add necessary Device imports
+        self.add_import("secop_ophyd.SECoPDevices", "SECoPDevice")
+        self.add_import("secop_ophyd.SECoPDevices", "SECoPCommunicatorDevice")
+        self.add_import("secop_ophyd.SECoPDevices", "SECoPReadableDevice")
+        self.add_import("secop_ophyd.SECoPDevices", "SECoPTriggerableDevice")
+        self.add_import("secop_ophyd.SECoPDevices", "SECoPWritableDevice")
+        self.add_import("secop_ophyd.SECoPDevices", "SECoPMoveableDevice")
+        self.add_import("secop_ophyd.SECoPDevices", "SECoPNodeDevice")
 
         # Setup Jinja2 environment
         self.jinja_env = Environment(
@@ -224,22 +234,16 @@ class GenNodeCode:
     def _parse_existing_module(self):
         """Parse an existing generated module to extract class definitions."""
         # Prevent circular import
-        from ophyd_async.core import Device
 
-        try:
-            from secop_ophyd.SECoPDevices import (
-                SECoPCommunicatorDevice,
-                SECoPDevice,
-                SECoPMoveableDevice,
-                SECoPNodeDevice,
-                SECoPReadableDevice,
-                SECoPTriggerableDevice,
-                SECoPWritableDevice,
-            )
-
-            has_secop_devices = True
-        except ImportError:
-            has_secop_devices = False
+        from secop_ophyd.SECoPDevices import (
+            SECoPCommunicatorDevice,
+            SECoPDevice,
+            SECoPMoveableDevice,
+            SECoPNodeDevice,
+            SECoPReadableDevice,
+            SECoPTriggerableDevice,
+            SECoPWritableDevice,
+        )
 
         if self.node_mod is None:
             return
@@ -251,67 +255,26 @@ class GenNodeCode:
             module = class_obj.__module__
 
             if module == self.ModName:
-                # Parse classes defined in the generated module
-                parsed = False
-
                 # Try SECoP-specific device types first if available
-                if has_secop_devices:
-                    if issubclass(class_obj, SECoPNodeDevice):
-                        self._parse_node_class(class_symbol, class_obj)
-                        parsed = True
-                    elif issubclass(
-                        class_obj,
-                        (
-                            SECoPDevice,
-                            SECoPCommunicatorDevice,
-                            SECoPMoveableDevice,
-                            SECoPReadableDevice,
-                            SECoPWritableDevice,
-                            SECoPTriggerableDevice,
-                        ),
-                    ):
-                        self._parse_module_class(class_symbol, class_obj)
-                        parsed = True
 
-                # Fall back to generic Device parsing
-                if not parsed and issubclass(class_obj, Device):
-                    # Determine if it's a node or module class by checking if it has
-                    # attributes that are themselves Device subclasses
-                    is_node = self._is_node_class(class_obj)
-                    if is_node:
-                        self._parse_node_class(class_symbol, class_obj)
-                    else:
-                        self._parse_module_class(class_symbol, class_obj)
-
-    def _is_node_class(self, class_obj: type) -> bool:
-        """Determine if a Device class is a node (contains other Device classes).
-
-        Args:
-            class_obj: The class to check
-
-        Returns:
-            True if this appears to be a node class, False if it's a module class
-        """
-        from ophyd_async.core import Device
-
-        # Check annotations for Device subclass attributes
-        if hasattr(class_obj, "__annotations__"):
-            for attr_name, attr_type in class_obj.__annotations__.items():
-                # Check if the type is a class and a Device subclass
-                if inspect.isclass(attr_type) and issubclass(attr_type, Device):
-                    return True
-                # Handle string annotations and generic types
-                type_str = str(attr_type)
-                # If any annotation refers to a custom class (not Signal*), it's likely
-                # a node
-                if "Signal" not in type_str and not type_str.startswith("<class"):
-                    # Check if it's a class defined in the same module
-                    try:
-                        if hasattr(class_obj, attr_name):
-                            continue
-                    except Exception:
-                        pass
-        return False
+                if issubclass(class_obj, SECoPNodeDevice):
+                    self._parse_node_class(class_symbol, class_obj)
+                elif issubclass(
+                    class_obj,
+                    (
+                        SECoPDevice,
+                        SECoPCommunicatorDevice,
+                        SECoPMoveableDevice,
+                        SECoPReadableDevice,
+                        SECoPWritableDevice,
+                        SECoPTriggerableDevice,
+                    ),
+                ):
+                    self._parse_module_class(class_symbol, class_obj)
+                else:
+                    raise TypeError(
+                        "Class %s in module %s is not a valid SECoP ophyd device class"
+                    )
 
     def _parse_node_class(self, class_symbol: str, class_obj: type):
         """Parse a node class from existing module.
@@ -320,32 +283,112 @@ class GenNodeCode:
             class_symbol: Name of the class
             class_obj: The class object
         """
-        attrs = self._extract_attrs_from_source(inspect.getsource(class_obj))
+        # attrs = self._extract_attrs_from_source(inspect.getsource(class_obj))
+
         bases = [base.__name__ for base in class_obj.__bases__]
 
         # Extract description from docstring
         description = inspect.getdoc(class_obj) or ""
 
-        # Parse attributes with type parameters
-        attributes = []
-        for attr_name, attr_type_str in attrs:
-            # Parse type and type parameter from string like "SignalR[float]"
-            if "[" in attr_type_str and "]" in attr_type_str:
-                base_type = attr_type_str.split("[")[0]
-                type_param = attr_type_str.split("[")[1].rstrip("]")
-                attributes.append(
-                    Attribute(name=attr_name, type=base_type, type_param=type_param)
-                )
-            else:
-                attributes.append(Attribute(name=attr_name, type=attr_type_str))
+        attrs = self._get_attr_list(class_obj)
 
         node_cls = NodeClass(
             name=class_symbol,
             bases=bases,
-            attributes=attributes,
+            attributes=attrs,
             description=description,
         )
         self.node_classes.append(node_cls)
+
+    def _extract_descriptions_from_source(self, class_obj: type) -> dict[str, str]:
+        """Extract trailing comment descriptions from class source code.
+
+        Args:
+            class_obj: The class object to extract descriptions from
+
+        Returns:
+            Dictionary mapping attribute names to their descriptions
+        """
+        descriptions = {}
+        try:
+            source = inspect.getsource(class_obj)
+            for line in source.split("\n"):
+                # Skip lines without comments
+                if "#" not in line:
+                    continue
+
+                # Extract the part before # (attribute assignment)
+                code_part, comment_part = line.split("#", 1)
+
+                # Find attribute name (e.g., "count" from "count: A[SignalRW[int],...")
+                match = re.match(r"\s*(\w+)\s*:", code_part)
+                if match:
+                    attr_name = match.group(1)
+                    description = comment_part.strip()
+                    if description:
+                        descriptions[attr_name] = description
+        except Exception as e:
+            if self.log:
+                self.log.debug(f"Could not extract descriptions from source: {e}")
+
+        return descriptions
+
+    def _get_attr_list(self, class_obj: type) -> list[Attribute]:
+        hints = get_type_hints(class_obj)
+        # Get hints with Annotated for wrapping signals and backends
+        extra_hints = get_type_hints(class_obj, include_extras=True)
+
+        # Extract description comments from source code
+        descriptions = self._extract_descriptions_from_source(class_obj)
+
+        attrs = []
+
+        for attr_name, annotation in hints.items():
+            extras = getattr(extra_hints[attr_name], "__metadata__", ())
+
+            origin = get_origin_class(annotation)
+
+            if issubclass(origin, Signal):
+
+                sig_type = annotation.__args__[0]
+                # Get the module name
+                module = sig_type.__module__
+
+                type_param = (
+                    sig_type.__name__
+                    if module == "builtins"
+                    else f"{module}.{sig_type.__name__}"
+                )
+                path_annotation = next(
+                    (e for e in extras if isinstance(e, (ParamPath, PropPath))), None
+                )
+                category = (
+                    "property" if isinstance(path_annotation, PropPath) else "parameter"
+                )
+                format_annotation = next(
+                    (e for e in extras if isinstance(e, Format)), None
+                )
+
+                # Get description from comments
+                description = descriptions.get(attr_name)
+
+                attrs.append(
+                    Attribute(
+                        name=attr_name,
+                        type=origin.__name__,
+                        type_param=type_param,
+                        description=description,
+                        category=category,
+                        path_annotation=str(path_annotation),
+                        format_annotation=format_annotation,
+                    )
+                )
+            if issubclass(origin, StandardReadable):
+                attrs.append(
+                    Attribute(name=attr_name, type=origin.__name__, category="module")
+                )
+
+        return attrs
 
     def _parse_module_class(self, class_symbol: str, class_obj: type):
         """Parse a module class from existing module.
@@ -355,20 +398,8 @@ class GenNodeCode:
             class_obj: The class object
         """
         # Extract attributes from source code to get proper type annotations
-        source = inspect.getsource(class_obj)
-        attrs = self._extract_attrs_from_source(source)
 
-        attributes = []
-        for attr_name, attr_type_str in attrs:
-            # Parse type and type parameter from string like "SignalR[float]"
-            if "[" in attr_type_str and "]" in attr_type_str:
-                base_type = attr_type_str.split("[")[0]
-                type_param = attr_type_str.split("[")[1].rstrip("]")
-                attributes.append(
-                    Attribute(name=attr_name, type=base_type, type_param=type_param)
-                )
-            else:
-                attributes.append(Attribute(name=attr_name, type=attr_type_str))
+        attrs = self._get_attr_list(class_obj)
 
         methods = []
         for method_name, method in class_obj.__dict__.items():
@@ -387,52 +418,11 @@ class GenNodeCode:
         mod_cls = ModuleClass(
             name=class_symbol,
             bases=bases,
-            attributes=attributes,
+            attributes=attrs,
             methods=methods,
             description=description,
         )
         self.module_classes.append(mod_cls)
-
-    def _extract_attrs_from_source(self, source: str) -> list[tuple[str, str]]:
-        """Extract attributes from class source code.
-
-        Args:
-            source: Source code of the class
-
-        Returns:
-            List of (name, type) tuples
-        """
-        source_list: list[str] = source.split("\n")
-        # Remove first and last line
-        if len(source_list) > 1:
-            source_list.pop(0)
-            source_list.pop()
-
-        # Extract attributes (skip methods, decorators, docstrings)
-        attrs: list[tuple[str, str]] = []
-        for line in source_list:
-            stripped = line.strip()
-            # Skip empty lines, decorators, method definitions, and docstrings
-            if (
-                not stripped
-                or stripped.startswith("@")
-                or stripped.startswith("def ")
-                or stripped.startswith('"""')
-                or stripped.startswith("'''")
-            ):
-                continue
-
-            # Check if it's an attribute annotation (has : but not inside parentheses)
-            if ":" in stripped and "(" not in stripped.split(":", 1)[0]:
-                # Remove spaces for consistent parsing
-                line_no_space = line.replace(" ", "")
-                parts = line_no_space.split(":", maxsplit=1)
-                if len(parts) == 2:
-                    attr_name = parts[0]
-                    attr_type = parts[1]
-                    attrs.append((attr_name, attr_type))
-
-        return attrs
 
     def _extract_method_description(self, method_source: str) -> str:
         """Extract description from method docstring.
