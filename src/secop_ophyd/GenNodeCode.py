@@ -297,7 +297,8 @@ class GenNodeCode:
                     self._parse_module_class(class_symbol, class_obj)
                 else:
                     raise TypeError(
-                        "Class %s in module %s is not a valid SECoP ophyd device class"
+                        f"Class {class_symbol} in module {module} is not a valid "
+                        "SECoP ophyd device class"
                     )
 
     def _parse_node_class(self, class_symbol: str, class_obj: type):

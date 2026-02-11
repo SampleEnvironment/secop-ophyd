@@ -147,7 +147,7 @@ def test_same_class_different_instances():
     # First add_mod_class call
     gen_code.add_mod_class(
         module_cls="Test_Enum",
-        bases=["Device"],
+        bases=["SECoPDevice"],
         parameters=[
             ParameterAttribute(
                 name="gas_type",
@@ -164,7 +164,7 @@ def test_same_class_different_instances():
     # Second add_mod_class call (same class name, different enum)
     gen_code.add_mod_class(
         module_cls="Test_Enum",
-        bases=["Device"],
+        bases=["SECoPDevice"],
         parameters=[
             ParameterAttribute(
                 name="gas_type",
