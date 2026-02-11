@@ -26,12 +26,10 @@ class {{ enum_cls.name }}({{ enum_cls.base_enum_class }}):
 {% for module_cls in module_classes %}
 class {{ module_cls.name }}({{ module_cls.bases | join(', ') }}):
     """{{ module_cls.description or 'Generated module class' }}"""
-{%- set properties = module_cls.attributes | selectattr('category', 'equalto', 'property') | list %}
-{%- set parameters = module_cls.attributes | selectattr('category', 'equalto', 'parameter') | list %}
-{%- if properties %}
+{%- if module_cls.properties %}
 
     # Module Properties
-{%- for attr in properties %}
+{%- for attr in module_cls.properties %}
 {%- if attr.path_annotation and attr.format_annotation %}
     {{ attr.name }}: A[{{ attr.type }}{% if attr.type_param %}[{{ attr.type_param }}]{% endif %}, {{ attr.path_annotation }}, {{ attr.format_annotation }}]
 {%- elif attr.path_annotation %}
@@ -42,10 +40,10 @@ class {{ module_cls.name }}({{ module_cls.bases | join(', ') }}):
 {%- if attr.description %}  # {{ attr.description }}{% endif %}
 {%- endfor %}
 {%- endif %}
-{%- if parameters %}
+{%- if module_cls.parameters %}
 
     # Module Parameters
-{%- for attr in parameters %}
+{%- for attr in module_cls.parameters %}
 {%- if attr.path_annotation and attr.format_annotation %}
     {{ attr.name }}: A[{{ attr.type }}{% if attr.type_param %}[{{ attr.type_param }}]{% endif %}, {{ attr.path_annotation }}, {{ attr.format_annotation }}]
 {%- elif attr.path_annotation %}
@@ -73,20 +71,18 @@ class {{ module_cls.name }}({{ module_cls.bases | join(', ') }}):
 {% for node_cls in node_classes %}
 class {{ node_cls.name }}({{ node_cls.bases | join(', ') }}):
     """{{ node_cls.description or 'Generated node class' }}"""
-{%- set modules = node_cls.attributes | selectattr('category', 'equalto', 'module') | list %}
-{%- set properties = node_cls.attributes | selectattr('category', 'equalto', 'property') | list %}
-{%- if modules %}
+{%- if node_cls.modules %}
 
     # Module Devices
-{%- for attr in modules %}
-    {{ attr.name }}: {{ attr.type }}{% if attr.type_param %}[{{ attr.type_param }}]{% endif %}
+{%- for attr in node_cls.modules %}
+    {{ attr.name }}: {{ attr.type }}
 {%- if attr.description %}  # {{ attr.description }}{% endif %}
 {%- endfor %}
 {%- endif %}
-{%- if properties %}
+{%- if node_cls.properties %}
 
     # Node Properties
-{%- for attr in properties %}
+{%- for attr in node_cls.properties %}
 {%- if attr.path_annotation and attr.format_annotation %}
     {{ attr.name }}: A[{{ attr.type }}{% if attr.type_param %}[{{ attr.type_param }}]{% endif %}, {{ attr.path_annotation }}, {{ attr.format_annotation }}]
 {%- elif attr.path_annotation %}

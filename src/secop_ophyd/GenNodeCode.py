@@ -60,8 +60,32 @@ class EnumClass:
 
 
 @dataclass
-class Attribute:
-    """Represents a class attribute with name and type."""
+class ModuleAttribute:
+    """Represents a module attribute with name, type, and optional description."""
+
+    name: str
+    type: str
+
+
+@dataclass
+class PropertyAttribute:
+    """Represents a module property attribute with name, type"""
+
+    name: str
+    type_param: str | None = (
+        None  # Optional type parameter like float for SignalRW[float]
+    )
+    path_annotation: str | None = (
+        None  # Annotation like ParamPath(...) or PropPath(...)
+    )
+
+    type: str = "SignalR"  # Default to SignalR for properties
+
+
+@dataclass
+class ParameterAttribute:
+    """Represents a module parameter attribute with name, type, and
+    optional description."""
 
     name: str
     type: str
@@ -69,9 +93,7 @@ class Attribute:
         None  # Optional type parameter like float for SignalRW[float]
     )
     description: str | None = None  # Optional description from SECoP or docstrings
-    category: str = (
-        "parameter"  # "property" or "parameter" - for organizing generated code
-    )
+
     path_annotation: str | None = (
         None  # Annotation like ParamPath(...) or PropPath(...)
     )
@@ -112,7 +134,8 @@ class ModuleClass:
 
     name: str
     bases: list[str]
-    attributes: list[Attribute] = field(default_factory=list)
+    parameters: list[ParameterAttribute] = field(default_factory=list)
+    properties: list[PropertyAttribute] = field(default_factory=list)
     methods: list[Method] = field(default_factory=list)
     description: str = ""
     enums: list[EnumClass] = field(default_factory=list)  # Enum classes for this module
@@ -124,7 +147,8 @@ class NodeClass:
 
     name: str
     bases: list[str]
-    attributes: list[Attribute] = field(default_factory=list)
+    properties: list[PropertyAttribute] = field(default_factory=list)
+    modules: list[ModuleAttribute] = field(default_factory=list)
     description: str = ""
 
 
@@ -290,12 +314,13 @@ class GenNodeCode:
         # Extract description from docstring
         description = inspect.getdoc(class_obj) or ""
 
-        attrs = self._get_attr_list(class_obj)
+        _, properties, modules = self._get_attr_list(class_obj)
 
         node_cls = NodeClass(
             name=class_symbol,
             bases=bases,
-            attributes=attrs,
+            properties=properties,
+            modules=modules,
             description=description,
         )
         self.node_classes.append(node_cls)
@@ -333,7 +358,11 @@ class GenNodeCode:
 
         return descriptions
 
-    def _get_attr_list(self, class_obj: type) -> list[Attribute]:
+    def _get_attr_list(
+        self, class_obj: type
+    ) -> tuple[
+        list[ParameterAttribute], list[PropertyAttribute], list[ModuleAttribute]
+    ]:
         hints = get_type_hints(class_obj)
         # Get hints with Annotated for wrapping signals and backends
         extra_hints = get_type_hints(class_obj, include_extras=True)
@@ -341,7 +370,9 @@ class GenNodeCode:
         # Extract description comments from source code
         descriptions = self._extract_descriptions_from_source(class_obj)
 
-        attrs = []
+        modules = []
+        properties = []
+        parameters = []
 
         for attr_name, annotation in hints.items():
             extras = getattr(extra_hints[attr_name], "__metadata__", ())
@@ -372,23 +403,32 @@ class GenNodeCode:
                 # Get description from comments
                 description = descriptions.get(attr_name)
 
-                attrs.append(
-                    Attribute(
-                        name=attr_name,
-                        type=origin.__name__,
-                        type_param=type_param,
-                        description=description,
-                        category=category,
-                        path_annotation=str(path_annotation),
-                        format_annotation=format_annotation,
-                    )
-                )
-            if issubclass(origin, StandardReadable):
-                attrs.append(
-                    Attribute(name=attr_name, type=origin.__name__, category="module")
-                )
+                match category:
+                    case "property":
+                        properties.append(
+                            PropertyAttribute(
+                                name=attr_name,
+                                type=origin.__name__,
+                                type_param=type_param,
+                                path_annotation=str(path_annotation),
+                            )
+                        )
+                    case "parameter":
+                        parameters.append(
+                            ParameterAttribute(
+                                name=attr_name,
+                                type=origin.__name__,
+                                type_param=type_param,
+                                description=description,
+                                path_annotation=str(path_annotation),
+                                format_annotation=format_annotation,
+                            )
+                        )
 
-        return attrs
+            if issubclass(origin, StandardReadable):
+                modules.append(ModuleAttribute(name=attr_name, type=origin.__name__))
+
+        return parameters, properties, modules
 
     def _parse_module_class(self, class_symbol: str, class_obj: type):
         """Parse a module class from existing module.
@@ -399,7 +439,7 @@ class GenNodeCode:
         """
         # Extract attributes from source code to get proper type annotations
 
-        attrs = self._get_attr_list(class_obj)
+        parameters, properties, _ = self._get_attr_list(class_obj)
 
         methods = []
         for method_name, method in class_obj.__dict__.items():
@@ -418,7 +458,8 @@ class GenNodeCode:
         mod_cls = ModuleClass(
             name=class_symbol,
             bases=bases,
-            attributes=attrs,
+            parameters=parameters,
+            properties=properties,
             methods=methods,
             description=description,
         )
@@ -467,7 +508,8 @@ class GenNodeCode:
         self,
         module_cls: str,
         bases: list[str],
-        attrs: list[tuple[str, str, str | None, str | None, str, str, str | None]],
+        parameters: list[ParameterAttribute],
+        properties: list[PropertyAttribute],
         cmd_plans: list[Method],
         description: str = "",
         enum_classes: list[EnumClass] | None = None,
@@ -477,7 +519,8 @@ class GenNodeCode:
         Args:
             module_cls: Name of the module class
             bases: Base classes
-            attrs: List of attribute tuples (name, type) or (name, type, type_param)
+            parameters: List of parameter attributes
+            properties: List of property attributes
             cmd_plans: List of method definitions
             description: Optional class description
         """
@@ -496,30 +539,11 @@ class GenNodeCode:
                     )
             return
 
-        attributes = []
-        for attr in attrs:
-            type_param = attr[2] if len(attr) > 2 and attr[2] else None
-            descr = attr[3] if len(attr) > 3 else None
-            category = attr[4] if len(attr) > 4 else "parameter"
-            path_annotation = attr[5] if len(attr) > 5 else None
-            format_annotation = attr[6] if len(attr) > 6 else None
-
-            attributes.append(
-                Attribute(
-                    name=attr[0],
-                    type=attr[1],
-                    type_param=type_param,
-                    description=descr,
-                    category=category,
-                    path_annotation=path_annotation,
-                    format_annotation=format_annotation,
-                )
-            )
-
         mod_cls = ModuleClass(
             name=module_cls,
             bases=bases,
-            attributes=attributes,
+            parameters=parameters,
+            properties=properties,
             methods=cmd_plans,
             description=description,
             enums=enum_classes or [],
@@ -530,7 +554,8 @@ class GenNodeCode:
         self,
         node_cls: str,
         bases: list[str],
-        attrs: list[tuple[str, str, str | None, None, str, str | None]],
+        properties: list[PropertyAttribute],
+        modules: list[ModuleAttribute],
         description: str = "",
     ):
         """Add a node class to be generated.
@@ -553,33 +578,11 @@ class GenNodeCode:
                 self.log.info(f"Node class {node_cls} already exists, skipping")
             return
 
-        attributes = []
-
-        for attr in attrs:
-            # attr[0] is name, attr[1] is type (both required)
-            name = str(attr[0])
-            attr_type = str(attr[1])
-            type_param = str(attr[2]) if len(attr) > 2 and attr[2] else None
-            descr = str(attr[3]) if len(attr) > 3 and attr[3] else None
-            category = str(attr[4]) if len(attr) > 4 and attr[4] else "property"
-            path_annotation = str(attr[5]) if len(attr) > 5 and attr[5] else None
-            format_annotation = str(attr[6]) if len(attr) > 6 and attr[6] else None
-            attributes.append(
-                Attribute(
-                    name=name,
-                    type=attr_type,
-                    type_param=type_param,
-                    description=descr,
-                    category=category,
-                    path_annotation=path_annotation,
-                    format_annotation=format_annotation,
-                )
-            )
-
         node_class = NodeClass(
             name=node_cls,
             bases=bases,
-            attributes=attributes,
+            properties=properties,
+            modules=modules,
             description=description,
         )
         self.node_classes.append(node_class)
@@ -623,7 +626,9 @@ class GenNodeCode:
         node_properties = {k: v for k, v in describe_data.items() if k != "modules"}
 
         # Parse modules
-        node_attrs: list[tuple[str, str, str | None, None, str, str | None]] = []
+        node_module_attrs: list[ModuleAttribute] = []
+        node_property_attrs: list[PropertyAttribute] = []
+
         for modname, moddescr in modules.items():
             #  separate accessibles into command and parameters
             parameters = {}
@@ -697,9 +702,7 @@ class GenNodeCode:
 
                 command_plans.append(plan)
 
-            mod_params: list[
-                tuple[str, str, str | None, str | None, str, str, str | None]
-            ] = []
+            mod_parameters: list[ParameterAttribute] = []
 
             for param_name, param_data in parameters.items():
 
@@ -776,22 +779,19 @@ class GenNodeCode:
 
                 # Default format for parameters is CONFIG_SIGNAL
 
-                mod_params.append(
-                    (
-                        param_name,
-                        signal_base.__name__,
-                        type_param,
-                        param_descr,
-                        "parameter",
-                        str(ParamPath(f"{modname}:{param_name}")),
-                        format,
+                mod_parameters.append(
+                    ParameterAttribute(
+                        name=param_name,
+                        type=signal_base.__name__,
+                        type_param=type_param,
+                        description=param_descr,
+                        path_annotation=str(ParamPath(f"{modname}:{param_name}")),
+                        format_annotation=format,
                     )
                 )
 
             # Module properties
-            mod_props: list[
-                tuple[str, str, str | None, str | None, str, str, str | None]
-            ] = []
+            module_properties: list[PropertyAttribute] = []
 
             # Process module properties
             for prop_name, property_value in properties.items():
@@ -801,22 +801,20 @@ class GenNodeCode:
 
                 type_param = get_type_param(secop_dtype_obj_from_json(property_value))
 
-                mod_props.append(
-                    (
-                        prop_name,
-                        SignalR.__name__,
-                        type_param,
-                        None,
-                        "property",
-                        str(PropPath(f"{modname}:{prop_name}")),
-                        None,
+                module_properties.append(
+                    PropertyAttribute(
+                        name=prop_name,
+                        type=SignalR.__name__,
+                        type_param=type_param,
+                        path_annotation=str(PropPath(f"{modname}:{prop_name}")),
                     )
                 )
 
             self.add_mod_class(
                 module_cls=module_class,
                 bases=module_bases,
-                attrs=mod_params + mod_props,
+                parameters=mod_parameters,
+                properties=module_properties,
                 cmd_plans=command_plans,
                 description=properties.get("description", ""),
                 enum_classes=module_enum_classes,
@@ -824,8 +822,7 @@ class GenNodeCode:
 
             # Add to node attributes
             # Type the None explicitly as str | None to match other entries
-
-            node_attrs.append((modname, module_class, None, None, "module", None))
+            node_module_attrs.append(ModuleAttribute(name=modname, type=module_class))
 
         # Process module properties
         for prop_name, property_value in node_properties.items():
@@ -833,14 +830,12 @@ class GenNodeCode:
 
             # Generate PropPath annotation for node-level properties
 
-            node_attrs.append(
-                (
-                    str(prop_name),
-                    str(SignalR.__name__),
-                    type_param,
-                    None,
-                    "property",
-                    str(PropPath(prop_name)),
+            node_property_attrs.append(
+                PropertyAttribute(
+                    name=prop_name,
+                    type=SignalR.__name__,
+                    type_param=type_param,
+                    path_annotation=str(PropPath(prop_name)),
                 )
             )
 
@@ -855,7 +850,8 @@ class GenNodeCode:
         self.add_node_class(
             node_cls=node_class_name,
             bases=node_bases,
-            attrs=node_attrs,
+            modules=node_module_attrs,
+            properties=node_property_attrs,
             description=node_properties.get("description", ""),
         )
 

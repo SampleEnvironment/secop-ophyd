@@ -124,14 +124,14 @@ def format_assigned(device: StandardReadable, signal: SignalR) -> bool:
 
 
 def is_read_signal(device: StandardReadable, signal: SignalR | SignalRW) -> bool:
-    if signal.describe() in device._describe_funcs:
+    if signal.describe in device._describe_funcs:
         return True
 
     return False
 
 
 def is_config_signal(device: StandardReadable, signal: SignalR | SignalRW) -> bool:
-    if signal.describe() in device._describe_config_funcs:
+    if signal.describe in device._describe_config_funcs:
         return True
 
     return False

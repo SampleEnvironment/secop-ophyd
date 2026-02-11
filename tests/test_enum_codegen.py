@@ -3,11 +3,11 @@
 import tempfile
 
 from secop_ophyd.GenNodeCode import (
-    Attribute,
     EnumClass,
     EnumMember,
     GenNodeCode,
     ModuleClass,
+    ParameterAttribute,
 )
 
 
@@ -39,18 +39,24 @@ def test_code_generation_with_enums():
         mod1 = ModuleClass(
             name="MassflowController1",
             bases=["Device"],
-            attributes=[
-                Attribute("gastype", "SignalRW", "MassflowControllerGastypeEnum"),
+            parameters=[
+                ParameterAttribute(
+                    "gastype", "SignalRW", "MassflowControllerGastypeEnum"
+                ),
             ],
+            properties=[],
             enums=[enum1],
         )
 
         mod2 = ModuleClass(
             name="MassflowController2",
             bases=["Device"],
-            attributes=[
-                Attribute("gastype", "SignalRW", "MassflowControllerGastypeEnum"),
+            parameters=[
+                ParameterAttribute(
+                    "gastype", "SignalRW", "MassflowControllerGastypeEnum"
+                ),
             ],
+            properties=[],
             enums=[enum2],
         )
 
@@ -104,18 +110,20 @@ def test_code_generation_strict_enum():
         mod1 = ModuleClass(
             name="Device1",
             bases=["Device"],
-            attributes=[
-                Attribute("status", "SignalR", "StatusEnum"),
+            parameters=[
+                ParameterAttribute("status", "SignalR", "StatusEnum"),
             ],
+            properties=[],
             enums=[enum1],
         )
 
         mod2 = ModuleClass(
             name="Device2",
             bases=["Device"],
-            attributes=[
-                Attribute("status", "SignalR", "StatusEnum"),
+            parameters=[
+                ParameterAttribute("status", "SignalR", "StatusEnum"),
             ],
+            properties=[],
             enums=[enum2],
         )
 

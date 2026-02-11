@@ -1,6 +1,11 @@
 """Test enum merging logic for StrictEnum vs SupersetEnum."""
 
-from secop_ophyd.GenNodeCode import EnumClass, EnumMember, GenNodeCode
+from secop_ophyd.GenNodeCode import (
+    EnumClass,
+    EnumMember,
+    GenNodeCode,
+    ParameterAttribute,
+)
 
 
 def test_identical_enums_use_strict():
@@ -143,17 +148,15 @@ def test_same_class_different_instances():
     gen_code.add_mod_class(
         module_cls="Test_Enum",
         bases=["Device"],
-        attrs=[
-            (
-                "gas_type",
-                "SignalRW",
-                "Test_EnumGas_typeEnum",
-                None,
-                "parameter",
-                "balh:gas_type",
-                None,
+        parameters=[
+            ParameterAttribute(
+                name="gas_type",
+                type="SignalRW",
+                type_param="Test_EnumGas_typeEnum",
+                path_annotation="balh:gas_type",
             )
         ],
+        properties=[],
         cmd_plans=[],
         enum_classes=[enum1],
     )
@@ -162,17 +165,15 @@ def test_same_class_different_instances():
     gen_code.add_mod_class(
         module_cls="Test_Enum",
         bases=["Device"],
-        attrs=[
-            (
-                "gas_type",
-                "SignalRW",
-                "Test_EnumGas_typeEnum",
-                None,
-                "parameter",
-                "balh:gas_type",
-                None,
+        parameters=[
+            ParameterAttribute(
+                name="gas_type",
+                type="SignalRW",
+                type_param="Test_EnumGas_typeEnum",
+                path_annotation="balh:gas_type",
             )
         ],
+        properties=[],
         cmd_plans=[],
         enum_classes=[enum2],
     )
