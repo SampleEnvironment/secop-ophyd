@@ -4,13 +4,14 @@ from secop_ophyd.GenNodeCode import (
     EnumClass,
     EnumMember,
     GenNodeCode,
+    ModuleClass,
     ParameterAttribute,
 )
 
 
-def test_identical_enums_use_strict():
+def test_identical_enums_use_strict(clean_generated_file):
     """When module instances have identical enum values, use StrictEnum."""
-    gen_code = GenNodeCode()
+    gen_code = GenNodeCode(clean_generated_file)
 
     # Create two module classes with identical enums
     enum1 = EnumClass(
@@ -31,7 +32,6 @@ def test_identical_enums_use_strict():
 
     # Add module classes with these enums
     gen_code.module_classes = []
-    from secop_ophyd.GenNodeCode import ModuleClass
 
     mod1 = ModuleClass(name="Module1", bases=["Device"], enums=[enum1])
     mod2 = ModuleClass(name="Module2", bases=["Device"], enums=[enum2])
@@ -48,9 +48,9 @@ def test_identical_enums_use_strict():
     print("✓ Identical enums correctly use StrictEnum")
 
 
-def test_different_enums_use_superset():
+def test_different_enums_use_superset(clean_generated_file):
     """When module instances have different enum values, use SupersetEnum."""
-    gen_code = GenNodeCode()
+    gen_code = GenNodeCode(clean_generated_file)
 
     # Create two module classes with different enum members
     enum1 = EnumClass(
@@ -90,9 +90,9 @@ def test_different_enums_use_superset():
     print("✓ Different enums correctly merged into SupersetEnum")
 
 
-def test_single_enum_uses_strict():
+def test_single_enum_uses_strict(clean_generated_file):
     """When only one module has an enum, use StrictEnum."""
-    gen_code = GenNodeCode()
+    gen_code = GenNodeCode(clean_generated_file)
 
     enum1 = EnumClass(
         name="TestParamEnum",
@@ -118,10 +118,10 @@ def test_single_enum_uses_strict():
     print("✓ Single enum correctly uses StrictEnum")
 
 
-def test_same_class_different_instances():
+def test_same_class_different_instances(clean_generated_file):
     """When same module class has different instances with different enums, use
     SupersetEnum."""
-    gen_code = GenNodeCode()
+    gen_code = GenNodeCode(clean_generated_file)
 
     # Simulate adding the same module class twice (different instances)
     # First instance with AR, N2, H2

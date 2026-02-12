@@ -520,7 +520,6 @@ async def test_gen_cryo_status_not_in_cfg(
 async def test_gen_real_node(
     clean_generated_file,
     nested_struct_sim,
-    RE,
     nested_node_no_re: SECoPNodeDevice,  # noqa: N803
 ):
 
@@ -557,3 +556,58 @@ async def test_gen_real_node(
     assert (
         "from enum import Enum" in generated_code or "SupersetEnum" in generated_code
     ), "Enum import should be present"
+
+
+async def test_subsequent_real_nodes_with_enum(
+    clean_generated_file,
+    cryo_sim,
+    cryo_node_no_re: SECoPNodeDevice,
+    nested_struct_sim,
+    nested_node_no_re: SECoPNodeDevice,
+):
+
+    nested_node_no_re.class_from_instance(clean_generated_file)
+
+    # Read the generated file and verify its contents
+    gen_file = clean_generated_file / "genNodeClass.py"
+    assert gen_file.exists(), "Generated file should exist"
+
+    generated_code = gen_file.read_text()
+
+    # ===== Assertions for generated enum classes =====
+    cls = [
+        "class Test_EnumGas_typeEnum(SupersetEnum):",
+        "class Test_Mod_str(SECoPReadableDevice):",
+        "class OPHYD_test_primitive_arrays(SECoPReadableDevice):",
+        "class Test_Enum(SECoPReadableDevice):",
+        "class Test_ND_arrays(SECoPReadableDevice):",
+        "class Test_Struct_of_arrays(SECoPReadableDevice):",
+        "class Ophyd_secop_frappy_demo(SECoPNodeDevice):",
+    ]
+    for classs_str in cls:
+        assert classs_str in generated_code
+
+    cryo_node_no_re.class_from_instance(clean_generated_file)
+
+    # Read the generated file and verify its contents
+    gen_file = clean_generated_file / "genNodeClass.py"
+    assert gen_file.exists(), "Generated file should exist"
+
+    generated_code = gen_file.read_text()
+
+    # ===== Assertions for generated enum classes =====
+
+    cls = [
+        "class Test_EnumGas_typeEnum(SupersetEnum):",
+        "class Test_Mod_str(SECoPReadableDevice):",
+        "class OPHYD_test_primitive_arrays(SECoPReadableDevice):",
+        "class Test_Enum(SECoPReadableDevice):",
+        "class Test_ND_arrays(SECoPReadableDevice):",
+        "class Test_Struct_of_arrays(SECoPReadableDevice):",
+        "class Ophyd_secop_frappy_demo(SECoPNodeDevice):",
+        "class Cryo_7_frappy_demo(SECoPNodeDevice):",
+        "class Cryostat(SECoPMoveableDevice):",
+        "class CryostatModeEnum(StrictEnum):",
+    ]
+    for classs_str in cls:
+        assert classs_str in generated_code

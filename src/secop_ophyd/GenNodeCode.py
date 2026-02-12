@@ -6,6 +6,7 @@ import linecache
 import re
 import sys
 from dataclasses import dataclass, field
+from enum import StrEnum
 from importlib import import_module, reload
 from inspect import Signature
 from logging import Logger
@@ -180,6 +181,7 @@ class GenNodeCode:
         self.imports: dict[str, set[str] | None] = {}
         self.module_classes: list[ModuleClass] = []
         self.node_classes: list[NodeClass] = []
+        self.enum_classes: list[EnumClass] = []
         self.node_mod: ModuleType | None = None
 
         # Required imports for abstract classes
@@ -192,7 +194,7 @@ class GenNodeCode:
         self.add_import("ophyd_async.core", "StrictEnum")
         self.add_import("ophyd_async.core", "SupersetEnum")
         self.add_import("typing", "Any")
-        self.add_import("numpy")
+        self.add_import("numpy", "ndarray")
         self.add_import("secop_ophyd.SECoPDevices", "ParamPath")
         self.add_import("secop_ophyd.SECoPDevices", "PropPath")
         # Add necessary Device imports
@@ -260,46 +262,37 @@ class GenNodeCode:
         # Prevent circular import
 
         from secop_ophyd.SECoPDevices import (
-            SECoPCommunicatorDevice,
             SECoPDevice,
-            SECoPMoveableDevice,
             SECoPNodeDevice,
-            SECoPReadableDevice,
-            SECoPTriggerableDevice,
-            SECoPWritableDevice,
         )
 
         if self.node_mod is None:
             return
 
         modules = inspect.getmembers(self.node_mod)
-        results = filter(lambda m: inspect.isclass(m[1]), modules)
+        # Filter to only classes defined in this module, not imported ones
+        class_members = [
+            m
+            for m in modules
+            if inspect.isclass(m[1]) and m[1].__module__ == self.node_mod.__name__
+        ]
 
-        for class_symbol, class_obj in results:
-            module = class_obj.__module__
+        enum_classes = [m for m in class_members if issubclass(m[1], StrEnum)]
+        node_classes = [m for m in class_members if issubclass(m[1], SECoPNodeDevice)]
+        module_classes = [
+            m
+            for m in class_members
+            if issubclass(m[1], SECoPDevice) and not issubclass(m[1], SECoPNodeDevice)
+        ]
 
-            if module == self.ModName:
-                # Try SECoP-specific device types first if available
+        for class_symbol, class_obj in enum_classes:
+            self._parse_enum_class(class_symbol, class_obj)
 
-                if issubclass(class_obj, SECoPNodeDevice):
-                    self._parse_node_class(class_symbol, class_obj)
-                elif issubclass(
-                    class_obj,
-                    (
-                        SECoPDevice,
-                        SECoPCommunicatorDevice,
-                        SECoPMoveableDevice,
-                        SECoPReadableDevice,
-                        SECoPWritableDevice,
-                        SECoPTriggerableDevice,
-                    ),
-                ):
-                    self._parse_module_class(class_symbol, class_obj)
-                else:
-                    raise TypeError(
-                        f"Class {class_symbol} in module {module} is not a valid "
-                        "SECoP ophyd device class"
-                    )
+        for class_symbol, class_obj in node_classes:
+            self._parse_node_class(class_symbol, class_obj)
+
+        for class_symbol, class_obj in module_classes:
+            self._parse_module_class(class_symbol, class_obj)
 
     def _parse_node_class(self, class_symbol: str, class_obj: type):
         """Parse a node class from existing module.
@@ -387,10 +380,9 @@ class GenNodeCode:
                 module = sig_type.__module__
 
                 type_param = (
-                    sig_type.__name__
-                    if module == "builtins"
-                    else f"{module}.{sig_type.__name__}"
+                    sig_type.__name__ if module == "builtins" else sig_type.__name__
                 )
+
                 path_annotation = next(
                     (e for e in extras if isinstance(e, (ParamPath, PropPath))), None
                 )
@@ -400,6 +392,8 @@ class GenNodeCode:
                 format_annotation = next(
                     (e for e in extras if isinstance(e, Format)), None
                 )
+                if format_annotation is not None:
+                    format_annotation = f"Format.{format_annotation.name}"
 
                 # Get description from comments
                 description = descriptions.get(attr_name)
@@ -431,6 +425,43 @@ class GenNodeCode:
 
         return parameters, properties, modules
 
+    def _parse_enum_class(self, class_symbol: str, class_obj: type):
+        """Parse an enum class from existing module.
+
+        Args:
+            class_symbol: Name of the class
+            class_obj: The class object
+
+        """
+        # Extract description from docstring
+        description = inspect.getdoc(class_obj) or ""
+
+        # Extract enum members from class attributes
+        members = []
+
+        for attr_name, attr_value in class_obj.__dict__.items():
+            # Skip private/magic attributes and methods
+            if attr_name.startswith("_") or callable(attr_value):
+                continue
+
+            # Create an EnumMember for each enum value
+            # attr_name is the member name (e.g., "RAMP")
+            # attr_value is the member value (e.g., "ramp")
+            member = EnumMember(name=attr_name, value=attr_value, description=None)
+            members.append(member)
+
+        bases = [base.__name__ for base in class_obj.__bases__]
+
+        # Create and return the EnumClass
+        self.enum_classes.append(
+            EnumClass(
+                name=class_symbol,
+                members=members,
+                description=description,
+                base_enum_class=bases[0] if bases else "StrictEnum",
+            )
+        )
+
     def _parse_module_class(self, class_symbol: str, class_obj: type):
         """Parse a module class from existing module.
 
@@ -456,6 +487,15 @@ class GenNodeCode:
         # Extract description from docstring
         description = inspect.getdoc(class_obj) or ""
 
+        mod_enums: list[EnumClass] = []
+        enums = {enum_class.name: enum_class for enum_class in self.enum_classes}
+
+        for param in parameters:
+            if param.type_param in enums:
+                enum_class = enums[param.type_param]
+                if enum_class not in mod_enums:
+                    mod_enums.append(enum_class)
+
         mod_cls = ModuleClass(
             name=class_symbol,
             bases=bases,
@@ -463,6 +503,7 @@ class GenNodeCode:
             properties=properties,
             methods=methods,
             description=description,
+            enums=mod_enums,
         )
         self.module_classes.append(mod_cls)
 
@@ -772,6 +813,7 @@ class GenNodeCode:
                             members=enum_members,
                             description=enum_descr,
                         )
+
                         module_enum_classes.append(enum_cls)
 
                         # Use the specific enum class name instead of generic
@@ -939,6 +981,12 @@ class GenNodeCode:
             if len(enum_list) == 1:
                 # Single enum definition - use StrictEnum
                 _, enum = enum_list[0]
+
+                # an already merged enum read in from a file
+                if enum.base_enum_class != "StrictEnum":
+                    merged_enums.append(enum)
+                    continue
+
                 enum.base_enum_class = "StrictEnum"
                 merged_enums.append(enum)
             else:
@@ -1009,7 +1057,7 @@ def get_type_param(secop_dtype: DataType) -> str | None:
     if module == "builtins":
         return sig_type.__name__
 
-    return f"{module}.{sig_type.__name__}"
+    return sig_type.__name__
 
 
 def get_type_prop(prop_value) -> str | None:
