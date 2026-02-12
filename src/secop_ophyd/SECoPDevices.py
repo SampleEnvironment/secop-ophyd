@@ -576,6 +576,7 @@ class SECoPCMDDevice(StandardReadable, Flyable, Triggerable):
 class SECoPDevice(StandardReadable):
 
     clients: Dict[str, AsyncFrappyClient] = {}
+
     node_id: str
     sri: str
     host: str

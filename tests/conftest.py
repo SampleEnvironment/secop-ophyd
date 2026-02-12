@@ -20,6 +20,16 @@ from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient
 from secop_ophyd.SECoPDevices import SECoPNodeDevice
 
 
+@pytest.fixture(autouse=True)
+def cleanup_secop_clients():
+    """Clear SECoP clients between tests to ensure fresh connections."""
+    yield
+    # After each test, clear the cached clients
+    from secop_ophyd.SECoPDevices import SECoPDevice
+
+    SECoPDevice.clients.clear()
+
+
 @pytest.fixture
 def clean_generated_file():
     """Clean up generated genNodeClass.py file before test runs.
@@ -153,7 +163,7 @@ def logger():
     return logger
 
 
-@pytest.fixture
+@pytest.fixture()
 async def async_frappy_client(cryo_sim, logger, port="10769"):
     client = AsyncFrappyClient(host="localhost", port=port, log=logger)
 
@@ -162,7 +172,7 @@ async def async_frappy_client(cryo_sim, logger, port="10769"):
     return client
 
 
-@pytest.fixture
+@pytest.fixture()
 async def nested_client(nested_struct_sim, logger, port="10771"):
     client = AsyncFrappyClient(host="localhost", port=port, log=logger)
 
@@ -171,13 +181,13 @@ async def nested_client(nested_struct_sim, logger, port="10771"):
     return client
 
 
-@pytest.fixture
+@pytest.fixture()
 async def RE():  # noqa: N802
     re = RunEngine({})
     return re
 
 
-@pytest.fixture
+@pytest.fixture()
 async def nested_node_no_re():
     async with init_devices():
         nested = SECoPNodeDevice(
@@ -187,7 +197,7 @@ async def nested_node_no_re():
     return nested
 
 
-@pytest.fixture
+@pytest.fixture()
 def nested_node(RE):  # noqa: N803
     with init_devices():
         nested = SECoPNodeDevice(
@@ -197,17 +207,16 @@ def nested_node(RE):  # noqa: N803
     return nested
 
 
-@pytest.fixture
+@pytest.fixture()
 async def cryo_node_no_re():
     async with init_devices():
         cryo = SECoPNodeDevice(
             sec_node_uri="localhost:10769",
         )
-
     return cryo
 
 
-@pytest.fixture
+@pytest.fixture()
 def cryo_node(RE):  # noqa: N803
     with init_devices():
         cryo = SECoPNodeDevice(
