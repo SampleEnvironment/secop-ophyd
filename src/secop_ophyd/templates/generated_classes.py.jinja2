@@ -51,7 +51,15 @@ class {{ module_cls.name }}({{ module_cls.bases | join(', ') }}):
 {%- else %}
     {{ attr.name }}: {{ attr.type }}{% if attr.type_param %}[{{ attr.type_param }}]{% endif %}
 {%- endif %}
-{%- if attr.description %}  # {{ attr.description }}{% endif %}
+{%- if attr.description %}
+{%- set render_below = '\n' in attr.description or attr.description|length > inline_comment_threshold %}
+{%- if render_below %}
+{%- set wrapped_desc = attr.description | wordwrap(comment_wrap_width, break_long_words=False, wrapstring='\n') %}
+    # {{ (wrapped_desc | replace('\n', '\n    # ')) ~ '\n' }}
+
+{%- else %}  # {{ attr.description }}
+{%- endif %}
+{%- endif %}
 {%- endfor %}
 {%- endif %}
 {%- if module_cls.methods %}

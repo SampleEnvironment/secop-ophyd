@@ -31,6 +31,32 @@ def cleanup_secop_clients():
 
 
 @pytest.fixture
+def mass_spectrometer_description():
+    mass_spectrometer_description = (
+        Path(__file__).parent / "static_test_data" / "SHALL_mass_spec_describe.txt"
+    )
+
+    with mass_spectrometer_description.open() as f:
+        description = f.read()
+
+    return description
+
+
+@pytest.fixture
+def mass_spectrometer_description_no_impl():
+    mass_spectrometer_description = (
+        Path(__file__).parent
+        / "static_test_data"
+        / "SHALL_mass_spec_describe_no_impl_prop.txt"
+    )
+
+    with mass_spectrometer_description.open() as f:
+        description = f.read()
+
+    return description
+
+
+@pytest.fixture
 def clean_generated_file():
     """Clean up generated genNodeClass.py file before test runs.
 

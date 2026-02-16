@@ -542,7 +542,7 @@ async def test_gen_real_node(
     # Enum classes should be generated for enum parameters
     # The gas_type parameter in enum1/enum2 modules should generate enum classes
     assert (
-        "class Test_EnumGas_typeEnum(SupersetEnum):" in generated_code
+        "class TestEnum_GasType_Enum(SupersetEnum):" in generated_code
     ), "Enum class for gas_type should be generated"
 
     # Verify enum members are present
@@ -576,12 +576,12 @@ async def test_subsequent_real_nodes_with_enum(
 
     # ===== Assertions for generated enum classes =====
     cls = [
-        "class Test_EnumGas_typeEnum(SupersetEnum):",
-        "class Test_Mod_str(SECoPReadableDevice):",
-        "class OPHYD_test_primitive_arrays(SECoPReadableDevice):",
-        "class Test_Enum(SECoPReadableDevice):",
-        "class Test_ND_arrays(SECoPReadableDevice):",
-        "class Test_Struct_of_arrays(SECoPReadableDevice):",
+        "class TestEnum_GasType_Enum(SupersetEnum):",
+        "class TestModStr(SECoPReadableDevice):",
+        "class OphydTestPrimitiveArrays(SECoPReadableDevice):",
+        "class TestEnum(SECoPReadableDevice):",
+        "class TestNdArrays(SECoPReadableDevice):",
+        "class TestStructOfArrays(SECoPReadableDevice):",
         "class Ophyd_secop_frappy_demo(SECoPNodeDevice):",
     ]
     for classs_str in cls:
@@ -598,16 +598,90 @@ async def test_subsequent_real_nodes_with_enum(
     # ===== Assertions for generated enum classes =====
 
     cls = [
-        "class Test_EnumGas_typeEnum(SupersetEnum):",
-        "class Test_Mod_str(SECoPReadableDevice):",
-        "class OPHYD_test_primitive_arrays(SECoPReadableDevice):",
-        "class Test_Enum(SECoPReadableDevice):",
-        "class Test_ND_arrays(SECoPReadableDevice):",
-        "class Test_Struct_of_arrays(SECoPReadableDevice):",
+        "class TestEnum_GasType_Enum(SupersetEnum):",
+        "class TestModStr(SECoPReadableDevice):",
+        "class OphydTestPrimitiveArrays(SECoPReadableDevice):",
+        "class TestEnum(SECoPReadableDevice):",
+        "class TestNdArrays(SECoPReadableDevice):",
+        "class TestStructOfArrays(SECoPReadableDevice):",
         "class Ophyd_secop_frappy_demo(SECoPNodeDevice):",
         "class Cryo_7_frappy_demo(SECoPNodeDevice):",
         "class Cryostat(SECoPMoveableDevice):",
-        "class CryostatModeEnum(StrictEnum):",
+        "class Cryostat_Mode_Enum(StrictEnum):",
     ]
     for classs_str in cls:
         assert classs_str in generated_code
+
+
+def test_gen_shall_mass_spec_node(
+    clean_generated_file, mass_spectrometer_description: str
+):
+    """Test generating code for the SHALL mass spectrometer node using a
+    real description."""
+
+    gen_code = GenNodeCode(path=str(clean_generated_file))
+
+    gen_code.from_json_describe(mass_spectrometer_description)
+
+    gen_code.write_gen_node_class_file()
+
+    gen_file = clean_generated_file / "genNodeClass.py"
+    assert gen_file.exists(), "Generated file should exist"
+
+    generated_code = gen_file.read_text()
+
+    # Trailing newlines in source descriptions should not produce broken split comments
+    assert "\n# ; Unit: (V)" not in generated_code
+    assert "\n#  ; Unit: (%)" not in generated_code
+
+    # Intentionally multiline descriptions should be rendered as multiline comments
+    assert (
+        'mid_descriptor: A[SignalRW[ndarray], ParamPath("mass_spec:mid_descriptor")]'
+        in generated_code
+    )
+    assert "#           Example:" in generated_code
+    assert "#             {" in generated_code
+    assert "#               mass:    [12,15,28,75]," in generated_code
+    assert "#               device:  [FARADAY,SEM,SEM,SEM]" in generated_code
+
+    # Long descriptions should be rendered fully below the declaration and wrapped
+    assert (
+        'resolution: A[SignalR[float], ParamPath("mass_spec:resolution")]\n'
+        in generated_code
+    )
+    assert (
+        "#  The high mass peak width/valley adjustment used during set up and"
+        in generated_code
+    )
+    assert (
+        "# low masses and should be adjusted in conjunction with the Delta-M."
+        in generated_code
+    )
+
+    # Reparse generated code and verify multiline comments survive round-trip generation
+    roundtrip_gen = GenNodeCode(path=str(clean_generated_file))
+    roundtrip_code = roundtrip_gen.generate_code()
+
+    assert (
+        'mid_descriptor: A[SignalRW[ndarray], ParamPath("mass_spec:mid_descriptor")]'
+        in roundtrip_code
+    )
+    assert "Example:" in roundtrip_code
+    assert "\n# ; Unit: (V)" not in roundtrip_code
+    assert (
+        'resolution: A[SignalR[float], ParamPath("mass_spec:resolution")]\n'
+        in roundtrip_code
+    )
+
+
+def test_gen_shall_mass_spec_node_no_impl(
+    clean_generated_file, mass_spectrometer_description_no_impl: str
+):
+    """Test generating code for the SHALL mass spectrometer node using a
+    real description."""
+
+    gen_code = GenNodeCode(path=str(clean_generated_file))
+
+    gen_code.from_json_describe(mass_spectrometer_description_no_impl)
+
+    gen_code.write_gen_node_class_file()

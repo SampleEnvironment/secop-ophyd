@@ -183,6 +183,8 @@ class GenNodeCode:
         self.node_classes: list[NodeClass] = []
         self.enum_classes: list[EnumClass] = []
         self.node_mod: ModuleType | None = None
+        self.inline_comment_threshold: int = 120
+        self.comment_wrap_width: int = 100
 
         # Required imports for abstract classes
         self.add_import("abc", "abstractmethod")
@@ -331,26 +333,76 @@ class GenNodeCode:
         descriptions = {}
         try:
             source = inspect.getsource(class_obj)
-            for line in source.split("\n"):
-                # Skip lines without comments
-                if "#" not in line:
-                    continue
+            lines = source.split("\n")
+            idx = 0
 
-                # Extract the part before # (attribute assignment)
-                code_part, comment_part = line.split("#", 1)
+            def _comment_text(raw_comment: str) -> str:
+                text = raw_comment
+                if text.startswith(" "):
+                    text = text[1:]
+                return text.rstrip()
+
+            while idx < len(lines):
+                line = lines[idx]
+                stripped_line = line.lstrip()
 
                 # Find attribute name (e.g., "count" from "count: A[SignalRW[int],...")
-                match = re.match(r"\s*(\w+)\s*:", code_part)
-                if match:
-                    attr_name = match.group(1)
-                    description = comment_part.strip()
-                    if description:
-                        descriptions[attr_name] = description
+                # and ignore class/function/decorator lines.
+                if stripped_line.startswith(("class ", "def ", "@")):
+                    idx += 1
+                    continue
+
+                match = re.match(r"\s*(\w+)\s*:", line)
+                if not match:
+                    idx += 1
+                    continue
+
+                attr_name = match.group(1)
+                description_lines: list[str] = []
+
+                # Optional inline comment on the attribute declaration line
+                if "#" in line:
+                    _, comment_part = line.split("#", 1)
+                    description_lines.append(_comment_text(comment_part))
+
+                # Collect multiline comment block continuations below declaration:
+                #     attr: Type
+                #         # first line
+                #         # second line
+                next_idx = idx + 1
+                while next_idx < len(lines):
+                    next_line = lines[next_idx]
+                    stripped = next_line.lstrip()
+
+                    if not stripped.startswith("#"):
+                        break
+
+                    continuation = _comment_text(stripped[1:])
+                    description_lines.append(continuation)
+                    next_idx += 1
+
+                description = "\n".join(description_lines).rstrip()
+                if description:
+                    descriptions[attr_name] = description
+
+                idx = next_idx
         except Exception as e:
             if self.log:
                 self.log.debug(f"Could not extract descriptions from source: {e}")
 
         return descriptions
+
+    def _normalize_description(self, description: str | None) -> str:
+        """Normalize description text for generated comments.
+
+        - Trim trailing whitespace/newlines
+        - Preserve intentional internal newlines
+        """
+        if description is None:
+            return ""
+
+        normalized = description.rstrip()
+        return normalized if normalized else ""
 
     def _get_attr_list(
         self, class_obj: type
@@ -697,8 +749,14 @@ class GenNodeCode:
             # Add the module class, use self reported "implementation" module property,
             # if not present use the module name
             module_class = modname
-            if properties.get("implementation") is not None:
+            if properties.get("implementation", ""):
                 module_class = properties.get("implementation", "").split(".").pop()
+
+            module_class_list = (
+                module_class.replace(" ", "_").replace("-", "_").split("_")
+            )
+
+            module_class = "".join(word.capitalize() for word in module_class_list)
 
             # Module enum classes
             module_enum_classes = []
@@ -748,10 +806,15 @@ class GenNodeCode:
 
             for param_name, param_data in parameters.items():
 
-                descr = param_data["description"]
+                descr = self._normalize_description(param_data.get("description", ""))
                 unit = param_data["datainfo"].get("unit")
 
-                param_descr = f"{descr}; Unit: ({unit})" if unit else descr
+                if unit:
+                    param_descr = (
+                        f"{descr}; Unit: ({unit})" if descr else f"Unit: ({unit})"
+                    )
+                else:
+                    param_descr = descr
                 signal_base = SignalR if param_data["readonly"] else SignalRW
 
                 format = None
@@ -786,7 +849,15 @@ class GenNodeCode:
                 if type_param and "StrictEnum" in type_param:
                     # Generate unique enum class name:
                     # ModuleClass + ParamName + Enum
-                    enum_class_name = f"{module_class}{param_name.capitalize()}Enum"
+                    param_name_list = (
+                        param_name.replace(" ", "_").replace("-", "_").split("_")
+                    )
+
+                    param_name_camel = "".join(
+                        word.capitalize() for word in param_name_list
+                    )
+
+                    enum_class_name = f"{module_class}_{param_name_camel}_Enum"
 
                     # Extract enum members from datainfo
                     enum_members_dict = datainfo.get("members", {})
@@ -921,6 +992,8 @@ class GenNodeCode:
             "module_classes": self.module_classes,
             "node_classes": self.node_classes,
             "enum_classes": self._collect_all_enums(),
+            "inline_comment_threshold": self.inline_comment_threshold,
+            "comment_wrap_width": self.comment_wrap_width,
         }
 
         # Render template
