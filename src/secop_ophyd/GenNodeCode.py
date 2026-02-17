@@ -1,10 +1,14 @@
 """Code generation for annotated ophyd device classes using Jinja2 templates."""
 
+import ast
 import inspect
+import io
 import json
 import linecache
 import re
 import sys
+import textwrap
+import tokenize
 from dataclasses import dataclass, field
 from enum import StrEnum
 from importlib import import_module, reload
@@ -324,68 +328,67 @@ class GenNodeCode:
     def _extract_descriptions_from_source(self, class_obj: type) -> dict[str, str]:
         """Extract trailing comment descriptions from class source code.
 
+        Uses ``ast`` to find class-level annotated attributes and ``tokenize`` to
+        read actual Python comment tokens. This avoids false positives from ``#``
+        inside strings and ignores non-attribute annotations.
+
         Args:
             class_obj: The class object to extract descriptions from
 
         Returns:
             Dictionary mapping attribute names to their descriptions
         """
-        descriptions = {}
+        descriptions: dict[str, str] = {}
         try:
-            source = inspect.getsource(class_obj)
-            lines = source.split("\n")
-            idx = 0
+            source = textwrap.dedent(inspect.getsource(class_obj))
+            source_lines = source.splitlines()
+            module_ast = ast.parse(source)
 
-            def _comment_text(raw_comment: str) -> str:
-                text = raw_comment
-                if text.startswith(" "):
-                    text = text[1:]
-                return text.rstrip()
+            class_nodes = [
+                node for node in module_ast.body if isinstance(node, ast.ClassDef)
+            ]
+            if not class_nodes:
+                return descriptions
 
-            while idx < len(lines):
-                line = lines[idx]
-                stripped_line = line.lstrip()
+            class_node = class_nodes[0]
 
-                # Find attribute name (e.g., "count" from "count: A[SignalRW[int],...")
-                # and ignore class/function/decorator lines.
-                if stripped_line.startswith(("class ", "def ", "@")):
-                    idx += 1
+            comments_by_line: dict[int, list[str]] = {}
+            for token_info in tokenize.generate_tokens(io.StringIO(source).readline):
+                if token_info.type != tokenize.COMMENT:
                     continue
 
-                match = re.match(r"\s*(\w+)\s*:", line)
-                if not match:
-                    idx += 1
+                comment_text = token_info.string[1:].lstrip().rstrip()
+                comments_by_line.setdefault(token_info.start[0], []).append(
+                    comment_text
+                )
+
+            for node in class_node.body:
+                if not isinstance(node, ast.AnnAssign):
                     continue
 
-                attr_name = match.group(1)
+                if not isinstance(node.target, ast.Name):
+                    continue
+
+                attr_name = node.target.id
+                annotation_end_line = getattr(node, "end_lineno", node.lineno)
                 description_lines: list[str] = []
 
-                # Optional inline comment on the attribute declaration line
-                if "#" in line:
-                    _, comment_part = line.split("#", 1)
-                    description_lines.append(_comment_text(comment_part))
+                # Inline comment on the annotation line.
+                description_lines.extend(comments_by_line.get(annotation_end_line, []))
 
-                # Collect multiline comment block continuations below declaration:
-                #     attr: Type
-                #         # first line
-                #         # second line
-                next_idx = idx + 1
-                while next_idx < len(lines):
-                    next_line = lines[next_idx]
-                    stripped = next_line.lstrip()
-
-                    if not stripped.startswith("#"):
+                # Multiline trailing comment block directly below the annotation.
+                next_line_no = annotation_end_line + 1
+                while next_line_no <= len(source_lines):
+                    stripped_line = source_lines[next_line_no - 1].lstrip()
+                    if not stripped_line.startswith("#"):
                         break
 
-                    continuation = _comment_text(stripped[1:])
-                    description_lines.append(continuation)
-                    next_idx += 1
+                    description_lines.extend(comments_by_line.get(next_line_no, []))
+                    next_line_no += 1
 
                 description = "\n".join(description_lines).rstrip()
                 if description:
                     descriptions[attr_name] = description
-
-                idx = next_idx
         except Exception as e:
             if self.log:
                 self.log.debug(f"Could not extract descriptions from source: {e}")

@@ -20,6 +20,25 @@ from secop_ophyd.SECoPDevices import ParamPath, PropPath, SECoPNodeDevice
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 
+class _DescriptionParseSample:
+    count: int  # count comment
+    label: str = "value # not a comment"
+    # label continuation
+
+    def helper(self):
+        local: int  # must not be parsed  # noqa: F842
+
+
+def test_extract_descriptions_from_source_is_token_safe():
+    """Ensure parser only reads real comments and ignores '#' inside strings."""
+    gen_code = GenNodeCode(log=None)
+    descriptions = gen_code._extract_descriptions_from_source(_DescriptionParseSample)
+
+    assert descriptions["count"] == "count comment"
+    assert descriptions["label"] == "label continuation"
+    assert "local" not in descriptions
+
+
 def test_basic_functionality(clean_generated_file):
     """Test basic GenNodeCode functionality."""
     print("Testing GenNodeCode refactored implementation...")
