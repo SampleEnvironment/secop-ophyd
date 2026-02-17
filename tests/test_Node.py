@@ -20,6 +20,33 @@ async def test_node_read(cryo_sim, cryo_node_no_re: SECoPNodeDevice):
     print(val_read)
     assert val_read != {}
 
+    print(cryo_node_no_re.cryo.value.name)
+    print(cryo_node_no_re.cryo.value.source)
+
+
+async def test_source(cryo_sim, cryo_node_no_re: SECoPNodeDevice):
+    # Node device should return the readbacks of the read signals of the child devices
+
+    # Prameter name and source
+    val_name = cryo_node_no_re.cryo.value.name
+    val_source = cryo_node_no_re.cryo.value.source
+
+    assert val_name == "cryo_7-frappy-demo-cryo-value"
+    assert val_source == "localhost:10769:cryo:value"
+
+    # property name and source
+    prop_name = cryo_node_no_re.equipment_id.name
+    prop_source = cryo_node_no_re.equipment_id.source
+
+    assert prop_name == "cryo_7-frappy-demo-equipment_id"
+    assert prop_source == "localhost:10769:equipment_id"
+
+    mod_prop_name = cryo_node_no_re.cryo.description.name
+    mod_prop_source = cryo_node_no_re.cryo.description.source
+
+    assert mod_prop_name == "cryo_7-frappy-demo-cryo-description"
+    assert mod_prop_source == "localhost:10769:cryo:description"
+
 
 async def test_node_describe(cryo_sim, cryo_node_no_re: SECoPNodeDevice):
     # Node device should return the descriptions of the read signals of the child

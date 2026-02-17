@@ -314,7 +314,7 @@ class SECoPBackend(SignalBackend[SignalDatatypeT]):
         self.path_str = path
 
     def source(self, name: str, read: bool) -> str:
-        return self.path_str
+        return self._secclient.host + ":" + self._secclient.port + ":" + self.path_str
 
     async def connect(self, timeout: float):
         """Connect and initialize backend (handles both parameters and properties)."""
