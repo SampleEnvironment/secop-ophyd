@@ -284,6 +284,20 @@ class SECoPBackend(SignalBackend[SignalDatatypeT]):
         path: str,
         secclient: AsyncFrappyClient,
     ):
+        if self.attribute_type is not None:
+
+            if secclient != self._secclient:
+                raise RuntimeError(
+                    "Backend already initialized with a different SECoP client, cannot "
+                    "re-initialize"
+                )
+
+            if self.attribute_type != AttributeType.PARAMETER:
+                raise RuntimeError(
+                    f"Backend already initialized as {self.attribute_type}, "
+                    f"cannot re-initialize as PARAMETER"
+                )
+
         self.attribute_type = AttributeType.PARAMETER
 
         module_name, parameter_name = path.split(":", maxsplit=1)
@@ -299,6 +313,20 @@ class SECoPBackend(SignalBackend[SignalDatatypeT]):
     def init_property_from_introspection(
         self, datatype: type[SignalDatatypeT], path: str, secclient: AsyncFrappyClient
     ):
+        if self.attribute_type is not None:
+
+            if secclient != self._secclient:
+                raise RuntimeError(
+                    "Backend already initialized with a different SECoP client, cannot "
+                    "re-initialize"
+                )
+
+            if self.attribute_type != AttributeType.PROPERTY:
+                raise RuntimeError(
+                    f"Backend already initialized as {self.attribute_type}, cannot "
+                    f"re-initialize as PROPERTY"
+                )
+
         self.attribute_type = AttributeType.PROPERTY
         if path.count(":") == 0:
             module_name = None
@@ -308,6 +336,7 @@ class SECoPBackend(SignalBackend[SignalDatatypeT]):
 
         self._module_name = module_name
         self._attribute_name = property_name
+
         self._secclient = secclient
         self.datatype = datatype
 

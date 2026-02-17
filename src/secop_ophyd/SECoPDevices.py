@@ -4,7 +4,6 @@ import re
 import time as ttime
 import warnings
 from abc import abstractmethod
-from dataclasses import dataclass
 from logging import Logger
 from types import MethodType
 from typing import Any, Dict, Iterator, Optional, Type
@@ -137,25 +136,13 @@ def is_config_signal(device: StandardReadable, signal: SignalR | SignalRW) -> bo
     return False
 
 
-@dataclass(init=False)
-class ParamPath:
+class ParameterType:
     """Annotation for Parameter Signals, defines the path to the parameter
     in the secclient module dict"""
 
-    module: str
-    parameter: str
-
-    def __init__(self, param_path: str) -> None:
-        # Parse from delimited string
-        parts = param_path.split(":")
-        if len(parts) != 2:
-            raise ValueError(f"Expected 'module:param', got '{param_path}'")
-        self.module = parts[0].strip()
-        self.parameter = parts[1].strip()
-
     def __repr__(self) -> str:
         """Return repr suitable for code generation in annotations."""
-        return f'ParamPath("{self.module}:{self.parameter}")'
+        return "ParameterType()"
 
     def __call__(self, parent: Device, child: Device):
         if not isinstance(child, Signal):
@@ -165,39 +152,17 @@ class ParamPath:
 
         if not isinstance(backend, SECoPBackend):
             return
+
         backend.attribute_type = AttributeType.PARAMETER
-
-        backend._module_name = self.module
-        backend._attribute_name = self.parameter
         backend._secclient = parent._client
-        backend.path_str = self.module + ":" + self.parameter
 
 
-@dataclass(init=False)
-class PropPath:
+class PropertyType:
     """Annotation for Module Property Signals, defines the path to the property"""
-
-    property: str
-
-    # if module is None, property is assumed to be at node level,
-    # otherwise at module level
-    module: str | None = None
-
-    def __init__(self, property_path: str) -> None:
-        # Parse from delimited string
-        parts = property_path.split(":")
-        if len(parts) == 2:
-            self.module = parts[0].strip()
-            self.property = parts[1].strip()
-        else:
-            self.property = property_path.strip()
-            self.module = None  # --> node level property
 
     def __repr__(self) -> str:
         """Return repr suitable for code generation in annotations."""
-        if self.module is None:
-            return f'PropPath("{self.property}")'
-        return f'PropPath("{self.module}:{self.property}")'
+        return "PropertyType()"
 
     def __call__(self, parent: Device, child: Device):
         if not isinstance(child, Signal):
@@ -209,15 +174,7 @@ class PropPath:
             return
 
         backend.attribute_type = AttributeType.PROPERTY
-
-        backend._module_name = self.module
-        backend._attribute_name = self.property
         backend._secclient = parent._client
-
-        if self.module:
-            backend.path_str = self.module + ":" + self.property
-        else:
-            backend.path_str = self.property
 
 
 class SECoPDeviceConnector(DeviceConnector):
@@ -1193,7 +1150,6 @@ class SECoPMoveableDevice(SECoPReadableDevice, Locatable, Stoppable):
 
         if not success:
             self.logger.info(f"Stopping {self.name} success={success}")
-            print(f"Stopping {self.name} success={success}")
             await self._client.exec_command(self.module, "stop")
             self._stopped = True
 

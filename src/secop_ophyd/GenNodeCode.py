@@ -29,8 +29,8 @@ from ophyd_async.core._utils import get_origin_class
 
 from secop_ophyd.SECoPDevices import (
     IGNORED_PROPS,
-    ParamPath,
-    PropPath,
+    ParameterType,
+    PropertyType,
     class_from_interface,
     secop_enum_name_to_python,
 )
@@ -201,8 +201,8 @@ class GenNodeCode:
         self.add_import("ophyd_async.core", "SupersetEnum")
         self.add_import("typing", "Any")
         self.add_import("numpy", "ndarray")
-        self.add_import("secop_ophyd.SECoPDevices", "ParamPath")
-        self.add_import("secop_ophyd.SECoPDevices", "PropPath")
+        self.add_import("secop_ophyd.SECoPDevices", "ParameterType")
+        self.add_import("secop_ophyd.SECoPDevices", "PropertyType")
         # Add necessary Device imports
         self.add_import("secop_ophyd.SECoPDevices", "SECoPDevice")
         self.add_import("secop_ophyd.SECoPDevices", "SECoPCommunicatorDevice")
@@ -439,10 +439,13 @@ class GenNodeCode:
                 )
 
                 path_annotation = next(
-                    (e for e in extras if isinstance(e, (ParamPath, PropPath))), None
+                    (e for e in extras if isinstance(e, (ParameterType, PropertyType))),
+                    None,
                 )
                 category = (
-                    "property" if isinstance(path_annotation, PropPath) else "parameter"
+                    "property"
+                    if isinstance(path_annotation, PropertyType)
+                    else "parameter"
                 )
                 format_annotation = next(
                     (e for e in extras if isinstance(e, Format)), None
@@ -902,7 +905,7 @@ class GenNodeCode:
                         type=signal_base.__name__,
                         type_param=type_param,
                         description=param_descr,
-                        path_annotation=str(ParamPath(f"{modname}:{param_name}")),
+                        path_annotation=str(ParameterType()),
                         format_annotation=format,
                     )
                 )
@@ -923,7 +926,7 @@ class GenNodeCode:
                         name=prop_name,
                         type=SignalR.__name__,
                         type_param=type_param,
-                        path_annotation=str(PropPath(f"{modname}:{prop_name}")),
+                        path_annotation=str(PropertyType()),
                     )
                 )
 
@@ -952,7 +955,7 @@ class GenNodeCode:
                     name=prop_name,
                     type=SignalR.__name__,
                     type_param=type_param,
-                    path_annotation=str(PropPath(prop_name)),
+                    path_annotation=str(PropertyType()),
                 )
             )
 

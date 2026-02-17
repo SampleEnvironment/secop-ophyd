@@ -20,9 +20,6 @@ async def test_node_read(cryo_sim, cryo_node_no_re: SECoPNodeDevice):
     print(val_read)
     assert val_read != {}
 
-    print(cryo_node_no_re.cryo.value.name)
-    print(cryo_node_no_re.cryo.value.source)
-
 
 async def test_source(cryo_sim, cryo_node_no_re: SECoPNodeDevice):
     # Node device should return the readbacks of the read signals of the child devices
