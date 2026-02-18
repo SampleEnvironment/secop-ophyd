@@ -124,11 +124,11 @@ def test_basic_functionality(clean_generated_file):
     # Verify code contains expected elements
     assert "from abc import abstractmethod" in code
     assert "class TestModule(SECoPDevice):" in code
-    assert "temperature: A[SignalR[float], ParameterType()]" in code
-    assert "count: A[SignalRW[int], ParameterType()]" in code
+    assert "temperature: A[SignalR[float], ParamT()]" in code
+    assert "count: A[SignalRW[int], ParamT()]" in code
     assert "class TestNode(SECoPNodeDevice):" in code
     assert "module1: TestModule" in code
-    assert "status: A[SignalR[str], PropertyType()]" in code
+    assert "status: A[SignalR[str], PropT()]" in code
     assert "def sample_command" in code
 
     print("\n✓ All basic tests passed!")
@@ -221,13 +221,13 @@ def test_subsequent_node_generation(clean_generated_file):
                 type="SignalR",
                 type_param="float",
                 description="this has to be in the final output",
-                path_annotation="ParameterType()",
+                path_annotation=str(ParameterType()),
             ),
             ParameterAttribute(
                 name="setpoint",
                 type="SignalRW",
                 type_param="float",
-                path_annotation="ParameterType()",
+                path_annotation=str(ParameterType()),
             ),
         ],
         properties=[
@@ -235,13 +235,13 @@ def test_subsequent_node_generation(clean_generated_file):
                 name="description",
                 type="SignalR",
                 type_param="str",
-                path_annotation="PropertyType()",
+                path_annotation=str(PropertyType()),
             ),
             PropertyAttribute(
                 name="interface_classes",
                 type="SignalR",
                 type_param="int",
-                path_annotation="PropertyType()",
+                path_annotation=str(PropertyType()),
             ),
         ],
         cmd_plans=[method_type1],
@@ -257,13 +257,13 @@ def test_subsequent_node_generation(clean_generated_file):
                 name="pressure",
                 type="SignalR",
                 type_param="float",
-                path_annotation="ParameterType()",
+                path_annotation=str(ParameterType()),
             ),
             ParameterAttribute(
                 name="mode",
                 type="SignalRW",
                 type_param="str",
-                path_annotation="ParameterType()",
+                path_annotation=str(ParameterType()),
             ),
         ],
         properties=[
@@ -271,7 +271,7 @@ def test_subsequent_node_generation(clean_generated_file):
                 name="implementation",
                 type="SignalR",
                 type_param="str",
-                path_annotation="PropertyType()",
+                path_annotation=str(PropertyType()),
             ),
         ],
         cmd_plans=[method_type2],
@@ -291,7 +291,7 @@ def test_subsequent_node_generation(clean_generated_file):
                 name="status",
                 type="SignalR",
                 type_param="str",
-                path_annotation="PropertyType()",
+                path_annotation=str(PropertyType()),
             ),
         ],
         description="NodeA with Type1 and Type2 modules",
@@ -336,13 +336,13 @@ def test_subsequent_node_generation(clean_generated_file):
                 name="temperature",
                 type="SignalR",
                 type_param="float",
-                path_annotation="ParameterType()",
+                path_annotation=str(ParameterType()),
             ),
             ParameterAttribute(
                 name="setpoint",
                 type="SignalRW",
                 type_param="float",
-                path_annotation="ParameterType()",
+                path_annotation=str(ParameterType()),
             ),
         ],
         properties=[
@@ -350,13 +350,13 @@ def test_subsequent_node_generation(clean_generated_file):
                 name="description",
                 type="SignalR",
                 type_param="str",
-                path_annotation="PropertyType()",
+                path_annotation=str(PropertyType()),
             ),
             PropertyAttribute(
                 name="interface_classes",
                 type="SignalR",
                 type_param="list",
-                path_annotation="PropertyType()",
+                path_annotation=str(PropertyType()),
             ),
         ],
         cmd_plans=[method_type1],
@@ -373,13 +373,13 @@ def test_subsequent_node_generation(clean_generated_file):
                 type="SignalRW",
                 type_param="int",
                 description="this is a description",
-                path_annotation="ParameterType()",
+                path_annotation=str(ParameterType()),
             ),
             ParameterAttribute(
                 name="enabled",
                 type="SignalR",
                 type_param="bool",
-                path_annotation="ParameterType()",
+                path_annotation=str(ParameterType()),
             ),
         ],
         properties=[
@@ -387,7 +387,7 @@ def test_subsequent_node_generation(clean_generated_file):
                 name="group",
                 type="SignalR",
                 type_param="str",
-                path_annotation="PropertyType()",
+                path_annotation=str(PropertyType()),
             ),
         ],
         cmd_plans=[method_type3],
@@ -407,7 +407,7 @@ def test_subsequent_node_generation(clean_generated_file):
                 name="name",
                 type="SignalR",
                 type_param="str",
-                path_annotation="PropertyType()",
+                path_annotation=str(PropertyType()),
             ),
         ],
         description="NodeB with Type1 and Type3 modules",
@@ -654,14 +654,14 @@ def test_gen_shall_mass_spec_node(
     assert "\n#  ; Unit: (%)" not in generated_code
 
     # Intentionally multiline descriptions should be rendered as multiline comments
-    assert "mid_descriptor: A[SignalRW[ndarray], ParameterType()]" in generated_code
+    assert "mid_descriptor: A[SignalRW[ndarray], ParamT()]" in generated_code
     assert "#           Example:" in generated_code
     assert "#             {" in generated_code
     assert "#               mass:    [12,15,28,75]," in generated_code
     assert "#               device:  [FARADAY,SEM,SEM,SEM]" in generated_code
 
     # Long descriptions should be rendered fully below the declaration and wrapped
-    assert "resolution: A[SignalR[float], ParameterType()]\n" in generated_code
+    assert "resolution: A[SignalR[float], ParamT()]\n" in generated_code
     assert (
         "#  The high mass peak width/valley adjustment used during set up and"
         in generated_code
@@ -675,10 +675,10 @@ def test_gen_shall_mass_spec_node(
     roundtrip_gen = GenNodeCode(path=str(clean_generated_file))
     roundtrip_code = roundtrip_gen.generate_code()
 
-    assert "mid_descriptor: A[SignalRW[ndarray], ParameterType()]" in roundtrip_code
+    assert "mid_descriptor: A[SignalRW[ndarray], ParamT()]" in roundtrip_code
     assert "Example:" in roundtrip_code
     assert "\n# ; Unit: (V)" not in roundtrip_code
-    assert "resolution: A[SignalR[float], ParameterType()]\n" in roundtrip_code
+    assert "resolution: A[SignalR[float], ParamT()]\n" in roundtrip_code
 
 
 def test_gen_shall_mass_spec_node_no_impl(

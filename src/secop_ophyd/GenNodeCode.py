@@ -201,8 +201,8 @@ class GenNodeCode:
         self.add_import("ophyd_async.core", "SupersetEnum")
         self.add_import("typing", "Any")
         self.add_import("numpy", "ndarray")
-        self.add_import("secop_ophyd.SECoPDevices", "ParameterType")
-        self.add_import("secop_ophyd.SECoPDevices", "PropertyType")
+        self.add_import("secop_ophyd.SECoPDevices", "ParameterType as ParamT")
+        self.add_import("secop_ophyd.SECoPDevices", "PropertyType as PropT")
         # Add necessary Device imports
         self.add_import("secop_ophyd.SECoPDevices", "SECoPDevice")
         self.add_import("secop_ophyd.SECoPDevices", "SECoPCommunicatorDevice")
