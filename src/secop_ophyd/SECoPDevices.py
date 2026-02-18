@@ -142,7 +142,7 @@ class ParameterType:
 
     def __repr__(self) -> str:
         """Return repr suitable for code generation in annotations."""
-        return "ParameterType()"
+        return "ParamT()"
 
     def __call__(self, parent: Device, child: Device):
         if not isinstance(child, Signal):
@@ -162,7 +162,7 @@ class PropertyType:
 
     def __repr__(self) -> str:
         """Return repr suitable for code generation in annotations."""
-        return "PropertyType()"
+        return "PropT()"
 
     def __call__(self, parent: Device, child: Device):
         if not isinstance(child, Signal):
