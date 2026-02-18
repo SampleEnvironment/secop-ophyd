@@ -1105,7 +1105,7 @@ class SECoPMoveableDevice(SECoPReadableDevice, Locatable, Stoppable):
         self._success = True
         self._stopped = False
 
-        await self.target.set(new_target, wait=False)
+        await self.target.set(new_target)
         self.logger.info(f"Moving {self.name} to {new_target}")
 
         # force reading of status from device

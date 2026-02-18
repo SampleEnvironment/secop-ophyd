@@ -108,7 +108,7 @@ class LocalBackend(SignalBackend):
     async def connect(self, timeout: float):
         pass
 
-    async def put(self, value: Any | None, wait=True):
+    async def put(self, value: Any | None):
         self.reading.set_reading(self.SECoP_type_info.val2secop(value))
 
         if self.callback is not None:
@@ -174,7 +174,7 @@ class SECoPXBackend(SignalBackend):
     async def connect(self, timeout: float):
         pass
 
-    async def put(self, value: Any | None, wait=True):
+    async def put(self, value: Any | None):
 
         if self.argument is None:
             argument = None
@@ -442,7 +442,7 @@ class SECoPBackend(SignalBackend[SignalDatatypeT]):
         self.readonly = True
         self.datatype = self.SECoP_type_info.np_datatype
 
-    async def put(self, value: Any | None, wait=True):
+    async def put(self, value: Any | None):
         """Put a value to the parameter. Properties are readonly."""
 
         if self.attribute_type == AttributeType.PROPERTY:
@@ -454,12 +454,7 @@ class SECoPBackend(SignalBackend[SignalDatatypeT]):
         # convert to frappy compatible Format
         secop_val = self.SECoP_type_info.val2secop(value)
 
-        # frappy client has no ability to just send a secop message without
-        # waiting for a reply
-        await asyncio.wait_for(
-            self._secclient.set_parameter(**self.get_param_path(), value=secop_val),
-            timeout=None,
-        )
+        await self._secclient.set_parameter(**self.get_param_path(), value=secop_val)
 
     async def get_datakey(self, source: str) -> DataKey:
         """Metadata like source, dtype, shape, precision, units"""
