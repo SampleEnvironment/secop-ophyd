@@ -1,7 +1,7 @@
 import asyncio
 import warnings
 from functools import wraps
-from typing import Any, Callable, Dict
+from typing import Any, Callable
 
 from bluesky.protocols import DataKey, Reading
 from frappy.client import CacheItem
@@ -17,7 +17,13 @@ from frappy.datatypes import (
     StructOf,
     TupleOf,
 )
-from ophyd_async.core import Callback, SignalBackend, SignalDatatypeT
+from ophyd_async.core import (
+    Callback,
+    SignalBackend,
+    SignalDatatypeT,
+    StandardReadableFormat,
+    StrictEnum,
+)
 
 from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient
 from secop_ophyd.util import Path, SECoPDataKey, SECoPdtype, SECoPReading, deep_get
@@ -35,6 +41,11 @@ atomic_dtypes = (
 
 # max depth for datatypes supported by tiled/databroker
 MAX_DEPTH = 1
+
+
+class AttributeType(StrictEnum):
+    PARAMETER = "parameter"
+    PROPERTY = "property"
 
 
 class LocalBackend(SignalBackend):
@@ -120,7 +131,6 @@ class LocalBackend(SignalBackend):
         self.callback = callback  # type: ignore[assignment]
 
 
-# TODO add return of Asyncstatus
 class SECoPXBackend(SignalBackend):
     """
     Signal backend for SignalX of a SECoP_CMD_Device, that handles command execution
@@ -216,69 +226,180 @@ class SECoPXBackend(SignalBackend):
         )
 
 
-class SECoPParamBackend(SignalBackend):
-    """Standard backend for a Signal that represents SECoP Parameter"""
+class SECoPBackend(SignalBackend[SignalDatatypeT]):
+    """Unified backend for SECoP Parameters and Properties.
 
-    def __init__(self, path: Path, secclient: AsyncFrappyClient) -> None:
-        """_summary_
 
-        :param path: Path to the parameter in the secclient module dict
-        :type path: Path
-        :param secclient: SECoP client providing communication to the SEC Node
-        :type secclient: AsyncFrappyClient
+    This allows a single backend type to be used in signal_backend_factory,
+    with deferred initialization based on annotation metadata.
+    """
+
+    format: StandardReadableFormat
+    attribute_type: str | None
+    _module_name: str | None
+    _attribute_name: str | None  # parameter or property name
+    _secclient: AsyncFrappyClient
+    path_str: str
+    SECoPdtype_obj: DataType
+    SECoP_type_info: SECoPdtype
+    describe_dict: dict
+
+    def __init__(
+        self,
+        datatype: type[SignalDatatypeT] | None,
+        path: str | None = None,
+        attribute_type: str | None = None,
+        secclient: AsyncFrappyClient | None = None,
+    ):
+        """Initialize backend (supports deferred initialization).
+
+        Args:
+            datatype: Optional datatype for the signal
+            path: Optional path for immediate initialization (module:param or prop_key)
+            secclient: Optional SECoP client for immediate initialization
         """
+        self._module_name = None
+        self._attribute_name = None
 
-        # secclient
-        self._secclient: AsyncFrappyClient = secclient
+        self.attribute_type = attribute_type
 
-        # module:acessible Path for reading/writing (module,accessible)
-        self.path: Path = path
+        if secclient:
+            self._secclient = secclient
 
+        self.path_str = path or ""
+
+        if path and secclient:
+
+            if path.count(":") == 0:
+                self._module_name = None
+                self._attribute_name = path
+            else:
+                self._module_name, self._attribute_name = path.split(":", maxsplit=1)
+
+        super().__init__(datatype)
+
+    def init_parameter_from_introspection(
+        self,
+        datatype: type[SignalDatatypeT],
+        path: str,
+        secclient: AsyncFrappyClient,
+    ):
+        if self.attribute_type is not None:
+
+            if secclient != self._secclient:
+                raise RuntimeError(
+                    "Backend already initialized with a different SECoP client, cannot "
+                    "re-initialize"
+                )
+
+            if self.attribute_type != AttributeType.PARAMETER:
+                raise RuntimeError(
+                    f"Backend already initialized as {self.attribute_type}, "
+                    f"cannot re-initialize as PARAMETER"
+                )
+
+        self.attribute_type = AttributeType.PARAMETER
+
+        module_name, parameter_name = path.split(":", maxsplit=1)
+
+        self._module_name = module_name
+        self._attribute_name = parameter_name
+        self._secclient = secclient
+
+        self.datatype = datatype
+
+        self.path_str = path
+
+    def init_property_from_introspection(
+        self, datatype: type[SignalDatatypeT], path: str, secclient: AsyncFrappyClient
+    ):
+        if self.attribute_type is not None:
+
+            if secclient != self._secclient:
+                raise RuntimeError(
+                    "Backend already initialized with a different SECoP client, cannot "
+                    "re-initialize"
+                )
+
+            if self.attribute_type != AttributeType.PROPERTY:
+                raise RuntimeError(
+                    f"Backend already initialized as {self.attribute_type}, cannot "
+                    f"re-initialize as PROPERTY"
+                )
+
+        self.attribute_type = AttributeType.PROPERTY
+        if path.count(":") == 0:
+            module_name = None
+            property_name = path
+        else:
+            module_name, property_name = path.split(":", maxsplit=1)
+
+        self._module_name = module_name
+        self._attribute_name = property_name
+
+        self._secclient = secclient
+        self.datatype = datatype
+
+        self.path_str = path
+
+    def source(self, name: str, read: bool) -> str:
+        return self._secclient.host + ":" + self._secclient.port + ":" + self.path_str
+
+    async def connect(self, timeout: float):
+        """Connect and initialize backend (handles both parameters and properties)."""
+        await self._secclient.connect()
+
+        match self.attribute_type:
+            case AttributeType.PROPERTY:
+                await self._init_property()
+            case AttributeType.PARAMETER:
+                await self._init_parameter()
+
+    async def _init_parameter(self):
+        """Initialize as a parameter signal."""
         self._param_description: dict = self._get_param_desc()
 
+        if not hasattr(self, "format"):
+            match self._param_description.get("_signal_format", None):
+                case "HINTED_SIGNAL":
+                    self.format = StandardReadableFormat.HINTED_SIGNAL
+                case "HINTED_UNCACHED_SIGNAL":
+                    self.format = StandardReadableFormat.HINTED_UNCACHED_SIGNAL
+                case "UNCACHED_SIGNAL":
+                    self.format = StandardReadableFormat.UNCACHED_SIGNAL
+                case _:
+                    self.format = StandardReadableFormat.CONFIG_SIGNAL
+
         # Root datainfo or memberinfo for nested datatypes
-        self.datainfo: dict = deep_get(
-            self._param_description["datainfo"], self.path.get_memberinfo_path()
-        )
-
+        self.datainfo: dict = self._param_description["datainfo"]
         self.readonly = self._param_description.get("readonly")
-
-        self.SECoPdtype_str: str
-        self.SECoPdtype_obj: DataType = self._param_description["datatype"]
-
-        self.SECoP_type_info: SECoPdtype = SECoPdtype(self.SECoPdtype_obj)
+        self.SECoPdtype_obj = self._param_description["datatype"]
+        self.SECoP_type_info = SECoPdtype(self.SECoPdtype_obj)
 
         if self.SECoP_type_info.max_depth > MAX_DEPTH:
             warnings.warn(
-                f"The datatype of parameter '{path._accessible_name}' has a maximum "
+                f"The datatype of parameter '{self._attribute_name}' has a maximum "
                 f"depth of {self.SECoP_type_info.max_depth}. Tiled & Databroker only "
                 f"support a Depth upto {MAX_DEPTH} "
                 f"dtype_descr: {self.SECoP_type_info.dtype_descr}"
             )
 
-        self.describe_dict: dict = {}
-
         self.source_name = (
-            secclient.uri
+            self._secclient.uri
             + ":"
-            + secclient.nodename
+            + self._secclient.nodename
             + ":"
-            + self.path._module_name
+            + self._module_name
             + ":"
-            + self.path._accessible_name
+            + self._attribute_name
         )
 
-        # SECoP metadata is static and can only change when connection is reset
         self.describe_dict = {}
-
         self.describe_dict["source"] = self.source_name
-
-        # add gathered keys from SECoPdtype:
         self.describe_dict.update(self.SECoP_type_info.get_datakey())
 
         for property_name, prop_val in self._param_description.items():
-            # skip datainfo (treated seperately)
-            if property_name == "datainfo" or property_name == "datatype":
+            if property_name in ("datainfo", "datatype"):
                 continue
             self.describe_dict[property_name] = prop_val
 
@@ -289,15 +410,47 @@ class SECoPParamBackend(SignalBackend):
                 property_name = "units"
             self.describe_dict[property_name] = prop_val
 
-        super().__init__(datatype=self.SECoP_type_info.np_datatype)
+        self.datatype = self.SECoP_type_info.np_datatype
 
-    def source(self, name: str, read: bool) -> str:
-        return self.source_name
+    async def _init_property(self):
+        """Initialize as a property signal."""
 
-    async def connect(self, timeout: float):
-        pass
+        if self._module_name:
+            module_desc = self._secclient.modules[self._module_name]
+            self._property_dict = module_desc["properties"]
+        else:
+            self._property_dict = self._secclient.properties
+
+        self._prop_value = self._property_dict[self._attribute_name]
+        self.SECoPdtype_obj = secop_dtype_obj_from_json(self._prop_value)
+        self.SECoP_type_info = SECoPdtype(self.SECoPdtype_obj)
+
+        if self.SECoP_type_info.max_depth > MAX_DEPTH:
+            warnings.warn(
+                f"The datatype of property '{self._attribute_name}' has a maximum "
+                f"depth of {self.SECoP_type_info.max_depth}. Tiled & Databroker only "
+                f"support a Depth upto {MAX_DEPTH} "
+                f"dtype_descr: {self.SECoP_type_info.dtype_descr}"
+            )
+
+        self.describe_dict = {}
+        self.describe_dict["source"] = self.path_str
+        self.describe_dict.update(self.SECoP_type_info.get_datakey())
+
+        # Properties are always readonly
+        self.format = StandardReadableFormat.CONFIG_SIGNAL
+        self.readonly = True
+        self.datatype = self.SECoP_type_info.np_datatype
 
     async def put(self, value: Any | None, wait=True):
+        """Put a value to the parameter. Properties are readonly."""
+
+        if self.attribute_type == AttributeType.PROPERTY:
+            # Properties are readonly
+            raise RuntimeError(
+                f"Cannot set property '{self._attribute_name}', properties are readonly"
+            )
+
         # convert to frappy compatible Format
         secop_val = self.SECoP_type_info.val2secop(value)
 
@@ -310,6 +463,9 @@ class SECoPParamBackend(SignalBackend):
 
     async def get_datakey(self, source: str) -> DataKey:
         """Metadata like source, dtype, shape, precision, units"""
+        if self.attribute_type == AttributeType.PROPERTY:
+            # Properties have static metadata
+            return describedict_to_datakey(self.describe_dict)
 
         if self.SECoP_type_info._is_composite or isinstance(
             self.SECoPdtype_obj, ArrayOf
@@ -326,23 +482,35 @@ class SECoPParamBackend(SignalBackend):
         return describedict_to_datakey(self.describe_dict)
 
     async def get_reading(self) -> Reading[SignalDatatypeT]:
-        dataset = await self._secclient.get_parameter(
-            **self.get_param_path(), trycache=True
-        )
+        """Get reading, handling both parameters and properties."""
+        if self.attribute_type == AttributeType.PROPERTY:
+            # Properties have static values
+            dataset = CacheItem(
+                value=self._prop_value, timestamp=self._secclient.conn_timestamp
+            )
+            sec_reading = SECoPReading(entry=dataset, secop_dt=self.SECoP_type_info)
+            return sec_reading.get_reading()
 
-        sec_reading = SECoPReading(entry=dataset, secop_dt=self.SECoP_type_info)
-
-        return sec_reading.get_reading()
+        else:
+            # Parameters are fetched from SECoP
+            dataset = await self._secclient.get_parameter(
+                **self.get_param_path(), trycache=True
+            )
+            sec_reading = SECoPReading(entry=dataset, secop_dt=self.SECoP_type_info)
+            return sec_reading.get_reading()
 
     async def get_value(self) -> SignalDatatypeT:
         dataset: Reading = await self.get_reading()
-
         return dataset["value"]  # type: ignore
 
     async def get_setpoint(self) -> SignalDatatypeT:
         return await self.get_value()
 
     def set_callback(self, callback: Callback[Reading[SignalDatatypeT]] | None) -> None:
+        if self.attribute_type == AttributeType.PROPERTY:
+            # Properties are static, no callbacks
+            return
+
         def awaitify(sync_func):
             """Wrap a synchronous callable to allow ``await``'ing it"""
 
@@ -367,106 +535,16 @@ class SECoPParamBackend(SignalBackend):
             self._secclient.unregister_callback(self.get_path_tuple(), updateItem)
 
     def _get_param_desc(self) -> dict:
-        return deep_get(self._secclient.modules, self.path.get_param_desc_path())
-
-    def get_param_path(self):
-        return self.path.get_param_path()
-
-    def get_path_tuple(self):
-        return self.path.get_path_tuple()
-
-    def get_unit(self):
-        return self.describe_dict.get("units", None)
-
-    def is_number(self) -> bool:
-        if (
-            self.describe_dict["dtype"] == "number"
-            or self.describe_dict["dtype"] == "integer"
-        ):
-            return True
-
-        return False
-
-
-class PropertyBackend(SignalBackend):
-    """Readonly backend for static SECoP Properties of Nodes/Modules"""
-
-    def __init__(
-        self, prop_key: str, property_dict: Dict[str, Any], secclient: AsyncFrappyClient
-    ) -> None:
-        """Initializes PropertyBackend
-
-        :param prop_key: Name of Property
-        :type prop_key: str
-        :param propertyDict: Dicitonary containing all properties of Node/Module
-        :type propertyDict: Dict[str, T]
-        :param secclient: SECoP client providing communication to the SEC Node
-        :type secclient: AsyncFrappyClient
-        """
-        # secclient
-
-        self._property_dict = property_dict
-        self._prop_key = prop_key
-        self._prop_value = self._property_dict[self._prop_key]
-        self.SECoPdtype_obj: DataType = secop_dtype_obj_from_json(self._prop_value)
-        self.SECoP_type_info: SECoPdtype = SECoPdtype(self.SECoPdtype_obj)
-
-        if self.SECoP_type_info.max_depth > MAX_DEPTH:
-            warnings.warn(
-                f"The datatype of parameter '{prop_key}' has a maximum"
-                f"depth of {self.SECoP_type_info.max_depth}. Tiled & Databroker only"
-                f"support a Depth upto {MAX_DEPTH}"
-                f"dtype_descr: {self.SECoP_type_info.dtype_descr}"
-            )
-
-        # SECoP metadata is static and can only change when connection is reset
-        self.describe_dict = {}
-        self.source_name = prop_key
-        self.describe_dict["source"] = self.source_name
-
-        # add gathered keys from SECoPdtype:
-        self.describe_dict.update(self.SECoP_type_info.get_datakey())
-
-        self._secclient: AsyncFrappyClient = secclient
-        # TODO full property path
-
-        super().__init__(datatype=self.SECoP_type_info.np_datatype)
-
-    def source(self, name: str, read: bool) -> str:
-        return str(self.source_name)
-
-    async def connect(self, timeout: float):
-        """Connect to underlying hardware"""
-        pass
-
-    async def put(self, value: SignalDatatypeT | None, wait=True):
-        """Put a value to the PV, if wait then wait for completion for up to timeout"""
-        # Properties are readonly
-        pass
-
-    async def get_datakey(self, source: str) -> DataKey:
-        """Metadata like source, dtype, shape, precision, units"""
-        return describedict_to_datakey(self.describe_dict)
-
-    async def get_reading(self) -> Reading[SignalDatatypeT]:
-        dataset = CacheItem(
-            value=self._prop_value, timestamp=self._secclient.conn_timestamp
+        return deep_get(
+            self._secclient.modules,
+            [self._module_name, "parameters", self._attribute_name],
         )
 
-        sec_reading = SECoPReading(entry=dataset, secop_dt=self.SECoP_type_info)
+    def get_param_path(self):
+        return {"module": self._module_name, "parameter": self._attribute_name}
 
-        return sec_reading.get_reading()
-
-    async def get_value(self) -> SignalDatatypeT:
-        dataset: Reading = await self.get_reading()
-
-        return dataset["value"]  # type: ignore
-
-    async def get_setpoint(self) -> SignalDatatypeT:
-        return await self.get_value()
-
-    def set_callback(self, callback: Callback[Reading[SignalDatatypeT]] | None) -> None:
-        pass
+    def get_path_tuple(self):
+        return (self._module_name, self._attribute_name)
 
 
 def secop_dtype_obj_from_json(prop_val):

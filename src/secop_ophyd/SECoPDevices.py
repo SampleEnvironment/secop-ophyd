@@ -1,8 +1,9 @@
 import asyncio
-import inspect
 import logging
 import re
 import time as ttime
+import warnings
+from abc import abstractmethod
 from logging import Logger
 from types import MethodType
 from typing import Any, Dict, Iterator, Optional, Type
@@ -33,7 +34,11 @@ from frappy.datatypes import (
 from ophyd_async.core import (
     DEFAULT_TIMEOUT,
     AsyncStatus,
+    Device,
+    DeviceConnector,
+    DeviceFiller,
     LazyMock,
+    Signal,
     SignalR,
     SignalRW,
     SignalX,
@@ -44,13 +49,12 @@ from ophyd_async.core import (
 from ophyd_async.core._utils import Callback
 
 from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient
-from secop_ophyd.GenNodeCode import GenNodeCode, Method
-from secop_ophyd.logs import LOG_LEVELS, setup_logging
+from secop_ophyd.logs import setup_logging
 from secop_ophyd.propertykeys import DATAINFO, EQUIPMENT_ID, INTERFACE_CLASSES
 from secop_ophyd.SECoPSignal import (
+    AttributeType,
     LocalBackend,
-    PropertyBackend,
-    SECoPParamBackend,
+    SECoPBackend,
     SECoPXBackend,
 )
 from secop_ophyd.util import Path
@@ -78,8 +82,322 @@ ERROR_PREPARED = 450
 UNKNOWN = 401  # not in SECoP standard (yet)
 
 
+IGNORED_PROPS = ["meaning", "_plotly"]
+
+
 def clean_identifier(anystring):
     return str(re.sub(r"\W+|^(?=\d)", "_", anystring))
+
+
+def secop_enum_name_to_python(member_name: str) -> str:
+    """Convert SECoP enum member name to Python identifier.
+
+    Examples:
+        'Low Energy' -> 'LOW_ENERGY'
+        'high-power' -> 'HIGH_POWER'
+        'Mode 1' -> 'MODE_1'
+
+    :param member_name: Original SECoP enum member name
+    :return: Python-compatible identifier in UPPER_CASE
+    """
+    # Replace spaces and hyphens with underscores, remove other special chars
+    cleaned = re.sub(r"[\s-]+", "_", member_name)
+    cleaned = re.sub(r"[^a-zA-Z0-9_]", "", cleaned)
+    # Convert to uppercase
+    cleaned = cleaned.upper()
+    # Ensure it doesn't start with a digit
+    if cleaned and cleaned[0].isdigit():
+        cleaned = "_" + cleaned
+    return cleaned
+
+
+def format_assigned(device: StandardReadable, signal: SignalR) -> bool:
+    if (
+        signal.describe in device._describe_funcs
+        or signal.describe in device._describe_config_funcs
+    ):
+        # Standard readable format already assigned
+        return True
+
+    return False
+
+
+def is_read_signal(device: StandardReadable, signal: SignalR | SignalRW) -> bool:
+    if signal.describe in device._describe_funcs:
+        return True
+
+    return False
+
+
+def is_config_signal(device: StandardReadable, signal: SignalR | SignalRW) -> bool:
+    if signal.describe in device._describe_config_funcs:
+        return True
+
+    return False
+
+
+class ParameterType:
+    """Annotation for Parameter Signals, defines the path to the parameter
+    in the secclient module dict"""
+
+    def __repr__(self) -> str:
+        """Return repr suitable for code generation in annotations."""
+        return "ParameterType()"
+
+    def __call__(self, parent: Device, child: Device):
+        if not isinstance(child, Signal):
+            return
+
+        backend = child._connector.backend
+
+        if not isinstance(backend, SECoPBackend):
+            return
+
+        backend.attribute_type = AttributeType.PARAMETER
+        backend._secclient = parent._client
+
+
+class PropertyType:
+    """Annotation for Module Property Signals, defines the path to the property"""
+
+    def __repr__(self) -> str:
+        """Return repr suitable for code generation in annotations."""
+        return "PropertyType()"
+
+    def __call__(self, parent: Device, child: Device):
+        if not isinstance(child, Signal):
+            return
+
+        backend = child._connector.backend
+
+        if not isinstance(backend, SECoPBackend):
+            return
+
+        backend.attribute_type = AttributeType.PROPERTY
+        backend._secclient = parent._client
+
+
+class SECoPDeviceConnector(DeviceConnector):
+
+    sri: str
+    module: str | None
+    node_id: str
+    _auto_fill_signals: bool
+
+    def __init__(
+        self,
+        sri: str,
+        auto_fill_signals: bool = True,
+        loglevel=logging.INFO,
+        logdir: str | None = None,
+    ) -> None:
+
+        self.sri = sri
+        self.node_id = sri.split(":")[0] + ":" + sri.split(":")[1]
+        self._auto_fill_signals = auto_fill_signals
+        self.loglevel = loglevel
+        self.logdir = logdir
+
+        if sri.count(":") == 2:
+            self.module = sri.split(":")[2]
+        elif sri.count(":") == 1:
+            self.module = None
+        else:
+            raise RuntimeError(f"Invalid SECoP resource identifier: {sri}")
+
+        if SECoPDevice.clients.get(self.node_id) is None:
+            raise RuntimeError(f"No AsyncFrappyClient for URI {sri} exists")
+
+        self.client: AsyncFrappyClient = SECoPDevice.clients[self.node_id]
+
+    def set_module(self, module_name: str):
+        if self.sri.count(":") != 1:
+            raise RuntimeError(
+                "Module can only be set if SRI does not already contain module"
+            )
+        self.module = module_name
+        self.sri = self.sri + ":" + module_name
+
+    def create_children_from_annotations(self, device: Device):
+        if not hasattr(self, "filler"):
+            self.filler = DeviceFiller(
+                device=device,
+                signal_backend_factory=SECoPBackend,
+                device_connector_factory=lambda: SECoPDeviceConnector(
+                    self.sri, self._auto_fill_signals, self.loglevel, self.logdir
+                ),
+            )
+
+        list(self.filler.create_signals_from_annotations())
+        list(self.filler.create_devices_from_annotations(filled=False))
+
+        self.filler.check_created()
+
+    def fill_backend_with_path(self, backend: SECoPBackend, annotations: list[Any]):
+        unhandled = []
+        while annotations:
+            annotation = annotations.pop(0)
+
+            if isinstance(annotation, StandardReadableFormat):
+                backend.format = annotation
+
+            else:
+                unhandled.append(annotation)
+
+        annotations.extend(unhandled)
+        # These leftover annotations will now be handled by the iterator
+
+    async def connect_mock(self, device: Device, mock: LazyMock):
+        # Make 2 entries for each DeviceVector
+        self.filler.create_device_vector_entries_to_mock(2)
+        # Set the name of the device to name all children
+        device.set_name(device.name)
+        await super().connect_mock(device, mock)
+
+    async def connect_real(self, device: Device, timeout: float, force_reconnect: bool):
+        if not self.sri:
+            raise RuntimeError(f"Could not connect to SEC node: {self.sri}")
+
+        # Establish connection to SEC Node
+        await self.client.connect(3)
+
+        # Module Device: fill Parameters & Pproperties
+        # (commands are done via annotated plans)
+        if self.module:
+
+            # Fill Parmeters
+            parameter_dict = self.client.modules[self.module]["parameters"]
+            # remove ignored signals
+            parameters = [
+                child
+                for child in parameter_dict.keys()
+                if child not in self.filler.ignored_signals
+            ]
+
+            # Dertermine children that are declared but not yet filled
+            not_filled = {unfilled for unfilled, _ in device.children()}
+
+            for param_name in parameters:
+                if self._auto_fill_signals or param_name in not_filled:
+                    signal_type = (
+                        SignalR if parameter_dict[param_name]["readonly"] else SignalRW
+                    )
+
+                    backend = self.filler.fill_child_signal(param_name, signal_type)
+
+                    from secop_ophyd.GenNodeCode import get_type_param
+
+                    datatype = get_type_param(parameter_dict[param_name]["datatype"])
+                    backend.init_parameter_from_introspection(
+                        datatype=datatype,
+                        path=self.module + ":" + param_name,
+                        secclient=self.client,
+                    )
+
+            # Fill Properties
+            module_property_dict = self.client.modules[self.module]["properties"]
+
+            # remove ignored signals
+            module_properties = [
+                child
+                for child in module_property_dict.keys()
+                if child not in self.filler.ignored_signals
+            ]
+
+            for mod_property_name in module_properties:
+                if self._auto_fill_signals or mod_property_name in not_filled:
+
+                    # properties are always read only
+                    backend = self.filler.fill_child_signal(mod_property_name, SignalR)
+
+                    from secop_ophyd.GenNodeCode import get_type_prop
+
+                    datatype = get_type_prop(module_property_dict[mod_property_name])
+
+                    backend.init_property_from_introspection(
+                        datatype=datatype,
+                        path=self.module + ":" + mod_property_name,
+                        secclient=self.client,
+                    )
+
+        # Node Device: fill child devices (modules)
+        else:
+
+            # Fill Module devices
+            modules = self.client.modules
+
+            not_filled = {unfilled for unfilled, _ in device.children()}
+
+            for module_name in modules.keys():
+                if self._auto_fill_signals or module_name in not_filled:
+                    module_properties = modules[module_name]["properties"]
+                    device_sub_class = class_from_interface(module_properties)
+
+                    self.filler.fill_child_device(module_name, device_sub_class)
+
+                    mod_dev: SECoPDevice = getattr(device, module_name)
+                    mod_dev.set_module(module_name)
+
+            # Fill Node properties
+            node_property_dict = self.client.properties
+
+            # remove ignored signals
+            node_properties = [
+                child
+                for child in node_property_dict.keys()
+                if child not in self.filler.ignored_signals
+            ]
+
+            for node_property_name in node_properties:
+                if self._auto_fill_signals or node_property_name in not_filled:
+
+                    # properties are always read only
+                    backend = self.filler.fill_child_signal(node_property_name, SignalR)
+
+                    from secop_ophyd.GenNodeCode import get_type_prop
+
+                    datatype = get_type_prop(node_property_dict[node_property_name])
+
+                    backend.init_property_from_introspection(
+                        datatype=datatype,
+                        path=node_property_name,
+                        secclient=self.client,
+                    )
+
+        self.filler.check_filled(f"{self.node_id}")
+
+        # Set the name of the device to name all children
+        device.set_name(device.name)
+        await super().connect_real(device, timeout, force_reconnect)
+
+        # All Signals and child devs should be filled and connected now, in the next
+        # all signals and child devices need to be added to the according
+        # StandardReadableFormat with the hierarchiy:
+        # 1. Format given in Annotation
+        #       --> these will already have been set by the DeviceFiller
+        # 2. Module Interface Class definition (value, target,...)
+        #       --> these are set at the end of a .connect() method of the according
+        #           SECoPDevice subclass skipping any signals that have already been
+        #           set by annotations (should emit warning if there is a conflict
+        #           config vs read sig)
+        # 3. & 4. Definition in Parameter property "_signal_format" + Defaults
+        #   - _signal_format property + default CONFIG_SIGNAL for all other Signals
+        #       --> these are set here at the end of SECoPDeviceConnector.connect_real()
+        #           for all Signals that have not yet been set to a format
+        #   - CHILD format for all child devices (SECoPDevice instances)
+        #       --> these are set at the end of SECoPNodeDevice.connect() method
+        #           the device tree has only a depth of 2 levels (Node -> Modules)
+        #
+
+        # device has to be standard readable for this to make sense
+        if not isinstance(device, SECoPDevice):
+            return
+
+        # 2. Module Interface Class definition (value, target,...)
+        await device._assign_interface_formats()
+
+        # 3. & 4. Definition in Parameter property "_signal_format" + Defaults
+        await device._assign_default_formats()
 
 
 class SECoPCMDDevice(StandardReadable, Flyable, Triggerable):
@@ -212,200 +530,119 @@ class SECoPCMDDevice(StandardReadable, Flyable, Triggerable):
         )
 
 
-class SECoPBaseDevice(StandardReadable):
-    """Base Class for generating Opyd devices from SEC Node modules,
-    objects of type SECoPBaseDevice are not supposed to be instanciated
+class SECoPDevice(StandardReadable):
 
-    """
+    clients: Dict[str, AsyncFrappyClient] = {}
+
+    node_id: str
+    sri: str
+    host: str
+    port: str
+    module: str | None
+    mod_prop_devices: Dict[str, SignalR]
+    param_devices: Dict[str, Any]
+    logger: Logger
+
+    hinted_signals: list[str] = []
 
     def __init__(
         self,
-        secclient: AsyncFrappyClient,
-        module_name: str,
+        sri: str = "",  # SECoP resource identifier host:port:optional[module]
+        name: str = "",
+        connector: SECoPDeviceConnector | None = None,
         loglevel=logging.INFO,
         logdir: str | None = None,
     ) -> None:
-        """Initiate A SECoPBaseDevice
 
-        :param secclient: SECoP client providing communication to the SEC Node
-        :type secclient: AsyncFrappyClient
-        """
-        # config_params is default
-        self._hinted_params: list[str] = ["value", "target"]
-        self._uncached_params: list[str] = []
-        self._hinted_uncached_params: list[str] = []
+        if connector and sri:
+            raise RuntimeError("Provide either sri or connector, not both")
 
-        self._secclient: AsyncFrappyClient = secclient
+        if connector:
+            sri = connector.sri
+            loglevel = connector.loglevel
+            logdir = connector.logdir
 
-        self.impl: str | None = None
+        self.sri = sri
+        self.host = sri.split(":")[0]
+        self.port = sri.split(":")[1]
+        self.mod_prop_devices = {}
+        self.param_devices = {}
+        self.node_id = sri.split(":")[0] + ":" + sri.split(":")[1]
 
-        self._module = module_name
-        module_desc = secclient.modules[module_name]
-        self.plans: list[Method] = []
-        self.mod_prop_devices: Dict[str, SignalR] = {}
-        self.param_devices: Dict[str, Any] = {}
-
-        name = self._secclient.properties[EQUIPMENT_ID].replace(".", "-")
-
-        for parameter, properties in module_desc["parameters"].items():
-            match properties.get("_signal_format", None):
-                case "HINTED_SIGNAL":
-                    if parameter not in self._hinted_params:
-                        self._hinted_params.append(parameter)
-
-                case "HINTED_UNCACHED_SIGNAL":
-                    if parameter not in self._hinted_uncached_params:
-                        self._hinted_uncached_params.append(parameter)
-                case "UNCACHED_SIGNAL":
-                    if parameter not in self._uncached_params:
-                        self._uncached_params.append(parameter)
-                case _:
-                    continue
-
-        self.logger: Logger = setup_logging(
-            name=f"secop-ophyd:{name}:{module_name}", level=loglevel, log_dir=logdir
+        self.logger = setup_logging(
+            name=f"frappy:{self.host}:{self.port}",
+            level=loglevel,
+            log_dir=logdir,
         )
 
-        self.logger.info(f"Initializing SECoPBaseDevice for module {module_name}")
-        # Add configuration Signals
-        with self.add_children_as_readables(
-            format=StandardReadableFormat.CONFIG_SIGNAL
-        ):
-            # generate Signals from Module Properties
-            for property in module_desc["properties"]:
+        self.module = None
+        if len(sri.split(":")) > 2:
+            self.module = sri.split(":")[2]
 
-                if property == "implementation":
-                    self.impl = module_desc["properties"]["implementation"]
-
-                if property in ["meaning", "_plotly"]:
-                    continue
-
-                propb = PropertyBackend(property, module_desc["properties"], secclient)
-
-                setattr(self, property, SignalR(backend=propb))
-                self.mod_prop_devices[property] = getattr(self, property)
-
-            # generate Signals from Module parameters eiter r or rw
-            for parameter, properties in module_desc["parameters"].items():
-                if (
-                    parameter
-                    in self._hinted_params
-                    + self._uncached_params
-                    + self._hinted_uncached_params
-                ):
-                    continue
-                # generate new root path
-                param_path = Path(parameter_name=parameter, module_name=module_name)
-
-                # readonly propertyns to plans and plan stubs.
-                readonly: bool = properties.get("readonly", None)
-
-                # Normal types + (struct and tuple as JSON object Strings)
-                self._signal_from_parameter(
-                    path=param_path,
-                    sig_name=parameter,
-                    readonly=readonly,
-                )
-                self.param_devices[parameter] = getattr(self, parameter)
-
-        self.add_signals_by_format(
-            format=StandardReadableFormat.HINTED_SIGNAL,
-            format_params=self._hinted_params,
-            module_name=module_name,
-            module_desc=module_desc,
-        )
-
-        self.add_signals_by_format(
-            format=StandardReadableFormat.UNCACHED_SIGNAL,
-            format_params=self._uncached_params,
-            module_name=module_name,
-            module_desc=module_desc,
-        )
-
-        self.add_signals_by_format(
-            format=StandardReadableFormat.HINTED_UNCACHED_SIGNAL,
-            format_params=self._hinted_uncached_params,
-            module_name=module_name,
-            module_desc=module_desc,
-        )
-
-        # Initialize Command Devices
-        for command, properties in module_desc["commands"].items():
-            # generate new root path
-            cmd_path = Path(parameter_name=command, module_name=module_name)
-            cmd_dev_name = command + "_CMD"
-            setattr(
-                self,
-                cmd_dev_name,
-                SECoPCMDDevice(path=cmd_path, secclient=secclient),
+        if SECoPDevice.clients.get(self.node_id) is None:
+            SECoPDevice.clients[self.node_id] = AsyncFrappyClient(
+                host=self.host, port=self.port, log=self.logger
             )
 
-            cmd_dev: SECoPCMDDevice = getattr(self, cmd_dev_name)
-            # Add Bluesky Plan Methods
+        connector = connector or SECoPDeviceConnector(sri=sri)
 
-            # Stop is already an ophyd native operation
-            if command == "stop":
-                continue
+        self._client: AsyncFrappyClient = SECoPDevice.clients[self.node_id]
 
-            cmd_plan = self.generate_cmd_plan(
-                cmd_dev, cmd_dev.arg_dtype, cmd_dev.res_dtype
-            )
+        super().__init__(name=name, connector=connector)
 
-            setattr(self, command, MethodType(cmd_plan, self))
+    def set_module(self, module_name: str):
+        if self.module is not None:
+            raise RuntimeError("Module can only be set if it was not already set")
 
-            description: str = ""
-            description += f"{cmd_dev.description}\n"
-            description += f"       argument: {str(cmd_dev.arg_dtype)}\n"
-            description += f"       result: {str(cmd_dev.res_dtype)}"
+        self.module = module_name
+        self.sri = self.sri + ":" + module_name
 
-            plan = Method(
-                cmd_name=command,
-                description=description,
-                cmd_sign=inspect.signature(getattr(self, command)),
-            )
+        self._connector.set_module(module_name)
 
-            self.plans.append(plan)
-
-        self.set_name(module_name)
-
-        # Add status Signal AFTER set_name() to avoid auto-registration as config/hinted
-        # This is only needed as long as Tiled can't handle structured numpy arrays
-        if "status" in module_desc["parameters"].keys():
-            properties = module_desc["parameters"]["status"]
-            param_path = Path(parameter_name="status", module_name=module_name)
-            readonly = properties.get("readonly", None)
-
-            # Create signal without adding to readables
-            self._signal_from_parameter(
-                path=param_path,
-                sig_name="status",
-                readonly=readonly,
-            )
-            self.param_devices["status"] = getattr(self, "status")
-
-    def add_signals_by_format(
-        self, format, format_params: list, module_name, module_desc: dict
+    async def connect(
+        self,
+        mock: bool | LazyMock = False,
+        timeout: float = DEFAULT_TIMEOUT,
+        force_reconnect: bool = False,
     ):
-        # Add hinted readable Signals
-        with self.add_children_as_readables(format=format):
-            for parameter in format_params:
-                if parameter not in module_desc["parameters"].keys():
-                    continue
-                properties = module_desc["parameters"][parameter]
+        if not self._client.online or force_reconnect:
+            # Establish connection to SEC Node
+            await self._client.connect(3)
 
+        if self.module:
+            module_desc = self._client.modules[self.module]
+
+            # Initialize Command Devices
+            for command, _ in module_desc["commands"].items():
                 # generate new root path
-                param_path = Path(parameter_name=parameter, module_name=module_name)
-
-                # readonly propertyns to plans and plan stubs.
-                readonly = properties.get("readonly", None)
-
-                # Normal types + (struct and tuple as JSON object Strings)
-                self._signal_from_parameter(
-                    path=param_path,
-                    sig_name=parameter,
-                    readonly=readonly,
+                cmd_path = Path(parameter_name=command, module_name=self.module)
+                cmd_dev_name = command + "_CMD"
+                setattr(
+                    self,
+                    cmd_dev_name,
+                    SECoPCMDDevice(path=cmd_path, secclient=self._client),
                 )
-                self.param_devices[parameter] = getattr(self, parameter)
+
+                cmd_dev: SECoPCMDDevice = getattr(self, cmd_dev_name)
+                # Add Bluesky Plan Methods
+
+                # Stop is already an ophyd native operation
+                if command == "stop":
+                    continue
+
+                cmd_plan = self.generate_cmd_plan(
+                    cmd_dev, cmd_dev.arg_dtype, cmd_dev.res_dtype
+                )
+
+                setattr(self, command, MethodType(cmd_plan, self))
+
+        await super().connect(mock, timeout, force_reconnect)
+
+        if self.module is None:
+            # set device name from equipment id property
+            self.set_name(self._client.properties[EQUIPMENT_ID].replace(".", "-"))
+        else:
+            self.set_name(self.module)
 
     def generate_cmd_plan(
         self,
@@ -482,61 +719,173 @@ class SECoPBaseDevice(StandardReadable):
 
         return cmd_meth
 
-    def _signal_from_parameter(self, path: Path, sig_name: str, readonly: bool):
-        """Generates an Ophyd Signal from a Module Parameter
+    @abstractmethod
+    async def _assign_interface_formats(self):
+        """Assign signal formats specific to this device's interface class.
+        Subclasses override this to assign formats before default fallback."""
 
-        :param path: Path to the Parameter in the secclient module dict
-        :type path: Path
-        :param sig_name: Name of the new Signal
-        :type sig_name: str
-        :param readonly: Signal is R or RW
-        :type readonly: bool
-        """
-        # Normal types + (struct and tuple as JSON object Strings)
-        paramb = SECoPParamBackend(path=path, secclient=self._secclient)
+    async def _assign_default_formats(self):
+        config_signals = []
+        hinted_signals = []
+        uncached_signals = []
+        hinted_uncached_signals = []
 
-        # construct signal
-        if readonly:
-            setattr(self, sig_name, SignalR(paramb))
-        else:
-            setattr(self, sig_name, SignalRW(paramb))
+        def assert_device_is_signalr(device: Device) -> SignalR:
+            if not isinstance(device, SignalR):
+                raise TypeError(f"{device} is not a SignalR")
+            return device
 
+        for _, child in self.children():
 
-class SECoPCommunicatorDevice(SECoPBaseDevice):
+            if not isinstance(child, Signal):
+                continue
 
-    def __init__(
-        self,
-        secclient: AsyncFrappyClient,
-        module_name: str,
-        loglevel=logging.INFO,
-        logdir: str | None = None,
-    ):
-        """Initializes the SECoPCommunicatorDevice
+            backend = child._connector.backend
 
-        :param secclient: SECoP client providing communication to the SEC Node
-        :type secclient: AsyncFrappyClient
-        :param module_name: Name of the SEC Node module that is represented by
-            this device
-        :type module_name: str"""
+            if not isinstance(backend, SECoPBackend):
+                continue
 
-        super().__init__(
-            secclient=secclient,
-            module_name=module_name,
-            loglevel=loglevel,
-            logdir=logdir,
+            param_name = backend.path_str.split(":")[-1]
+            if param_name == "status":
+                # status signals should not be assigned a format,
+                # but a SignalR children (this can be removed once tiled can
+                # hanlde composite dtypes)
+                continue
+
+            # child is a Signal with SECoPParamBackend
+
+            # check if signal already has a format assigned
+            signalr_device = assert_device_is_signalr(child)
+
+            if format_assigned(self, signalr_device):
+                # format already assigned by annotation or module IF class
+                continue
+
+            match backend.format:
+                case StandardReadableFormat.CHILD:
+                    raise RuntimeError("Signal cannot have CHILD format")
+                case StandardReadableFormat.CONFIG_SIGNAL:
+                    config_signals.append(signalr_device)
+                case StandardReadableFormat.HINTED_SIGNAL:
+                    hinted_signals.append(signalr_device)
+                case StandardReadableFormat.UNCACHED_SIGNAL:
+                    uncached_signals.append(signalr_device)
+                case StandardReadableFormat.HINTED_UNCACHED_SIGNAL:
+                    hinted_uncached_signals.append(signalr_device)
+
+        # add signals to device in the order of their priority
+        self.add_readables(config_signals, StandardReadableFormat.CONFIG_SIGNAL)
+
+        self.add_readables(hinted_signals, StandardReadableFormat.HINTED_SIGNAL)
+
+        self.add_readables(uncached_signals, StandardReadableFormat.UNCACHED_SIGNAL)
+
+        self.add_readables(
+            hinted_uncached_signals, StandardReadableFormat.HINTED_UNCACHED_SIGNAL
         )
 
 
-class SECoPReadableDevice(SECoPCommunicatorDevice, Triggerable, Subscribable):
+class SECoPNodeDevice(SECoPDevice):
+
+    hinted_signals: list[str] = []
+
+    def __init__(
+        self,
+        sec_node_uri: str = "",  # SECoP resource identifier host:port:optional[module]
+        name: str = "",
+        loglevel=logging.INFO,
+        logdir: str | None = None,
+    ):
+        # ensure sec_node_uri only contains host:port
+        if sec_node_uri.count(":") != 1:
+            raise RuntimeError(
+                f"SECoPNodeDevice SRI must only contain host:port {sec_node_uri}"
+            )
+
+        super().__init__(sri=sec_node_uri, name=name, loglevel=loglevel, logdir=logdir)
+
+    async def connect(self, mock=False, timeout=DEFAULT_TIMEOUT, force_reconnect=False):
+        await super().connect(mock, timeout, force_reconnect)
+
+        moddevs = []
+        for _, moddev in self.children():
+            if isinstance(moddev, SECoPDevice):
+                moddevs.append(moddev)
+
+        self.add_readables(moddevs, StandardReadableFormat.CHILD)
+
+        # register secclient callbacks (these are useful if sec node description
+        # changes after a reconnect)
+        self._client.register_callback(
+            None, self.descriptiveDataChange, self.nodeStateChange
+        )
+
+    def descriptiveDataChange(self, module, description):  # noqa: N802
+        raise RuntimeError(
+            "The descriptive data has changed upon reconnect. Descriptive data changes"
+            "are not supported: reinstantiate device"
+        )
+
+    def nodeStateChange(self, online, state):  # noqa: N802
+        """called when the state of the connection changes
+
+        'online' is True when connected or reconnecting, False when disconnected
+        or connecting 'state' is the connection state as a string
+        """
+        if state == "connected" and online is True:
+            self._client.conn_timestamp = ttime.time()
+
+    async def _assign_interface_formats(self):
+        # Node device has no specific interface class formats
+        pass
+
+    def class_from_instance(self, path_to_module: str | None = None):
+        from secop_ophyd.GenNodeCode import GenNodeCode
+
+        description = self._client.client.request("describe")[2]
+
+        # parse genClass file if already present
+        genCode = GenNodeCode(path=path_to_module, log=self.logger)
+
+        genCode.from_json_describe(description)
+
+        genCode.write_gen_node_class_file()
+
+
+class SECoPCommunicatorDevice(SECoPDevice):
+
+    hinted_signals: list[str] = []
+
+    def __init__(
+        self,
+        sri: str = "",  # SECoP resource identifier host:port:optional[module]
+        name: str = "",
+        connector: SECoPDeviceConnector | None = None,
+        loglevel=logging.INFO,
+        logdir: str | None = None,
+    ) -> None:
+        super().__init__(
+            sri=sri, name=name, connector=connector, loglevel=loglevel, logdir=logdir
+        )
+
+    async def _assign_interface_formats(self):
+        # Communicator has no specific interface class formats
+        pass
+
+
+class SECoPReadableDevice(SECoPDevice, Triggerable, Subscribable):
     """
     Standard readable SECoP device, corresponding to a SECoP module with the
     interface class "Readable"
     """
 
+    hinted_signals: list[str] = ["value"]
+
     def __init__(
         self,
-        secclient: AsyncFrappyClient,
-        module_name: str,
+        sri: str = "",  # SECoP resource identifier host:port:optional[module]
+        name: str = "",
+        connector: SECoPDeviceConnector | None = None,
         loglevel=logging.INFO,
         logdir: str | None = None,
     ):
@@ -553,11 +902,11 @@ class SECoPReadableDevice(SECoPCommunicatorDevice, Triggerable, Subscribable):
         self.status: SignalR
 
         super().__init__(
-            secclient=secclient,
-            module_name=module_name,
-            loglevel=loglevel,
-            logdir=logdir,
+            sri=sri, name=name, connector=connector, loglevel=loglevel, logdir=logdir
         )
+
+    async def connect(self, mock=False, timeout=DEFAULT_TIMEOUT, force_reconnect=False):
+        await super().connect(mock, timeout, force_reconnect)
 
         if not hasattr(self, "value"):
             raise AttributeError(
@@ -570,6 +919,19 @@ class SECoPReadableDevice(SECoPCommunicatorDevice, Triggerable, Subscribable):
                 "Attribute 'status' has not been assigned,"
                 + "but is needed for Readable interface class"
             )
+
+    async def _assign_interface_formats(self):
+
+        if format_assigned(self, self.value):
+            if not is_read_signal(self, self.value):
+                warnings.warn(
+                    f"Signal 'value' of device {self.name} has format assigned "
+                    + "that is not compatible with Readable interface class"
+                )
+        else:
+            self.add_readables([self.value], StandardReadableFormat.HINTED_SIGNAL)
+
+        # TODO ensure status signal must be neither config nor read format
 
     async def wait_for_idle(self):
         """asynchronously waits until module is IDLE again. this is helpful,
@@ -597,7 +959,7 @@ class SECoPReadableDevice(SECoPCommunicatorDevice, Triggerable, Subscribable):
                 break
 
             if hasattr(self, "_stopped"):
-                self.logger.info(f"Module {self.name} was stopped STOPPED")
+                # self.logger.info(f"Module {self.name} was stopped STOPPED")
                 if self._stopped is True:
                     break
 
@@ -629,9 +991,7 @@ class SECoPReadableDevice(SECoPCommunicatorDevice, Triggerable, Subscribable):
         self.logger.info(f"Triggering {self.name}: read fresh data from device")
         # get fresh reading of the value Parameter from the SEC Node
         return AsyncStatus(
-            awaitable=self._secclient.get_parameter(
-                self._module, "value", trycache=False
-            )
+            awaitable=self._client.get_parameter(self.module, "value", trycache=False)
         )
 
     def subscribe(self, function: Callback[dict[str, Reading]]) -> None:
@@ -649,11 +1009,14 @@ class SECoPTriggerableDevice(SECoPReadableDevice, Stoppable):
     interface class "Triggerable"
     """
 
+    hinted_signals: list[str] = ["value"]
+
     def __init__(
         self,
-        secclient: AsyncFrappyClient,
-        module_name: str,
-        loglevel=logging.info,
+        sri: str = "",  # SECoP resource identifier host:port:optional[module]
+        name: str = "",
+        connector: SECoPDeviceConnector | None = None,
+        loglevel=logging.INFO,
         logdir: str | None = None,
     ):
         """Initialize SECoPTriggerableDevice
@@ -670,70 +1033,30 @@ class SECoPTriggerableDevice(SECoPReadableDevice, Stoppable):
         self._success = True
         self._stopped = False
 
-        super().__init__(secclient, module_name, loglevel=loglevel, logdir=logdir)
-
-    async def __go_coro(self, wait_for_idle: bool):
-        await self._secclient.exec_command(module=self._module, command="go")
-
-        self._success = True
-        self._stopped = False
-        await asyncio.sleep(0.2)
-
-        if wait_for_idle:
-            await self.wait_for_idle()
-
-    def wait_for_prepared(self):
-        yield from self.observe_status_change(IDLE)
-        yield from self.observe_status_change(PREPARING)
-
-    def trigger(self) -> AsyncStatus:
-
-        self.logger.info(f"Triggering {self.name} go command")
-
-        async def go_or_read_on_busy():
-            module_status = await self.status.get_value(False)
-            stat_code = module_status["f0"]
-
-            if BUSY <= stat_code <= ERROR:
-                return
-
-            await self.__go_coro(True)
-
-        return AsyncStatus(awaitable=go_or_read_on_busy())
-
-    async def stop(self, success=True):
-        """Calls stop command on the SEC Node module
-
-        :param success:
-            True: device is stopped as planned
-            False: something has gone wrong
-            (defaults to True)
-        :type success: bool, optional
-        """
-        self._success = success
-
-        self.logger.info(f"Stopping {self.name} success={success}")
-
-        await self._secclient.exec_command(self._module, "stop")
-        self._stopped = True
+        super().__init__(
+            sri=sri, name=name, connector=connector, loglevel=loglevel, logdir=logdir
+        )
 
 
 class SECoPWritableDevice(SECoPReadableDevice):
-    """Fast settable device target"""
+    hinted_signals: list[str] = ["target", "value"]
 
     pass
 
 
-class SECoPMoveableDevice(SECoPWritableDevice, Locatable, Stoppable):
+class SECoPMoveableDevice(SECoPReadableDevice, Locatable, Stoppable):
     """
     Standard movable SECoP device, corresponding to a SECoP module with the
     interface class "Drivable"
     """
 
+    hinted_signals: list[str] = ["target", "value"]
+
     def __init__(
         self,
-        secclient: AsyncFrappyClient,
-        module_name: str,
+        sri: str = "",  # SECoP resource identifier host:port:optional[module]
+        name: str = "",
+        connector: SECoPDeviceConnector | None = None,
         loglevel=logging.INFO,
         logdir: str | None = None,
     ):
@@ -748,16 +1071,22 @@ class SECoPMoveableDevice(SECoPWritableDevice, Locatable, Stoppable):
 
         self.target: SignalRW
 
-        super().__init__(secclient, module_name, loglevel=loglevel, logdir=logdir)
+        super().__init__(
+            sri=sri, name=name, connector=connector, loglevel=loglevel, logdir=logdir
+        )
+
+        self._success = True
+        self._stopped = False
+
+    async def connect(self, mock=False, timeout=DEFAULT_TIMEOUT, force_reconnect=False):
+
+        await super().connect(mock, timeout, force_reconnect)
 
         if not hasattr(self, "target"):
             raise AttributeError(
                 "Attribute 'target' has not been assigned, "
                 + "but is needed for 'Drivable' interface class!"
             )
-
-        self._success = True
-        self._stopped = False
 
     def set(self, new_target, timeout: Optional[float] = None) -> AsyncStatus:
         """Sends new target to SEC Nonde and waits until module is IDLE again
@@ -787,6 +1116,9 @@ class SECoPMoveableDevice(SECoPWritableDevice, Locatable, Stoppable):
             stat_code = current_stat["f0"]
 
             if self._stopped is True:
+                self.logger.info(
+                    f"Move of {self.name} to {new_target} was stopped STOPPED"
+                )
                 break
 
             # Error State or DISABLED
@@ -803,7 +1135,7 @@ class SECoPMoveableDevice(SECoPWritableDevice, Locatable, Stoppable):
             # TODO other status transitions
 
         if not self._success:
-            raise RuntimeError("Module was stopped")
+            self.logger.error(f"Move of {self.name} to {new_target} was not successful")
 
     async def stop(self, success=True):
         """Calls stop command on the SEC Node module
@@ -818,14 +1150,14 @@ class SECoPMoveableDevice(SECoPWritableDevice, Locatable, Stoppable):
 
         if not success:
             self.logger.info(f"Stopping {self.name} success={success}")
-            await self._secclient.exec_command(self._module, "stop")
+            await self._client.exec_command(self.module, "stop")
             self._stopped = True
 
     async def locate(self) -> Location:
         # return current location of the device (setpoint and readback).
         # Only locally cached values are returned
-        setpoint = await self._secclient.get_parameter(self._module, "target", True)
-        readback = await self._secclient.get_parameter(self._module, "value", True)
+        setpoint = await self._client.get_parameter(self.module, "target", True)
+        readback = await self._client.get_parameter(self.module, "value", True)
 
         location: Location = {
             "setpoint": setpoint.value,
@@ -833,277 +1165,35 @@ class SECoPMoveableDevice(SECoPWritableDevice, Locatable, Stoppable):
         }
         return location
 
+    async def _assign_interface_formats(self):
+        await super()._assign_interface_formats()
 
-class SECoPNodeDevice(StandardReadable):
-    """
-    Generates the root ophyd device from a Sec-node. Signals of this Device correspond
-    to the Sec-node properties
-    """
-
-    name: str = ""
-
-    def __init__(
-        self,
-        sec_node_uri: str,
-        # `prefix` not used, it's just that the device connecter requires it for
-        # some reason.
-        prefix: str = "",
-        name: str = "",
-        loglevel: str = "INFO",
-        logdir: str | None = None,
-    ):
-        """Initializes the node device and generates all node signals and subdevices
-        corresponding to the SECoP-modules of the secnode
-
-        :param secclient: SECoP client providing communication to the SEC Node
-        :type secclient: AsyncFrappyClient
-        """
-
-        self.host, self.port = sec_node_uri.rsplit(":", maxsplit=1)
-
-        self.logger: Logger = setup_logging(
-            name=f"frappy:{self.host}:{self.port}",
-            level=LOG_LEVELS[loglevel],
-            log_dir=logdir,
-        )
-        self.logdir = logdir
-
-        self.name = name
-        self.prefix = prefix
-
-    async def connect(
-        self,
-        mock: bool | LazyMock = False,
-        timeout: float = DEFAULT_TIMEOUT,
-        force_reconnect: bool = False,
-    ):
-        if not hasattr(self, "_secclient"):
-            secclient: AsyncFrappyClient
-
-            secclient = await AsyncFrappyClient.create(
-                host=self.host,
-                port=self.port,
-                loop=asyncio.get_running_loop(),
-                log=self.logger,
-            )
-
-            self.equipment_id: SignalR
-            self.description: SignalR
-            self.version: SignalR
-
-            self._secclient: AsyncFrappyClient = secclient
-
-            self._module_name: str = ""
-            self._node_cls_name: str = ""
-            self.mod_devices: Dict[str, SECoPReadableDevice] = {}
-            self.node_prop_devices: Dict[str, SignalR] = {}
-
-            self.genCode: GenNodeCode
-
-            if self.name == "":
-                self.name = self._secclient.properties[EQUIPMENT_ID].replace(".", "-")
-
-            self.name = self.prefix + self.name
-
-            config = []
-
-            self.logger.info(
-                "Initializing SECoPNodeDevice "
-                + f"({self._secclient.host}:{self._secclient.port})"
-            )
-
-            with self.add_children_as_readables(
-                format=StandardReadableFormat.CONFIG_SIGNAL
-            ):
-                for property in self._secclient.properties:
-                    propb = PropertyBackend(
-                        property, self._secclient.properties, secclient
-                    )
-                    setattr(self, property, SignalR(backend=propb))
-                    config.append(getattr(self, property))
-                    self.node_prop_devices[property] = getattr(self, property)
-
-            with self.add_children_as_readables(format=StandardReadableFormat.CHILD):
-                for module, module_desc in self._secclient.modules.items():
-
-                    secop_dev_class = self.class_from_interface(
-                        module_desc["properties"]
-                    )
-
-                    if secop_dev_class is not None:
-                        setattr(
-                            self,
-                            module,
-                            secop_dev_class(
-                                self._secclient,
-                                module,
-                                loglevel=self.logger.level,
-                                logdir=self.logdir,
-                            ),
-                        )
-                        self.mod_devices[module] = getattr(self, module)
-
-            # register secclient callbacks (these are useful if sec node description
-            # changes after a reconnect)
-            secclient.client.register_callback(
-                None, self.descriptiveDataChange, self.nodeStateChange
-            )
-
-            super().__init__(name=self.name)
-
-        elif force_reconnect or self._secclient.client.online is False:
-            await self._secclient.disconnect(True)
-            await self._secclient.connect(try_period=DEFAULT_TIMEOUT)
-
-    def class_from_instance(self, path_to_module: str | None = None):
-        """Dynamically generate python class file for the SECoP_Node_Device, this
-        allows autocompletion in IDEs and eases working with the generated Ophyd
-        devices
-        """
-
-        # parse genClass file if already present
-        self.genCode = GenNodeCode(path=path_to_module, log=self._secclient.log)
-
-        self.genCode.add_import(self.__module__, self.__class__.__name__)
-
-        node_dict = self.__dict__
-
-        # NodeClass Name
-        self._node_cls_name = self.name.replace("-", "_").capitalize()
-
-        node_bases = [self.__class__.__name__, "ABC"]
-
-        node_class_attrs = []
-
-        for attr_name, attr_value in node_dict.items():
-            # Modules
-            if isinstance(
-                attr_value,
-                (
-                    SECoPBaseDevice,
-                    SECoPCommunicatorDevice,
-                    SECoPReadableDevice,
-                    SECoPWritableDevice,
-                    SECoPMoveableDevice,
-                    SECoPTriggerableDevice,
-                ),
-            ):
-                attr_type = type(attr_value)
-                module = str(getattr(attr_type, "__module__", None))
-
-                # add imports for module attributes
-                self.genCode.add_import(module, attr_type.__name__)
-
-                module_dict = attr_value.__dict__
-
-                # modclass is baseclass of derived class
-                mod_bases = [attr_value.__class__.__name__, "ABC"]
-
-                module_class_attrs = []
-
-                # Name for derived class
-                module_class_name = attr_name
-                if attr_value.impl is not None:
-                    module_class_name = attr_value.impl.split(".").pop()
-
-                # Module:Acessibles
-                for module_attr_name, module_attr_value in module_dict.items():
-                    if isinstance(
-                        module_attr_value,
-                        (SignalR, SignalX, SignalRW, SignalR, SECoPCMDDevice),
-                    ):
-                        # add imports for module attributes
-                        self.genCode.add_import(
-                            module_attr_value.__module__,
-                            type(module_attr_value).__name__,
-                        )
-
-                        module_class_attrs.append(
-                            (module_attr_name, type(module_attr_value).__name__)
-                        )
-                self.genCode.add_mod_class(
-                    module_class_name, mod_bases, module_class_attrs, attr_value.plans
+        if format_assigned(self, self.target):
+            if not is_read_signal(self, self.target):
+                warnings.warn(
+                    f"Signal 'target' of device {self.name} has format assigned "
+                    + "that is not compatible with Movable interface class"
                 )
-
-                node_class_attrs.append((attr_name, module_class_name))
-
-            # Poperty Signals
-            if isinstance(attr_value, (SignalR)):
-                self.genCode.add_import(
-                    attr_value.__module__, type(attr_value).__name__
-                )
-                node_class_attrs.append((attr_name, attr_value.__class__.__name__))
-
-        self.genCode.add_node_class(self._node_cls_name, node_bases, node_class_attrs)
-
-        self.genCode.write_gen_node_class_file()
-
-    def descriptiveDataChange(self, module, description):  # noqa: N802
-        """called when the description has changed
-
-        this callback is called on the node with module=None
-        and on every changed module with module==<module name>
-
-        :param module: module name of the module that has changes
-        :type module: _type_
-        :param description: new Node description string
-        :type description: _type_
-        """
-        # TODO this functionality is untested and will probably break the generated
-        # ophyd device since a changed module description would lead a newly
-        # instanciated module object while references to the old one are broken
-        # mitigation: alway call methods via:
-        #
-        # 'node_obj.module_obj.method()'
-
-        self._secclient.conn_timestamp = ttime.time()
-
-        if module is None:
-            # Refresh signals that correspond to Node Properties
-            config = []
-            for property in self._secclient.properties:
-                propb = PropertyBackend(
-                    property, self._secclient.properties, self._secclient
-                )
-
-                setattr(self, property, SignalR(backend=propb))
-                config.append(getattr(self, property))
-
-            self.add_readables(config, format=StandardReadableFormat.CONFIG_SIGNAL)
         else:
-            # Refresh changed modules
-            module_desc = self._secclient.modules[module]
-            secop_dev_class = self.class_from_interface(module_desc["properties"])
+            self.add_readables([self.target], StandardReadableFormat.HINTED_SIGNAL)
 
-            setattr(self, module, secop_dev_class(self._secclient, module))
 
-            # TODO what about removing Modules during disconn
+def class_from_interface(mod_properties: dict):
+    ophyd_class = None
 
-    def nodeStateChange(self, online, state):  # noqa: N802
-        """called when the state of the connection changes
+    # infer highest level IF class
+    module_interface_classes: dict = mod_properties[INTERFACE_CLASSES]
+    for interface_class in IF_CLASSES.keys():
+        if interface_class in module_interface_classes:
+            ophyd_class = IF_CLASSES[interface_class]
+            break
 
-        'online' is True when connected or reconnecting, False when disconnected
-        or connecting 'state' is the connection state as a string
-        """
-        if state == "connected" and online is True:
-            self._secclient.conn_timestamp = ttime.time()
+    # No predefined IF class was a match --> use base class (loose collection of
+    # accessibles)
+    if ophyd_class is None:
+        ophyd_class = SECoPDevice  # type: ignore
 
-    def class_from_interface(self, mod_properties: dict):
-        ophyd_class = None
-
-        # infer highest level IF class
-        module_interface_classes: dict = mod_properties[INTERFACE_CLASSES]
-        for interface_class in IF_CLASSES.keys():
-            if interface_class in module_interface_classes:
-                ophyd_class = IF_CLASSES[interface_class]
-                break
-
-        # No predefined IF class was a match --> use base class (loose collection of
-        # accessibles)
-        if ophyd_class is None:
-            ophyd_class = SECoPBaseDevice  # type: ignore
-
-        return ophyd_class
+    return ophyd_class
 
 
 IF_CLASSES = {
@@ -1113,18 +1203,3 @@ IF_CLASSES = {
     "Readable": SECoPReadableDevice,
     "Communicator": SECoPCommunicatorDevice,
 }
-
-SECOP_TO_NEXUS_TYPE = {
-    "double": "NX_FLOAT64",
-    "int": "NX_INT64",
-    "scaled": "NX_FLOAT64",
-}
-
-
-ALL_IF_CLASSES = set(IF_CLASSES.values())
-
-# TODO
-# FEATURES = {
-#    'HasLimits': SecopHasLimits,
-#    'HasOffset': SecopHasOffset,
-# }

@@ -2,7 +2,6 @@
 import numpy as np
 from ophyd_async.core import SignalR, SignalRW
 
-from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient
 from secop_ophyd.SECoPDevices import SECoPNodeDevice, SECoPReadableDevice
 
 
@@ -10,10 +9,11 @@ async def test_nested_connect(nested_struct_sim, nested_node_no_re: SECoPNodeDev
     assert isinstance(nested_node_no_re, SECoPNodeDevice)
 
 
-async def test_tuple_dev(nested_client: AsyncFrappyClient):
-    ophy_struct = SECoPReadableDevice(
-        secclient=nested_client, module_name="ophy_struct"
-    )
+async def test_tuple_dev(nested_struct_sim):
+
+    ophy_struct = SECoPReadableDevice("localhost:10771:ophy_struct")
+
+    await ophy_struct.connect()
 
     status_sig: SignalR = ophy_struct.status
 
@@ -31,10 +31,9 @@ async def test_tuple_dev(nested_client: AsyncFrappyClient):
     assert isinstance(stat1.item(), str)
 
 
-async def test_struct_dev(nested_client: AsyncFrappyClient):
-    ophy_struct = SECoPReadableDevice(
-        secclient=nested_client, module_name="ophy_struct"
-    )
+async def test_struct_dev(nested_struct_sim):
+    ophy_struct = SECoPReadableDevice("localhost:10771:ophy_struct")
+    await ophy_struct.connect()
 
     nested_struct_sig: SignalR = ophy_struct.nested_struct
     await nested_struct_sig.read()

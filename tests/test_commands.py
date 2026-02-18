@@ -12,48 +12,6 @@ from secop_ophyd.SECoPDevices import (
 )
 
 
-async def test_stop_cmd(cryo_sim, cryo_node_no_re: SECoPNodeDevice):
-    cryo: SECoPMoveableDevice = cryo_node_no_re.cryo
-
-    await cryo.window.set(5)
-    await cryo.tolerance.set(1)
-    await cryo.ramp.set(20)
-
-    stat = cryo.set(15)
-
-    await asyncio.sleep(3)
-
-    await cryo.stop(success=True)
-
-    await stat
-
-    assert cryo._stopped is False
-
-
-async def test_stop_no_sucess_cmd(cryo_sim, cryo_node_no_re: SECoPNodeDevice):
-    cryo: SECoPMoveableDevice = cryo_node_no_re.cryo
-
-    await cryo.window.set(5)
-    await cryo.tolerance.set(1)
-    await cryo.ramp.set(20)
-
-    stat = cryo.set(15)
-
-    rt_error = False
-
-    await asyncio.sleep(3)
-
-    try:
-        await cryo.stop(False)
-        await stat
-
-    except RuntimeError:
-        rt_error = True
-
-    assert cryo._stopped is True
-    assert rt_error is True
-
-
 async def test_struct_inp_cmd(nested_struct_sim, nested_node_no_re: SECoPNodeDevice):
     test_cmd: SECoPCMDDevice = nested_node_no_re.ophy_struct.test_cmd_CMD
 
@@ -125,3 +83,37 @@ async def test_secop_triggering_cmd_dev(
 
     reading_res = await res.read()
     assert isinstance(reading_res.get(res.name)["value"], int)
+
+
+async def test_stop_cmd(cryo_sim, cryo_node_no_re: SECoPNodeDevice):
+    cryo: SECoPMoveableDevice = cryo_node_no_re.cryo
+
+    await cryo.window.set(5)
+
+    await cryo.tolerance.set(1)
+
+    await cryo.ramp.set(20)
+
+    stat = cryo.set(15)
+
+    await asyncio.sleep(3)
+
+    # essentially a NOOP (stops are only passed through to SECoP on success=False)
+    await cryo.stop(success=True)
+
+    assert cryo._stopped is False, "Move should not be stopped when success=True"
+    assert (
+        cryo._success is True
+    ), "Move should be marked as successful when success=True"
+    assert (
+        not stat.done
+    ), "Move should still be in progress after stop with success=True"
+
+    # move is still going on
+    await cryo.stop(success=False)
+    assert cryo._stopped is True, "Move should be stopped when success=False"
+    assert (
+        cryo._success is False
+    ), "Move should be marked as unsuccessful when success=False"
+
+    await stat

@@ -594,10 +594,14 @@ class SECoPdtype:
 
         self._is_composite: bool = False
         self._is_array: bool = False
+        self._is_enum: bool = False
 
         self.dtype_tree = dt_factory(datatype)
 
         self.max_depth: int = self.dtype_tree.max_depth
+
+        if isinstance(self.dtype_tree, EnumNP):
+            self._is_enum = True
 
         if isinstance(self.dtype_tree, ArrayNP):
             self.shape = self.dtype_tree.shape
@@ -606,6 +610,9 @@ class SECoPdtype:
                 True
                 if isinstance(self.dtype_tree.root_type, (StructNP, TupleNP))
                 else False
+            )
+            self._is_enum = self._is_enum or isinstance(
+                self.dtype_tree.root_type, EnumNP
             )
 
         if isinstance(self.dtype_tree, (TupleNP, StructNP)):
@@ -666,6 +673,30 @@ class SECoPdtype:
         if self._is_composite:
             return self._secop2numpy_array(reading_val)
 
+        elif self._is_enum:
+            if isinstance(self.dtype_tree, EnumNP):
+                exp_val = self.dtype_tree.secop_dtype(reading_val).name
+                return exp_val
+
+            elif isinstance(self.dtype_tree, ArrayNP) and isinstance(
+                self.dtype_tree.root_type, EnumNP
+            ):
+
+                def map_enum(val):
+                    return list(
+                        map(
+                            lambda x: map_enum(x) if isinstance(x, tuple) else x.name,
+                            val,
+                        )
+                    )
+
+                exp_val = map_enum(reading_val)
+
+                return exp_val
+
+            else:
+                raise Exception("enum type is not correctly identified in dtype tree")
+
         else:
             return reading_val
 
@@ -675,6 +706,7 @@ class SECoPdtype:
 
         if self._is_composite and isinstance(input_val, np.ndarray):
             return self.dtype_tree.make_secop_compatible_object(input_val)
+
         else:
             return self.raw_dtype.validate(input_val)
 
@@ -722,13 +754,13 @@ class SECoPReading:
         if entry.readerror is not None:
             raise entry.readerror
 
-        exported_val = secop_dt.raw_dtype.export_value(entry.value)
+        # exported_val = secop_dt.raw_dtype.export_value(entry.value)
 
-        self.secop_dt.update_dtype(exported_val)
+        self.secop_dt.update_dtype(entry.value)
 
-        self.value = secop_dt.secop2val(exported_val)
+        self.value = secop_dt.secop2val(entry.value)
 
-        self.secop_val = exported_val
+        self.secop_val = entry.value
 
         self.timestamp = entry.timestamp
 

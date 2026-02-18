@@ -1,7 +1,7 @@
 # mypy: disable-error-code="attr-defined"
-import asyncio
 import logging
 import os
+from pathlib import Path
 
 import pytest
 from bluesky import RunEngine
@@ -18,6 +18,62 @@ from xprocess import ProcessStarter
 
 from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient
 from secop_ophyd.SECoPDevices import SECoPNodeDevice
+
+
+@pytest.fixture(autouse=True)
+def cleanup_secop_clients():
+    """Clear SECoP clients between tests to ensure fresh connections."""
+    yield
+    # After each test, clear the cached clients
+    from secop_ophyd.SECoPDevices import SECoPDevice
+
+    SECoPDevice.clients.clear()
+
+
+@pytest.fixture
+def mass_spectrometer_description():
+    mass_spectrometer_description = (
+        Path(__file__).parent / "static_test_data" / "SHALL_mass_spec_describe.txt"
+    )
+
+    with mass_spectrometer_description.open() as f:
+        description = f.read()
+
+    return description
+
+
+@pytest.fixture
+def mass_spectrometer_description_no_impl():
+    mass_spectrometer_description = (
+        Path(__file__).parent
+        / "static_test_data"
+        / "SHALL_mass_spec_describe_no_impl_prop.txt"
+    )
+
+    with mass_spectrometer_description.open() as f:
+        description = f.read()
+
+    return description
+
+
+@pytest.fixture
+def clean_generated_file():
+    """Clean up generated genNodeClass.py file before test runs.
+
+    This fixture ensures a fresh start for code generation tests while
+    allowing inspection of results after the test completes.
+
+    Returns:
+        Path to the testgen directory where files should be generated
+    """
+    testgen_dir = Path(__file__).parent / "testgen"
+    testgen_dir.mkdir(exist_ok=True)
+
+    gen_file = testgen_dir / "genNodeClass.py"
+    if gen_file.exists():
+        gen_file.unlink()
+
+    return testgen_dir
 
 
 @pytest.fixture
@@ -133,31 +189,31 @@ def logger():
     return logger
 
 
-@pytest.fixture
+@pytest.fixture()
 async def async_frappy_client(cryo_sim, logger, port="10769"):
-    loop = asyncio.get_running_loop()
+    client = AsyncFrappyClient(host="localhost", port=port, log=logger)
 
-    return await AsyncFrappyClient.create(
-        host="localhost", port=port, loop=loop, log=logger
-    )
+    await client.connect(3)
+
+    return client
 
 
-@pytest.fixture
+@pytest.fixture()
 async def nested_client(nested_struct_sim, logger, port="10771"):
-    loop = asyncio.get_running_loop()
+    client = AsyncFrappyClient(host="localhost", port=port, log=logger)
 
-    return await AsyncFrappyClient.create(
-        host="localhost", port=port, loop=loop, log=logger
-    )
+    await client.connect(3)
+
+    return client
 
 
-@pytest.fixture
+@pytest.fixture()
 async def RE():  # noqa: N802
     re = RunEngine({})
     return re
 
 
-@pytest.fixture
+@pytest.fixture()
 async def nested_node_no_re():
     async with init_devices():
         nested = SECoPNodeDevice(
@@ -167,7 +223,7 @@ async def nested_node_no_re():
     return nested
 
 
-@pytest.fixture
+@pytest.fixture()
 def nested_node(RE):  # noqa: N803
     with init_devices():
         nested = SECoPNodeDevice(
@@ -177,17 +233,16 @@ def nested_node(RE):  # noqa: N803
     return nested
 
 
-@pytest.fixture
+@pytest.fixture()
 async def cryo_node_no_re():
     async with init_devices():
         cryo = SECoPNodeDevice(
             sec_node_uri="localhost:10769",
         )
-
     return cryo
 
 
-@pytest.fixture
+@pytest.fixture()
 def cryo_node(RE):  # noqa: N803
     with init_devices():
         cryo = SECoPNodeDevice(

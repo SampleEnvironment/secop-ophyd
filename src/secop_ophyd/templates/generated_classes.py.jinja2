@@ -1,0 +1,105 @@
+{# Main template for generating ophyd device classes #}
+{# Imports section #}
+{% for module, classes in imports.items() %}
+{%- if classes is none %}
+import {{ module }}
+{%- elif classes %}
+from {{ module }} import {{ classes | sort | join(', ') }}
+{%- else %}
+import {{ module }}
+{%- endif %}
+{% endfor %}
+
+
+{# Enum classes section #}
+{% for enum_cls in enum_classes %}
+class {{ enum_cls.name }}({{ enum_cls.base_enum_class }}):
+    """{{ enum_cls.description or 'Generated enum class' }}"""
+{%- for member in enum_cls.members %}
+    {{ member.name }} = "{{ member.value }}"
+{%- endfor %}
+
+
+{% endfor %}
+
+{# Module classes section #}
+{% for module_cls in module_classes %}
+class {{ module_cls.name }}({{ module_cls.bases | join(', ') }}):
+    """{{ module_cls.description or 'Generated module class' }}"""
+{%- if module_cls.properties %}
+
+    # Module Properties
+{%- for attr in module_cls.properties %}
+{%- if attr.path_annotation and attr.format_annotation %}
+    {{ attr.name }}: A[{{ attr.type }}{% if attr.type_param %}[{{ attr.type_param }}]{% endif %}, {{ attr.path_annotation }}, {{ attr.format_annotation }}]
+{%- elif attr.path_annotation %}
+    {{ attr.name }}: A[{{ attr.type }}{% if attr.type_param %}[{{ attr.type_param }}]{% endif %}, {{ attr.path_annotation }}]
+{%- else %}
+    {{ attr.name }}: {{ attr.type }}{% if attr.type_param %}[{{ attr.type_param }}]{% endif %}
+{%- endif %}
+{%- if attr.description %}  # {{ attr.description }}{% endif %}
+{%- endfor %}
+{%- endif %}
+{%- if module_cls.parameters %}
+
+    # Module Parameters
+{%- for attr in module_cls.parameters %}
+{%- if attr.path_annotation and attr.format_annotation %}
+    {{ attr.name }}: A[{{ attr.type }}{% if attr.type_param %}[{{ attr.type_param }}]{% endif %}, {{ attr.path_annotation }}, {{ attr.format_annotation }}]
+{%- elif attr.path_annotation %}
+    {{ attr.name }}: A[{{ attr.type }}{% if attr.type_param %}[{{ attr.type_param }}]{% endif %}, {{ attr.path_annotation }}]
+{%- else %}
+    {{ attr.name }}: {{ attr.type }}{% if attr.type_param %}[{{ attr.type_param }}]{% endif %}
+{%- endif %}
+{%- if attr.description %}
+{%- set render_below = '\n' in attr.description or attr.description|length > inline_comment_threshold %}
+{%- if render_below %}
+{%- set wrapped_desc = attr.description | wordwrap(comment_wrap_width, break_long_words=False, wrapstring='\n') %}
+    # {{ (wrapped_desc | replace('\n', '\n    # ')) ~ '\n' }}
+
+{%- else %}  # {{ attr.description }}
+{%- endif %}
+{%- endif %}
+{%- endfor %}
+{%- endif %}
+{%- if module_cls.methods %}
+
+    # SECoP Commands wrapped as Bluesky Plans:
+{%- for method in module_cls.methods %}
+    @abstractmethod
+    def {{ method.name }}{{ method.signature }}:
+        """{{ method.description }}"""
+{%- endfor %}
+{%- endif %}
+
+
+{% endfor %}
+
+{# Node classes section #}
+{% for node_cls in node_classes %}
+class {{ node_cls.name }}({{ node_cls.bases | join(', ') }}):
+    """{{ node_cls.description or 'Generated node class' }}"""
+{%- if node_cls.modules %}
+
+    # Module Devices
+{%- for attr in node_cls.modules %}
+    {{ attr.name }}: {{ attr.type }}
+{%- if attr.description %}  # {{ attr.description }}{% endif %}
+{%- endfor %}
+{%- endif %}
+{%- if node_cls.properties %}
+
+    # Node Properties
+{%- for attr in node_cls.properties %}
+{%- if attr.path_annotation and attr.format_annotation %}
+    {{ attr.name }}: A[{{ attr.type }}{% if attr.type_param %}[{{ attr.type_param }}]{% endif %}, {{ attr.path_annotation }}, {{ attr.format_annotation }}]
+{%- elif attr.path_annotation %}
+    {{ attr.name }}: A[{{ attr.type }}{% if attr.type_param %}[{{ attr.type_param }}]{% endif %}, {{ attr.path_annotation }}]
+{%- else %}
+    {{ attr.name }}: {{ attr.type }}{% if attr.type_param %}[{{ attr.type_param }}]{% endif %}
+{%- endif %}
+{%- if attr.description %}  # {{ attr.description }}{% endif %}
+{%- endfor %}
+{%- endif %}
+
+{% endfor %}

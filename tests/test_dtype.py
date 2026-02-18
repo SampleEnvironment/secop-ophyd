@@ -194,7 +194,7 @@ def test_describe_str(start_dtype, expected_dtype_descr, expected_shape, max_dep
 
 
 @pytest.mark.parametrize(
-    "start_dtype,np_input,expected_output,type_checks",
+    "start_dtype,np_input,expected_output,type_checks,ophy_val",
     [
         pytest.param(
             StructOf(
@@ -228,6 +228,16 @@ def test_describe_str(start_dtype, expected_dtype_descr, expected_shape, max_dep
                 and isinstance(val["scaled_val"], int)
                 and isinstance(val["enum_val"], int)
             ),
+            np.array(
+                (3.14, "test", 42, 123, 1),
+                dtype=[
+                    ("float_val", "<f8"),
+                    ("string_val", "<U100"),
+                    ("int_val", "<i4"),
+                    ("scaled_val", "<f8"),
+                    ("enum_val", "<i4"),
+                ],
+            ),
             id="Struct of all atomic types",
         ),
         pytest.param(
@@ -243,9 +253,9 @@ def test_describe_str(start_dtype, expected_dtype_descr, expected_shape, max_dep
                 dtype=[
                     ("f0", "<f8"),
                     ("f1", "<U100"),
-                    ("f2", "<i4"),
+                    ("f2", "<i8"),
                     ("f3", "<f8"),
-                    ("f4", "<i4"),
+                    ("f4", "<i8"),
                 ],
             ),
             (2.718, "hello", 99, 25, 0),
@@ -256,6 +266,16 @@ def test_describe_str(start_dtype, expected_dtype_descr, expected_shape, max_dep
                 and isinstance(val[3], int)
                 and isinstance(val[4], int)
             ),
+            np.array(
+                (2.718, "hello", 99, 25, 0),
+                dtype=[
+                    ("f0", "<f8"),
+                    ("f1", "<U100"),
+                    ("f2", "<i8"),
+                    ("f3", "<f8"),
+                    ("f4", "<i8"),
+                ],
+            ),
             id="Tuple of all atomic types",
         ),
         pytest.param(
@@ -265,6 +285,7 @@ def test_describe_str(start_dtype, expected_dtype_descr, expected_shape, max_dep
             lambda val: (
                 isinstance(val["value"], float) and isinstance(val["state"], int)
             ),
+            np.array((42.5, 2), dtype=[("value", "<f8"), ("state", "<i4")]),
             id="Struct of Float and Enum",
         ),
         pytest.param(
@@ -273,11 +294,21 @@ def test_describe_str(start_dtype, expected_dtype_descr, expected_shape, max_dep
             ArrayOf(EnumType(ON=1, OFF=0)).import_value([1, 0, 1]),
             lambda val: isinstance(val, tuple)
             and all(isinstance(v, EnumMember) for v in val),
+            ["ON", "OFF", "ON"],
             id="Array of Enums",
+        ),
+        pytest.param(
+            ArrayOf(ArrayOf(EnumType(ON=1, OFF=0))),
+            [[1, 0, 1], [0], [1]],
+            ArrayOf(ArrayOf(EnumType(ON=1, OFF=0))).import_value([[1, 0, 1], [0], [1]]),
+            lambda val: isinstance(val, tuple)
+            and all(isinstance(v, EnumMember) or isinstance(v, tuple) for v in val),
+            [["ON", "OFF", "ON"], ["OFF"], ["ON"]],
+            id="Ragged array of Enums",
         ),
     ],
 )
-def test_val2secop(start_dtype, np_input, expected_output, type_checks):
+def test_val2secop(start_dtype, np_input, expected_output, type_checks, ophy_val):
     sdtype = SECoPdtype(start_dtype)
 
     secop_val = sdtype.val2secop(np_input)
@@ -286,4 +317,14 @@ def test_val2secop(start_dtype, np_input, expected_output, type_checks):
     np.testing.assert_equal(secop_val, expected_output)
 
     # Verify types are correct (should be Python types, not numpy arrays)
+
     assert type_checks(secop_val), f"Type check failed for {secop_val}"
+
+    back_to_ophyd = sdtype.secop2val(secop_val)
+
+    print(f"Original ophyd value: {ophy_val}")
+    print(f"Back to ophyd value: {back_to_ophyd}")
+
+    assert (
+        back_to_ophyd == ophy_val
+    ), f"Back to ophyd conversion failed for {back_to_ophyd}"

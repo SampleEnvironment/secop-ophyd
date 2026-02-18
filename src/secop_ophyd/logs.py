@@ -12,16 +12,6 @@ DEFAULT_ROTATION_WHEN = "H"  # Rotate every hour
 DEFAULT_ROTATION_INTERVAL = 1  # Every 1 hour
 DEFAULT_BACKUP_COUNT = 48  # Keep logs for 48 hours
 
-# Create a dictionary of log level names to their values
-LOG_LEVELS = {
-    "DEBUG": logging.DEBUG,
-    "INFO": logging.INFO,
-    "WARNING": logging.WARNING,
-    "ERROR": logging.ERROR,
-    "CRITICAL": logging.CRITICAL,
-}
-
-
 log_file_handlers: Dict[str, TimedRotatingFileHandler] = {}
 
 console_handler: logging.StreamHandler | None = None

@@ -25,6 +25,8 @@ dev = [
     'isort',
     'pytest',
     'black',
+    'jinja2',
+    'autoflake',
     'pep8-naming',
     'mypy',
     'wheel',
