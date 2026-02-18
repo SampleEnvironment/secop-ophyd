@@ -1,5 +1,6 @@
 """Simple test to verify GenNodeCode refactoring works."""
 
+import inspect
 import sys
 from pathlib import Path
 
@@ -37,6 +38,35 @@ def test_extract_descriptions_from_source_is_token_safe():
     assert descriptions["count"] == "count comment"
     assert descriptions["label"] == "label continuation"
     assert "local" not in descriptions
+
+
+def test_generated_command_methods_are_concrete(tmp_path: Path):
+    """Generated command wrappers must be concrete so devices are instantiable."""
+    gen_code = GenNodeCode(path=str(tmp_path), log=None)
+
+    def command_plan_no_arg(self, wait_for_idle: bool = False):
+        pass
+
+    gen_code.add_mod_class(
+        module_cls="CommandTestModule",
+        bases=["SECoPReadableDevice"],
+        parameters=[],
+        properties=[],
+        cmd_plans=[
+            Method(
+                cmd_name="factory_reset",
+                description="Reset module",
+                cmd_sign=inspect.signature(command_plan_no_arg),
+            )
+        ],
+        description="test module",
+    )
+
+    generated_code = gen_code.generate_code()
+
+    assert "def factory_reset" in generated_code
+    assert "@abstractmethod" not in generated_code
+    assert "raise RuntimeError(" in generated_code
 
 
 def test_basic_functionality(clean_generated_file):
@@ -122,7 +152,6 @@ def test_basic_functionality(clean_generated_file):
     print("=" * 60)
 
     # Verify code contains expected elements
-    assert "from abc import abstractmethod" in code
     assert "class TestModule(SECoPDevice):" in code
     assert "temperature: A[SignalR[float], ParamT()]" in code
     assert "count: A[SignalRW[int], ParamT()]" in code
@@ -554,8 +583,8 @@ async def test_gen_real_node(
     # The ophy_struct module has a test_cmd command
     assert "def test_cmd" in generated_code, "test_cmd plan should be generated"
     assert (
-        "@abstractmethod" in generated_code
-    ), "Command methods should be marked as abstract"
+        "@abstractmethod" not in generated_code
+    ), "Command methods should be concrete so generated classes are instantiable"
 
     # ===== Assertions for generated enum classes =====
     # Enum classes should be generated for enum parameters

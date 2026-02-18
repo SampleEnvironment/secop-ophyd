@@ -66,9 +66,12 @@ class {{ module_cls.name }}({{ module_cls.bases | join(', ') }}):
 
     # SECoP Commands wrapped as Bluesky Plans:
 {%- for method in module_cls.methods %}
-    @abstractmethod
     def {{ method.name }}{{ method.signature }}:
         """{{ method.description }}"""
+
+        raise RuntimeError(
+            "Command plan not bound yet. Call connect()/init_devices() before using commands."
+        )
 {%- endfor %}
 {%- endif %}
 
