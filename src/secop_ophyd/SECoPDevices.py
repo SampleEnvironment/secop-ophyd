@@ -305,8 +305,6 @@ class SECoPDeviceConnector(DeviceConnector):
                 and child not in IGNORED_PROPS
             ]
 
-            print(module_properties)
-
             for mod_property_name in module_properties:
                 if self._auto_fill_signals or mod_property_name in not_filled:
 
