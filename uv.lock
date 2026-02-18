@@ -2561,19 +2561,19 @@ wheels = [
 name = "secop-ophyd"
 source = { editable = "." }
 dependencies = [
+    { name = "autoflake" },
+    { name = "black" },
     { name = "frappy-core" },
+    { name = "jinja2" },
     { name = "ophyd-async" },
 ]
 
 [package.dev-dependencies]
 dev = [
-    { name = "autoflake" },
-    { name = "black" },
     { name = "bluesky" },
     { name = "cycler" },
     { name = "ipykernel" },
     { name = "isort" },
-    { name = "jinja2" },
     { name = "matplotlib" },
     { name = "mlzlog" },
     { name = "mypy" },
@@ -2602,19 +2602,19 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "autoflake", specifier = ">=2.3.2" },
+    { name = "black", specifier = ">=23.0.0" },
     { name = "frappy-core", specifier = "==0.20.4" },
+    { name = "jinja2", specifier = ">=3.1.6" },
     { name = "ophyd-async", specifier = ">=0.10.0" },
 ]
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "autoflake" },
-    { name = "black" },
     { name = "bluesky" },
     { name = "cycler" },
     { name = "ipykernel" },
     { name = "isort" },
-    { name = "jinja2" },
     { name = "matplotlib" },
     { name = "mlzlog" },
     { name = "mypy" },

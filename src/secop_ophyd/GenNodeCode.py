@@ -190,8 +190,7 @@ class GenNodeCode:
         self.inline_comment_threshold: int = 120
         self.comment_wrap_width: int = 100
 
-        # Required imports for abstract classes
-        self.add_import("abc", "abstractmethod")
+        # Required imports for generated classes
         self.add_import("typing", "Annotated as A")
         self.add_import("ophyd_async.core", "SignalR")
         self.add_import("ophyd_async.core", "SignalRW")

@@ -205,10 +205,10 @@ class SECoPDeviceConnector(DeviceConnector):
         else:
             raise RuntimeError(f"Invalid SECoP resource identifier: {sri}")
 
-        if SECoPDevice.clients.get(self.node_id) is None:
+        if SECoPDevice._clients.get(self.node_id) is None:
             raise RuntimeError(f"No AsyncFrappyClient for URI {sri} exists")
 
-        self.client: AsyncFrappyClient = SECoPDevice.clients[self.node_id]
+        self.client: AsyncFrappyClient = SECoPDevice._clients[self.node_id]
 
     def set_module(self, module_name: str):
         if self.sri.count(":") != 1:
@@ -302,6 +302,7 @@ class SECoPDeviceConnector(DeviceConnector):
                 child
                 for child in module_property_dict.keys()
                 if child not in self.filler.ignored_signals
+                and child not in IGNORED_PROPS
             ]
 
             for mod_property_name in module_properties:
@@ -532,16 +533,16 @@ class SECoPCMDDevice(StandardReadable, Flyable, Triggerable):
 
 class SECoPDevice(StandardReadable):
 
-    clients: Dict[str, AsyncFrappyClient] = {}
+    _clients: Dict[str, AsyncFrappyClient] = {}
 
-    node_id: str
-    sri: str
-    host: str
-    port: str
-    module: str | None
-    mod_prop_devices: Dict[str, SignalR]
-    param_devices: Dict[str, Any]
-    logger: Logger
+    _node_id: str
+    _sri: str
+    _host: str
+    _port: str
+    _module: str | None
+    _mod_prop_devices: Dict[str, SignalR]
+    _param_devices: Dict[str, Any]
+    _logger: Logger
 
     hinted_signals: list[str] = []
 
@@ -562,40 +563,40 @@ class SECoPDevice(StandardReadable):
             loglevel = connector.loglevel
             logdir = connector.logdir
 
-        self.sri = sri
-        self.host = sri.split(":")[0]
-        self.port = sri.split(":")[1]
-        self.mod_prop_devices = {}
-        self.param_devices = {}
-        self.node_id = sri.split(":")[0] + ":" + sri.split(":")[1]
+        self._sri = sri
+        self._host = sri.split(":")[0]
+        self._port = sri.split(":")[1]
+        self._mod_prop_devices = {}
+        self._param_devices = {}
+        self._node_id = sri.split(":")[0] + ":" + sri.split(":")[1]
 
-        self.logger = setup_logging(
-            name=f"frappy:{self.host}:{self.port}",
+        self._logger = setup_logging(
+            name=f"frappy:{self._host}:{self._port}",
             level=loglevel,
             log_dir=logdir,
         )
 
-        self.module = None
+        self._module = None
         if len(sri.split(":")) > 2:
-            self.module = sri.split(":")[2]
+            self._module = sri.split(":")[2]
 
-        if SECoPDevice.clients.get(self.node_id) is None:
-            SECoPDevice.clients[self.node_id] = AsyncFrappyClient(
-                host=self.host, port=self.port, log=self.logger
+        if SECoPDevice._clients.get(self._node_id) is None:
+            SECoPDevice._clients[self._node_id] = AsyncFrappyClient(
+                host=self._host, port=self._port, log=self._logger
             )
 
         connector = connector or SECoPDeviceConnector(sri=sri)
 
-        self._client: AsyncFrappyClient = SECoPDevice.clients[self.node_id]
+        self._client: AsyncFrappyClient = SECoPDevice._clients[self._node_id]
 
         super().__init__(name=name, connector=connector)
 
     def set_module(self, module_name: str):
-        if self.module is not None:
+        if self._module is not None:
             raise RuntimeError("Module can only be set if it was not already set")
 
-        self.module = module_name
-        self.sri = self.sri + ":" + module_name
+        self._module = module_name
+        self._sri = self._sri + ":" + module_name
 
         self._connector.set_module(module_name)
 
@@ -609,13 +610,13 @@ class SECoPDevice(StandardReadable):
             # Establish connection to SEC Node
             await self._client.connect(3)
 
-        if self.module:
-            module_desc = self._client.modules[self.module]
+        if self._module:
+            module_desc = self._client.modules[self._module]
 
             # Initialize Command Devices
             for command, _ in module_desc["commands"].items():
                 # generate new root path
-                cmd_path = Path(parameter_name=command, module_name=self.module)
+                cmd_path = Path(parameter_name=command, module_name=self._module)
                 cmd_dev_name = command + "_CMD"
                 setattr(
                     self,
@@ -638,11 +639,11 @@ class SECoPDevice(StandardReadable):
 
         await super().connect(mock, timeout, force_reconnect)
 
-        if self.module is None:
+        if self._module is None:
             # set device name from equipment id property
             self.set_name(self._client.properties[EQUIPMENT_ID].replace(".", "-"))
         else:
-            self.set_name(self.module)
+            self.set_name(self._module)
 
     def generate_cmd_plan(
         self,
@@ -845,7 +846,7 @@ class SECoPNodeDevice(SECoPDevice):
         description = self._client.client.request("describe")[2]
 
         # parse genClass file if already present
-        genCode = GenNodeCode(path=path_to_module, log=self.logger)
+        genCode = GenNodeCode(path=path_to_module, log=self._logger)
 
         genCode.from_json_describe(description)
 
@@ -938,10 +939,10 @@ class SECoPReadableDevice(SECoPDevice, Triggerable, Subscribable):
         for running commands that are not done immediately
         """
 
-        self.logger.info(f"Waiting for {self.name} to be IDLE")
+        self._logger.info(f"Waiting for {self.name} to be IDLE")
 
         if self.status is None:
-            self.logger.error("Status Signal not initialized")
+            self._logger.error("Status Signal not initialized")
             raise Exception("status Signal not initialized")
 
         # force reading of fresh status from device
@@ -955,7 +956,7 @@ class SECoPReadableDevice(SECoPDevice, Triggerable, Subscribable):
 
             # Module is in IDLE/WARN state
             if IDLE <= stat_code < BUSY:
-                self.logger.info(f"Module {self.name} --> IDLE")
+                self._logger.info(f"Module {self.name} --> IDLE")
                 break
 
             if hasattr(self, "_stopped"):
@@ -966,7 +967,7 @@ class SECoPReadableDevice(SECoPDevice, Triggerable, Subscribable):
             # Error State or DISABLED
             if hasattr(self, "_success"):
                 if stat_code >= ERROR or stat_code < IDLE:
-                    self.logger.error(f"Module {self.name} --> ERROR/DISABLED")
+                    self._logger.error(f"Module {self.name} --> ERROR/DISABLED")
                     self._success = False
                     break
 
@@ -988,10 +989,10 @@ class SECoPReadableDevice(SECoPDevice, Triggerable, Subscribable):
         yield from bps.wait_for([switch_from_status_factory])
 
     def trigger(self) -> AsyncStatus:
-        self.logger.info(f"Triggering {self.name}: read fresh data from device")
+        self._logger.info(f"Triggering {self.name}: read fresh data from device")
         # get fresh reading of the value Parameter from the SEC Node
         return AsyncStatus(
-            awaitable=self._client.get_parameter(self.module, "value", trycache=False)
+            awaitable=self._client.get_parameter(self._module, "value", trycache=False)
         )
 
     def subscribe(self, function: Callback[dict[str, Reading]]) -> None:
@@ -1106,7 +1107,7 @@ class SECoPMoveableDevice(SECoPReadableDevice, Locatable, Stoppable):
         self._stopped = False
 
         await self.target.set(new_target)
-        self.logger.info(f"Moving {self.name} to {new_target}")
+        self._logger.info(f"Moving {self.name} to {new_target}")
 
         # force reading of status from device
         await self.status.read(False)
@@ -1116,26 +1117,28 @@ class SECoPMoveableDevice(SECoPReadableDevice, Locatable, Stoppable):
             stat_code = current_stat["f0"]
 
             if self._stopped is True:
-                self.logger.info(
+                self._logger.info(
                     f"Move of {self.name} to {new_target} was stopped STOPPED"
                 )
                 break
 
             # Error State or DISABLED
             if stat_code >= ERROR or stat_code < IDLE:
-                self.logger.error(f"Module {self.name} --> ERROR/DISABLED")
+                self._logger.error(f"Module {self.name} --> ERROR/DISABLED")
                 self._success = False
                 break
 
             # Module is in IDLE/WARN state
             if IDLE <= stat_code < BUSY:
-                self.logger.info(f"Reached Target Module {self.name} --> IDLE")
+                self._logger.info(f"Reached Target Module {self.name} --> IDLE")
                 break
 
             # TODO other status transitions
 
         if not self._success:
-            self.logger.error(f"Move of {self.name} to {new_target} was not successful")
+            self._logger.error(
+                f"Move of {self.name} to {new_target} was not successful"
+            )
 
     async def stop(self, success=True):
         """Calls stop command on the SEC Node module
@@ -1149,15 +1152,15 @@ class SECoPMoveableDevice(SECoPReadableDevice, Locatable, Stoppable):
         self._success = success
 
         if not success:
-            self.logger.info(f"Stopping {self.name} success={success}")
-            await self._client.exec_command(self.module, "stop")
+            self._logger.info(f"Stopping {self.name} success={success}")
+            await self._client.exec_command(self._module, "stop")
             self._stopped = True
 
     async def locate(self) -> Location:
         # return current location of the device (setpoint and readback).
         # Only locally cached values are returned
-        setpoint = await self._client.get_parameter(self.module, "target", True)
-        readback = await self._client.get_parameter(self.module, "value", True)
+        setpoint = await self._client.get_parameter(self._module, "target", True)
+        readback = await self._client.get_parameter(self._module, "value", True)
 
         location: Location = {
             "setpoint": setpoint.value,
