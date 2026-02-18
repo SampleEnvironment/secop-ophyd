@@ -27,7 +27,7 @@ def cleanup_secop_clients():
     # After each test, clear the cached clients
     from secop_ophyd.SECoPDevices import SECoPDevice
 
-    SECoPDevice.clients.clear()
+    SECoPDevice._clients.clear()
 
 
 @pytest.fixture
