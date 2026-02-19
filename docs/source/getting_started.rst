@@ -46,7 +46,7 @@ Here's a minimal example to get you started:
     with init_devices():
         node = SECoPNodeDevice('localhost:10800')
 
-    # The device tree is now automatically built from the node description
+    # The device tree is now automatically built from introspecting the SEC node description
 
 Key Concepts
 ------------
@@ -54,7 +54,7 @@ Key Concepts
 SECoP Nodes and Modules
 ~~~~~~~~~~~~~~~~~~~~~~~
 
-A **SECoP node** represents a complete hardware device or service. Each node contains one or more
+A **SEC node** can represent any number of hardware devices or services. Each node contains one or more
 **modules**, which are individual functional units (e.g., a temperature controller, a pressure sensor).
 
 SECoPNodeDevice
@@ -68,18 +68,18 @@ ophyd-async devices from SECoP nodes. It:
 - Creates ophyd-async signals and devices for all parameters and modules
 - Exposes SECoP commands as Bluesky plan methods
 
-Dynamic Device Generation
-~~~~~~~~~~~~~~~~~~~~~~~~~~
+Ophyd Device from introspection
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Unlike most other ophyd devices that must be statically declared, SECoP-Ophyd devices are **dynamically
-generated** at connection time. This means:
+SECoP-Ophyd devices are **dynamically
+generated** at connection time, by introspecting the SECoP node's metadata. This means:
 
 - No manual device class definition is needed
 - The device structure matches the structure defined in the SEC node
 - Changes to the SECoP node are automatically reflected
 
 However, for better development experience with type hints and autocompletion, you can generate
-static class files (see :doc:`tutorial`).
+declarative device class files (see :ref:`user guide section <class-file-generation>`).
 
 Next Steps
 ----------

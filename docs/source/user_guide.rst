@@ -285,6 +285,8 @@ Capture command return values:
 
 
 
+.. _class-file-generation:
+
 Class File Generation
 ---------------------
 
@@ -312,6 +314,90 @@ Generating Class Files
     # Or specify output directory
     device.class_from_instance('/path/to/output')
 
+
+The generated code will look similar to the example below, with signals annotated with
+their types and commands as method stubs. Enums are generated for parameters with the
+SECoP enum type.
+
+Enum classes are namespaced under the module device class and
+parameter name. Should multipe enums have the same name, theyre members are merged,
+and the class will be derived from ``SupersetEnum`` instead of ``StrictEnum``.
+
+.. code-block:: python
+
+    from typing import Annotated as A
+
+    from ophyd_async.core import SignalR, SignalRW, StandardReadableFormat as Format, StrictEnum
+
+    from numpy import ndarray
+
+    from secop_ophyd.SECoPDevices import ParameterType as ParamT, PropertyType as PropT, SECoPMoveableDevice, SECoPNodeDevice
+
+
+    class Cryostat_Mode_Enum(StrictEnum):
+        """mode enum for `Cryostat`."""
+
+        RAMP = "ramp"
+        PID = "pid"
+        OPENLOOP = "openloop"
+
+
+    class Cryostat(SECoPMoveableDevice):
+        """A simulated cc cryostat with heat-load, specific heat for the sample and a temperature dependent heat-link between sample and regulation."""
+
+        # Module Properties
+        group: A[SignalR[str], PropT()]
+        description: A[SignalR[str], PropT()]
+        implementation: A[SignalR[str], PropT()]
+        interface_classes: A[SignalR[ndarray], PropT()]
+        features: A[SignalR[ndarray], PropT()]
+
+        # Module Parameters
+        value: A[SignalR[float], ParamT(), Format.HINTED_SIGNAL]  # regulation temperature; Unit: (K)
+        status: A[SignalR[ndarray], ParamT()]  # current status of the module
+        target: A[SignalRW[float], ParamT(), Format.HINTED_SIGNAL]  # target temperature; Unit: (K)
+        ramp: A[SignalRW[float], ParamT()]  # ramping speed of the setpoint; Unit: (K/min)
+        setpoint: A[SignalR[float], ParamT()]  # current setpoint during ramping else target; Unit: (K)
+        mode: A[SignalRW[Cryostat_Mode_Enum], ParamT()]  # mode of regulation
+        maxpower: A[SignalRW[float], ParamT()]  # Maximum heater power; Unit: (W)
+        heater: A[SignalR[float], ParamT()]  # current heater setting; Unit: (%)
+        heaterpower: A[SignalR[float], ParamT()]  # current heater power; Unit: (W)
+        pid: A[SignalRW[ndarray], ParamT()]  # regulation coefficients
+        p: A[SignalRW[float], ParamT()]  # regulation coefficient 'p'; Unit: (%/K)
+        i: A[SignalRW[float], ParamT()]  # regulation coefficient 'i'
+        d: A[SignalRW[float], ParamT()]  # regulation coefficient 'd'
+        tolerance: A[SignalRW[float], ParamT()]  # temperature range for stability checking; Unit: (K)
+        window: A[SignalRW[float], ParamT()]  # time window for stability checking; Unit: (s)
+        timeout: A[SignalRW[float], ParamT()]  # max waiting time for stabilisation check; Unit: (s)
+
+
+    class Cryo_7_frappy_demo(SECoPNodeDevice):
+        """short description
+
+        This is a very long description providing all the gory details about the stuff we are describing."""
+
+        # Module Devices
+        cryo: Cryostat
+
+        # Node Properties
+        equipment_id: A[SignalR[str], PropT()]
+        firmware: A[SignalR[str], PropT()]
+        description: A[SignalR[str], PropT()]
+        _interfaces: A[SignalR[ndarray], PropT()]
+
+
+.. note::
+
+    Annotations for signals include:
+
+    - **Signal type** (e.g., ``SignalR``, ``SignalRW``)
+    - **Signal data type** (e.g., ``float``, ``str``,... (`SignalDatatype <https://blueskyproject.io/ophyd-async/main/_api/ophyd_async/ophyd_async.core.html#ophyd_async.core.SignalDatatypeT>`_)
+    - **Format** declares if the signal represents a **read** or a **config** signal (`StandardReadableFormat <https://blueskyproject.io/ophyd-async/main/_api/ophyd_async/ophyd_async.core.html#ophyd_async.core.StandardReadableFormat>`_)
+    - **SECoP attribute type** ``ParamT`` the signal represents a SECoP parameter (data is dynamic at runtime) or ``PropT`` the signal represents a SECoP property (static metadata at runtime, can only change on reconnect)
+
+
+
+
 Using Generated Classes
 ~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -320,16 +406,23 @@ Using Generated Classes
     # Import generated classes
     from genNodeClass import MyDevice
 
-    # Type-cast for IDE support
-    device: MyDevice = device
+    # Instatiate device using generated class
+    with init_devices():
+        cryo_node = MyDevice('localhost:10800')
 
     # Now you have autocompletion!
-    device.temperature.  # IDE shows: value, target, ramp, status, etc.
+    cryo_node.cryo.  # IDE shows: value, target, ramp, status, etc.
+
+
+
+
+
 
 .. warning::
 
    Regenerate class files whenever the static metadata of a SECoP node changes!
-   THis can happen on every new connection to a SEC node.
+   This can happen on every new connection to a SEC node.
+
 
 
 
@@ -339,7 +432,7 @@ Best Practices
 Connection Management
 ~~~~~~~~~~~~~~~~~~~~~
 
-Always use ``init_devices()`` context manager:
+With or without a runengine involved always use ``init_devices()`` context manager:
 
 .. code-block:: python
 
