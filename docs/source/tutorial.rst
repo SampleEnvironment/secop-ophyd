@@ -66,8 +66,8 @@ from the node's description upon connection:
 .. code-block:: python
 
     with init_devices():
-        gas_dosing = SECoPNodeDevice('localhost:10801', loglevel="DEBUG")
-        reactor_cell = SECoPNodeDevice('localhost:10802', loglevel="INFO")
+        gas_dosing_introspected = SECoPNodeDevice('localhost:10801', loglevel="DEBUG")
+        reactor_cell_introspected = SECoPNodeDevice('localhost:10802', loglevel="INFO")
 
 **Log Levels:**
 
@@ -93,14 +93,21 @@ Generate class files with:
 
 .. code-block:: python
 
-    gas_dosing.class_from_instance()
-    reactor_cell.class_from_instance()
+    gas_dosing_introspected.class_from_instance()
+    reactor_cell_introspected.class_from_instance()
 
 This creates ``genNodeClass.py`` in your current working directory. You can specify a custom path:
 
 .. code-block:: python
 
-    gas_dosing.class_from_instance('/path/to/output/directory')
+    gas_dosing_introspected.class_from_instance('/path/to/output/directory')
+
+
+The generated class file contains declarative device definitions that match the
+ structure of the SECoP node. Signals are annotated with their types,
+ and commands are exposed as method stubs that get overwritten on ``.connect()``.
+
+
 
 .. warning::
 
@@ -110,15 +117,17 @@ This creates ``genNodeClass.py`` in your current working directory. You can spec
 Using the Generated Classes
 ----------------------------
 
-Import the generated classes and type-cast your devices:
+Import the generated classes and instantiate your devices from the generated class definitions:
 
 .. code-block:: python
 
-    from genNodeClass import *
+    from genNodeClass import Gas_dosing, Reactor_cell
 
-    # Type cast for IDE support
-    gas_dosing: Gas_dosing = gas_dosing
-    reactor_cell: Reactor_cell = reactor_cell
+    # once the class files are generated, instantiate your devices using the generated classes
+    with init_devices():
+        gas_dosing = Gas_dosing('localhost:10801', loglevel="DEBUG")
+        reactor_cell = Reactor_cell('localhost:10802', loglevel="INFO")
+
 
 Now your IDE will provide autocompletion and type checking for all device attributes.
 
