@@ -50,7 +50,6 @@ dev = [
     "sphinx-autodoc2",
     "myst-parser",
     "numpydoc",
-    'snakefmt',
 
 ]
 
