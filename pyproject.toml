@@ -49,8 +49,7 @@ dev = [
     "sphinxcontrib-mermaid",
     "sphinx-autodoc2",
     "myst-parser",
-    "numpydoc",
-    'snakefmt',
+    "numpydoc"
 
 ]
 
