@@ -10,8 +10,8 @@ dynamic = ["version"]
 description = "An Interface between bluesky and SECoP, using ophyd and frappy-client"
 
 dependencies = [
-    'ophyd-async >= 0.10.0',
-    'frappy-core == 0.20.4',
+    'ophyd-async >= 0.13.1',
+    'frappy-core >= 0.20.8',
     'black',
     'Jinja2',
     'autoflake',

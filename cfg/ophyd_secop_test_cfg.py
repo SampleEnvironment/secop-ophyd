@@ -61,7 +61,7 @@ Mod(
         [1, 1, 1, 1, 1],
         [1, 1, 1, 1, 1],
     ],
-    arr3d=[[[0]]],
+    arr3d=[[[0] * 5 for _ in range(5)] for _ in range(5)],
 )
 
 Mod(
