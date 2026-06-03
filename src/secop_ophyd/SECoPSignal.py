@@ -1,6 +1,5 @@
 import asyncio
 import warnings
-from functools import wraps
 from typing import Any, Callable
 
 from bluesky.protocols import DataKey, Reading
@@ -509,23 +508,12 @@ class SECoPBackend(SignalBackend[SignalDatatypeT]):
             # Properties are static, no callbacks
             return
 
-        def awaitify(sync_func):
-            """Wrap a synchronous callable to allow ``await``'ing it"""
-
-            @wraps(sync_func)
-            async def async_func(*args, **kwargs):
-                return sync_func(*args, **kwargs)
-
-            return async_func
-
         def updateItem(module, parameter, entry: CacheItem):  # noqa: N802
             data = SECoPReading(secop_dt=self.SECoP_type_info, entry=entry)
-            async_callback = awaitify(callback)
+            reading = data.get_reading()
 
-            asyncio.run_coroutine_threadsafe(
-                async_callback(reading=data.get_reading()),
-                self._secclient.loop,
-            )
+            if callback:
+                callback(reading=reading)
 
         if callback is not None:
             self._secclient.register_callback(self.get_path_tuple(), updateItem)
