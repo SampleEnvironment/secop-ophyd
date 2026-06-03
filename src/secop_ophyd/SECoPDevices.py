@@ -840,10 +840,10 @@ class SECoPNodeDevice(SECoPDevice):
         # Node device has no specific interface class formats
         pass
 
-    def class_from_instance(self, path_to_module: str | None = None):
+    async def class_from_instance(self, path_to_module: str | None = None):
         from secop_ophyd.GenNodeCode import GenNodeCode
 
-        description = self._client.client.request("describe")[2]
+        description = (await self._client.request("describe"))[2]
 
         # parse genClass file if already present
         genCode = GenNodeCode(path=path_to_module, log=self._logger)

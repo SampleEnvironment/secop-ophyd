@@ -266,7 +266,7 @@ class AsyncSecopClient(ProxyClient):
             self._shutdown.set()
             self._set_state(False, "shutdown")
 
-    async def _request(self, action, ident=None, data=None):
+    async def request(self, action, ident=None, data=None):
         """Send a request and await the matching reply."""
         if self._writer is None:
             raise ConnectionError("not connected")
@@ -340,12 +340,12 @@ class AsyncSecopClient(ProxyClient):
 
                 self._rx_task = asyncio.create_task(self._rx_loop())
 
-                _, _, desc_data = await self._request(DESCRIPTIONREQUEST)
+                _, _, desc_data = await self.request(DESCRIPTIONREQUEST)
                 self._init_descriptive_data(desc_data)
                 self.nodename = self.properties.get("equipment_id") or self.uri
 
                 self._set_state(True, "activating")
-                await self._request(ENABLEEVENTSREQUEST)
+                await self.request(ENABLEEVENTSREQUEST)
 
                 self._set_state(True, "connected")
                 self.conn_timestamp = time.time()
@@ -416,7 +416,7 @@ class AsyncSecopClient(ProxyClient):
         if self.online:
             ident = self.identifier[module, parameter]
             try:
-                await self._request(READREQUEST, ident)
+                await self.request(READREQUEST, ident)
             except SECoPError as e:
                 result = self.cache[module, parameter]
                 if e == result.readerror:
@@ -427,7 +427,7 @@ class AsyncSecopClient(ProxyClient):
     async def set_parameter(self, module, parameter, value) -> CacheItem:
         datatype = self.modules[module]["parameters"][parameter]["datatype"]
         value = datatype.export_value(value)
-        await self._request(WRITEREQUEST, self.identifier[module, parameter], value)
+        await self.request(WRITEREQUEST, self.identifier[module, parameter], value)
         return self.cache[module, parameter]
 
     async def exec_command(self, module, command, argument=None) -> tuple[Any, dict]:
@@ -437,7 +437,7 @@ class AsyncSecopClient(ProxyClient):
         else:
             if argument is not None:
                 raise WrongTypeError("command has no argument")
-        _, _, (data, qualifiers) = await self._request(
+        _, _, (data, qualifiers) = await self.request(
             COMMANDREQUEST, self.identifier[module, command], argument
         )
         result_dtype = self.modules[module]["commands"][command]["datatype"].result
