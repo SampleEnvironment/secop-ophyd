@@ -49,6 +49,7 @@ class AsyncSecopClient(ProxyClient):
         self.external = False
         self.conn_timestamp: float = 0.0
 
+        self.loop: asyncio.AbstractEventLoop | None = None
         self._reader: asyncio.StreamReader | None = None
         self._writer: asyncio.StreamWriter | None = None
         self._rx_task: asyncio.Task | None = None
@@ -266,8 +267,8 @@ class AsyncSecopClient(ProxyClient):
             self._shutdown.set()
             self._set_state(False, "shutdown")
 
-    async def request(self, action, ident=None, data=None):
-        """Send a request and await the matching reply."""
+    async def _do_request(self, action, ident=None, data=None):
+        """Low-level request — must be called on self.loop."""
         if self._writer is None:
             raise ConnectionError("not connected")
         reply_action = REQUEST2REPLY.get(action)
@@ -285,10 +286,23 @@ class AsyncSecopClient(ProxyClient):
                 lst.remove(fut)
             raise TimeoutError(f"no response within 10s for {action} {ident}")
 
+    async def request(self, action, ident=None, data=None):
+        """Send a request and await the reply, bridging event loops if needed."""
+        if asyncio.get_running_loop() is self.loop:
+            return await self._do_request(action, ident, data)
+        if self.loop is None:
+            raise ConnectionError("not connected")
+        return await asyncio.wrap_future(
+            asyncio.run_coroutine_threadsafe(
+                self._do_request(action, ident, data), self.loop
+            )
+        )
+
     async def connect(self, try_period=0):
         if self._writer is not None:
             return
 
+        self.loop = asyncio.get_running_loop()
         self._shutdown.clear()
 
         # Cancel any running rx_task before opening a new stream. Without
