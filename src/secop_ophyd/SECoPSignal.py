@@ -149,7 +149,7 @@ class SECoPXBackend(SignalBackend):
         :param path: Path to the command in the secclient module dict
         :type path: Path
         :param secclient: SECoP client providing communication to the SEC Node
-        :type secclient: AsyncFrappyClient
+        :type secclient: AsyncSecopClient
         :param argument: Refence to Argument Signal
         :type argument: SECoP_CMD_IO_Backend | None
         :param result: Reference to Result Signal
@@ -347,6 +347,7 @@ class SECoPBackend(SignalBackend[SignalDatatypeT]):
 
     async def connect(self, timeout: float):
         """Connect and initialize backend (handles both parameters and properties)."""
+
         await self._secclient.connect()
 
         match self.attribute_type:

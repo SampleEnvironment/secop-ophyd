@@ -206,7 +206,7 @@ class SECoPDeviceConnector(DeviceConnector):
             raise RuntimeError(f"Invalid SECoP resource identifier: {sri}")
 
         if SECoPDevice._clients.get(self.node_id) is None:
-            raise RuntimeError(f"No AsyncFrappyClient for URI {sri} exists")
+            raise RuntimeError(f"No AsyncSecopClient for URI {sri} exists")
 
         self.client: AsyncSecopClient = SECoPDevice._clients[self.node_id]
 
@@ -418,7 +418,7 @@ class SECoPCMDDevice(StandardReadable, Flyable, Triggerable):
         :param path: Path to the command in the secclient module dict
         :type path: Path
         :param secclient: SECoP client providing communication to the SEC Node
-        :type secclient: AsyncFrappyClient
+        :type secclient: AsyncSecopClient
         """
         dev_name: str = path.get_signal_name() + "_CMD"
 
@@ -893,7 +893,7 @@ class SECoPReadableDevice(SECoPDevice, Triggerable, Subscribable):
         """Initializes the SECoPReadableDevice
 
         :param secclient: SECoP client providing communication to the SEC Node
-        :type secclient: AsyncFrappyClient
+        :type secclient: AsyncSecopClient
         :param module_name: Name of the SEC Node module that is represented by
             this device
         :type module_name: str
@@ -1023,7 +1023,7 @@ class SECoPTriggerableDevice(SECoPReadableDevice, Stoppable):
         """Initialize SECoPTriggerableDevice
 
         :param secclient: SECoP client providing communication to the SEC Node
-        :type secclient: AsyncFrappyClient
+        :type secclient: AsyncSecopClient
         :param module_name: ame of the SEC Node module that is represented by
             this device
         :type module_name: str
@@ -1064,7 +1064,7 @@ class SECoPMoveableDevice(SECoPReadableDevice, Locatable, Stoppable):
         """Initialize SECoPMovableDevice
 
         :param secclient: SECoP client providing communication to the SEC Node
-        :type secclient: AsyncFrappyClient
+        :type secclient: AsyncSecopClient
         :param module_name: ame of the SEC Node module that is represented by
             this device
         :type module_name: str

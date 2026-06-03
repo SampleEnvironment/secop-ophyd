@@ -286,7 +286,24 @@ class AsyncSecopClient(ProxyClient):
             raise TimeoutError(f"no response within 10s for {action} {ident}")
 
     async def connect(self, try_period=0):
+        if self._writer is not None:
+            return
+
         self._shutdown.clear()
+
+        # Cancel any running rx_task before opening a new stream. Without
+        # this, the old task's next readline() hits the same StreamReader as
+        # the new handshake, asyncio raises RuntimeError, _rx_loop calls
+        # _do_disconnect() (setting _reader=None and closing the stream), and
+        # the new connection's readline() sees EOF -> secop_version=''.
+        if self._rx_task and not self._rx_task.done():
+            self._rx_task.cancel()
+            try:
+                await self._rx_task
+            except asyncio.CancelledError:
+                pass
+        self._rx_task = None
+
         current = asyncio.current_task()
         if (
             self._reconnect_task
