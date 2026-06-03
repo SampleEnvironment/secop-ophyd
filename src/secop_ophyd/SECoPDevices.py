@@ -48,7 +48,7 @@ from ophyd_async.core import (
 )
 from ophyd_async.core._utils import Callback
 
-from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient
+from secop_ophyd.AsyncFrappyClient import AsyncSecopClient
 from secop_ophyd.logs import setup_logging
 from secop_ophyd.propertykeys import DATAINFO, EQUIPMENT_ID, INTERFACE_CLASSES
 from secop_ophyd.SECoPSignal import (
@@ -208,7 +208,7 @@ class SECoPDeviceConnector(DeviceConnector):
         if SECoPDevice._clients.get(self.node_id) is None:
             raise RuntimeError(f"No AsyncFrappyClient for URI {sri} exists")
 
-        self.client: AsyncFrappyClient = SECoPDevice._clients[self.node_id]
+        self.client: AsyncSecopClient = SECoPDevice._clients[self.node_id]
 
     def set_module(self, module_name: str):
         if self.sri.count(":") != 1:
@@ -412,7 +412,7 @@ class SECoPCMDDevice(StandardReadable, Flyable, Triggerable):
 
     """
 
-    def __init__(self, path: Path, secclient: AsyncFrappyClient):
+    def __init__(self, path: Path, secclient: AsyncSecopClient):
         """Initialize the CMD Device
 
         :param path: Path to the command in the secclient module dict
@@ -422,7 +422,7 @@ class SECoPCMDDevice(StandardReadable, Flyable, Triggerable):
         """
         dev_name: str = path.get_signal_name() + "_CMD"
 
-        self._secclient: AsyncFrappyClient = secclient
+        self._secclient: AsyncSecopClient = secclient
 
         cmd_props = secclient.modules[path._module_name]["commands"][
             path._accessible_name
@@ -533,7 +533,7 @@ class SECoPCMDDevice(StandardReadable, Flyable, Triggerable):
 
 class SECoPDevice(StandardReadable):
 
-    _clients: Dict[str, AsyncFrappyClient] = {}
+    _clients: Dict[str, AsyncSecopClient] = {}
 
     _node_id: str
     _sri: str
@@ -581,13 +581,13 @@ class SECoPDevice(StandardReadable):
             self._module = sri.split(":")[2]
 
         if SECoPDevice._clients.get(self._node_id) is None:
-            SECoPDevice._clients[self._node_id] = AsyncFrappyClient(
+            SECoPDevice._clients[self._node_id] = AsyncSecopClient(
                 host=self._host, port=self._port, log=self._logger
             )
 
         connector = connector or SECoPDeviceConnector(sri=sri)
 
-        self._client: AsyncFrappyClient = SECoPDevice._clients[self._node_id]
+        self._client: AsyncSecopClient = SECoPDevice._clients[self._node_id]
 
         super().__init__(name=name, connector=connector)
 

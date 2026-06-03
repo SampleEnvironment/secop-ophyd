@@ -4,17 +4,15 @@ import asyncio
 from frappy.client import CacheItem
 
 # import xprocess
-from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient
+from secop_ophyd.AsyncFrappyClient import AsyncSecopClient
 
 
-async def test_asycnc_secopclient_conn(
-    cryo_sim, async_frappy_client: AsyncFrappyClient
-):
+async def test_asycnc_secopclient_conn(cryo_sim, async_frappy_client: AsyncSecopClient):
     assert async_frappy_client.online is True
 
 
 async def test_asycnc_secopclient_get_param(
-    cryo_sim, async_frappy_client: AsyncFrappyClient
+    cryo_sim, async_frappy_client: AsyncSecopClient
 ):
     reading = await async_frappy_client.get_parameter("cryo", "value", False)
 
@@ -22,7 +20,7 @@ async def test_asycnc_secopclient_get_param(
 
 
 async def test_async_secopclient_disconnect(
-    cryo_sim, async_frappy_client: AsyncFrappyClient
+    cryo_sim, async_frappy_client: AsyncSecopClient
 ):
     await async_frappy_client.get_parameter("cryo", "value", False)
 
@@ -32,7 +30,7 @@ async def test_async_secopclient_disconnect(
 
 
 async def test_async_secopclient_reconn(
-    cryo_sim, async_frappy_client: AsyncFrappyClient
+    cryo_sim, async_frappy_client: AsyncSecopClient
 ):
     reading1: CacheItem = await async_frappy_client.get_parameter(
         "cryo", "value", False
@@ -71,7 +69,7 @@ async def test_async_secopclient_reconn(
 
 
 async def test_async_secopclient_shutdown_and_reconn(
-    cryo_sim, async_frappy_client: AsyncFrappyClient
+    cryo_sim, async_frappy_client: AsyncSecopClient
 ):
     reading1: CacheItem = await async_frappy_client.get_parameter(
         "cryo", "value", False
@@ -93,7 +91,7 @@ async def test_async_secopclient_shutdown_and_reconn(
     assert async_frappy_client.state == "shutdown"
 
     # manual reconn
-    async_frappy_client.client._shutdown.clear()
+    async_frappy_client._shutdown.clear()
     await async_frappy_client.connect(3)
 
     assert async_frappy_client.state == "connected"

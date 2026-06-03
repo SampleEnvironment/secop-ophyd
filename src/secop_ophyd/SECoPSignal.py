@@ -25,7 +25,7 @@ from ophyd_async.core import (
     StrictEnum,
 )
 
-from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient
+from secop_ophyd.AsyncFrappyClient import AsyncSecopClient
 from secop_ophyd.util import Path, SECoPDataKey, SECoPdtype, SECoPReading, deep_get
 
 atomic_dtypes = (
@@ -140,7 +140,7 @@ class SECoPXBackend(SignalBackend):
     def __init__(
         self,
         path: Path,
-        secclient: AsyncFrappyClient,
+        secclient: AsyncSecopClient,
         argument: LocalBackend | None,
         result: LocalBackend | None,
     ) -> None:
@@ -156,7 +156,7 @@ class SECoPXBackend(SignalBackend):
         :type result: SECoP_CMD_IO_Backend | None
         """
 
-        self._secclient: AsyncFrappyClient = secclient
+        self._secclient: AsyncSecopClient = secclient
 
         # module:acessible Path for reading/writing (module,accessible)
         self.path: Path = path
@@ -238,7 +238,7 @@ class SECoPBackend(SignalBackend[SignalDatatypeT]):
     attribute_type: str | None
     _module_name: str | None
     _attribute_name: str | None  # parameter or property name
-    _secclient: AsyncFrappyClient
+    _secclient: AsyncSecopClient
     path_str: str
     SECoPdtype_obj: DataType
     SECoP_type_info: SECoPdtype
@@ -249,7 +249,7 @@ class SECoPBackend(SignalBackend[SignalDatatypeT]):
         datatype: type[SignalDatatypeT] | None,
         path: str | None = None,
         attribute_type: str | None = None,
-        secclient: AsyncFrappyClient | None = None,
+        secclient: AsyncSecopClient | None = None,
     ):
         """Initialize backend (supports deferred initialization).
 
@@ -282,7 +282,7 @@ class SECoPBackend(SignalBackend[SignalDatatypeT]):
         self,
         datatype: type[SignalDatatypeT],
         path: str,
-        secclient: AsyncFrappyClient,
+        secclient: AsyncSecopClient,
     ):
         if self.attribute_type is not None:
 
@@ -311,7 +311,7 @@ class SECoPBackend(SignalBackend[SignalDatatypeT]):
         self.path_str = path
 
     def init_property_from_introspection(
-        self, datatype: type[SignalDatatypeT], path: str, secclient: AsyncFrappyClient
+        self, datatype: type[SignalDatatypeT], path: str, secclient: AsyncSecopClient
     ):
         if self.attribute_type is not None:
 
@@ -384,6 +384,8 @@ class SECoPBackend(SignalBackend[SignalDatatypeT]):
                 f"dtype_descr: {self.SECoP_type_info.dtype_descr}"
             )
 
+        assert self._module_name is not None
+        assert self._attribute_name is not None
         self.source_name = (
             self._secclient.uri
             + ":"

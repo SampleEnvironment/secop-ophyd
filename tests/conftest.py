@@ -16,7 +16,7 @@ from frappy.datatypes import (
 from ophyd_async.core import init_devices
 from xprocess import ProcessStarter
 
-from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient
+from secop_ophyd.AsyncFrappyClient import AsyncSecopClient
 from secop_ophyd.SECoPDevices import SECoPNodeDevice
 
 
@@ -191,7 +191,16 @@ def logger():
 
 @pytest.fixture()
 async def async_frappy_client(cryo_sim, logger, port="10769"):
-    client = AsyncFrappyClient(host="localhost", port=port, log=logger)
+    client = AsyncSecopClient(host="localhost", port=port, log=logger)
+
+    await client.connect(3)
+
+    return client
+
+
+@pytest.fixture()
+async def async_secop_client(cryo_sim, logger, port="10769"):
+    client = AsyncSecopClient(host="localhost", port=port, log=logger)
 
     await client.connect(3)
 
@@ -200,7 +209,7 @@ async def async_frappy_client(cryo_sim, logger, port="10769"):
 
 @pytest.fixture()
 async def nested_client(nested_struct_sim, logger, port="10771"):
-    client = AsyncFrappyClient(host="localhost", port=port, log=logger)
+    client = AsyncSecopClient(host="localhost", port=port, log=logger)
 
     await client.connect(3)
 
