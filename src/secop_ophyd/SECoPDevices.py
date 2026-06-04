@@ -506,15 +506,13 @@ class SECoPCMDDevice(StandardReadable, Flyable, Triggerable):
         SEC Node is received
         :rtype: AsyncStatus
         """
-        coro = asyncio.wait_for(fut=self._exec_cmd(), timeout=None)
-        return AsyncStatus(awaitable=coro)
+        return AsyncStatus(awaitable=self._exec_cmd())
 
     def kickoff(self) -> AsyncStatus:
         # trigger execution of secop command, wait until Device is Busy
 
         self._start_time = ttime.time()
-        coro = asyncio.wait_for(fut=asyncio.sleep(1), timeout=None)
-        return AsyncStatus(coro)
+        return AsyncStatus(asyncio.sleep(1))
 
     async def _exec_cmd(self):
         stat = self.commandx.trigger()
@@ -522,8 +520,7 @@ class SECoPCMDDevice(StandardReadable, Flyable, Triggerable):
         await stat
 
     def complete(self) -> AsyncStatus:
-        coro = asyncio.wait_for(fut=self._exec_cmd(), timeout=None)
-        return AsyncStatus(awaitable=coro)
+        return AsyncStatus(awaitable=self._exec_cmd())
 
     def collect(self) -> Iterator[PartialEvent]:
         yield dict(

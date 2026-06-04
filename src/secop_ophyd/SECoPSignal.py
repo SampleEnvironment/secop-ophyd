@@ -1,4 +1,3 @@
-import asyncio
 import warnings
 from typing import Any, Callable
 
@@ -180,13 +179,10 @@ class SECoPXBackend(SignalBackend):
         else:
             argument = await self.argument.get_value()
 
-        res, qualifiers = await asyncio.wait_for(
-            fut=self._secclient.exec_command(
-                module=self.path._module_name,
-                command=self.path._accessible_name,
-                argument=argument,
-            ),
-            timeout=None,
+        res, qualifiers = await self._secclient.exec_command(
+            module=self.path._module_name,
+            command=self.path._accessible_name,
+            argument=argument,
         )
 
         # write return Value to corresponding Backend
