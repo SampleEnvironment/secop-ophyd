@@ -254,7 +254,7 @@ class AsyncSecopClient(ProxyClient):
         if writer:
             try:
                 writer.close()
-                await writer.wait_closed()
+                await asyncio.wait_for(writer.wait_closed(), timeout=2.0)
             except Exception:
                 pass
         err = ConnectionError("connection closed")
