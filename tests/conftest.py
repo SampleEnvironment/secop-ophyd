@@ -217,10 +217,9 @@ async def nested_client(nested_struct_sim, logger, port="10771"):
 
 
 @pytest.fixture()
-def RE():  # noqa: N802
+async def RE():  # noqa: N802
     re = RunEngine({})
-    yield re
-    re.loop.call_soon_threadsafe(re.loop.stop)
+    return re
 
 
 @pytest.fixture()
@@ -229,14 +228,14 @@ async def nested_node_no_re():
         nested = SECoPNodeDevice(
             sec_node_uri="localhost:10771",
         )
-    return nested
-    # yield nested
-    # client = SECoPDevice._clients.get("localhost:10771")
-    # if client is not None:
-    #    try:
-    #        await client.disconnect(True)
-    #    except Exception:
-    #        pass
+
+    yield nested
+    client = SECoPDevice._clients.get("localhost:10771")
+    if client is not None:
+        try:
+            await client.disconnect(True)
+        except Exception:
+            pass
 
 
 @pytest.fixture()
@@ -255,14 +254,14 @@ async def cryo_node_no_re():
         cryo = SECoPNodeDevice(
             sec_node_uri="localhost:10769",
         )
-    return cryo
-    # yield cryo
-    # client = SECoPDevice._clients.get("localhost:10769")
-    # if client is not None:
-    #    try:
-    #        await client.disconnect(True)
-    #    except Exception:
-    #        pass
+
+    yield cryo
+    client = SECoPDevice._clients.get("localhost:10769")
+    if client is not None:
+        try:
+            await client.disconnect(True)
+        except Exception:
+            pass
 
 
 @pytest.fixture()

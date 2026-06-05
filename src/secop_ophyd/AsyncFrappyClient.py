@@ -384,6 +384,27 @@ class AsyncSecopClient(ProxyClient):
                 await asyncio.sleep(1)
 
     async def disconnect(self, shutdown=True):
+        current_loop = asyncio.get_running_loop()
+        if self.loop is not None and self.loop is not current_loop:
+            if self.loop.is_running():
+                # Called from a foreign loop — schedule on the client's own loop and
+                # wait.
+                fut = asyncio.run_coroutine_threadsafe(
+                    self.disconnect(shutdown), self.loop
+                )
+                await current_loop.run_in_executor(None, fut.result, 5.0)
+            else:
+                # Client's loop is already stopped, tasks are abandoned, clear state.
+                self._rx_task = None
+                self._reconnect_task = None
+                self._reader = None
+                self._writer = None
+                self._active_requests.clear()
+                if shutdown:
+                    self._shutdown.set()
+                    self._set_state(False, "shutdown")
+            return
+
         if self._rx_task and not self._rx_task.done():
             self._rx_task.cancel(msg="disconnect")
             try:
