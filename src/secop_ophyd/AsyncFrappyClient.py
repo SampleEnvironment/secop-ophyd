@@ -433,7 +433,6 @@ class AsyncSecopClient(ProxyClient):
         self._reconnect_task = None
 
     async def get_parameter(self, module, parameter, trycache=False) -> CacheItem:
-        print(f"get parameter call trycache:{trycache}")
         if trycache:
             cached = self.cache.get((module, parameter))
             if cached:

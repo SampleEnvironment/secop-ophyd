@@ -21,9 +21,15 @@ from secop_ophyd.SECoPDevices import SECoPDevice, SECoPNodeDevice
 
 
 @pytest.fixture(autouse=True)
-def cleanup_secop_clients():
+async def cleanup_secop_clients():
     """Clear SECoP clients between tests to ensure fresh connections."""
     yield
+    print("disconnecting and clearing clients")
+    for client in list(SECoPDevice._clients.values()):
+        try:
+            await client.disconnect(True)
+        except Exception:
+            pass
     SECoPDevice._clients.clear()
 
 
@@ -223,13 +229,14 @@ async def nested_node_no_re():
         nested = SECoPNodeDevice(
             sec_node_uri="localhost:10771",
         )
-    yield nested
-    client = SECoPDevice._clients.get("localhost:10771")
-    if client is not None:
-        try:
-            await client.disconnect(True)
-        except Exception:
-            pass
+    return nested
+    # yield nested
+    # client = SECoPDevice._clients.get("localhost:10771")
+    # if client is not None:
+    #    try:
+    #        await client.disconnect(True)
+    #    except Exception:
+    #        pass
 
 
 @pytest.fixture()
@@ -248,13 +255,14 @@ async def cryo_node_no_re():
         cryo = SECoPNodeDevice(
             sec_node_uri="localhost:10769",
         )
-    yield cryo
-    client = SECoPDevice._clients.get("localhost:10769")
-    if client is not None:
-        try:
-            await client.disconnect(True)
-        except Exception:
-            pass
+    return cryo
+    # yield cryo
+    # client = SECoPDevice._clients.get("localhost:10769")
+    # if client is not None:
+    #    try:
+    #        await client.disconnect(True)
+    #    except Exception:
+    #        pass
 
 
 @pytest.fixture()
