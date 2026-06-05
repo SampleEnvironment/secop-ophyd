@@ -16,17 +16,20 @@ from frappy.datatypes import (
 from ophyd_async.core import init_devices
 from xprocess import ProcessStarter
 
-from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient
-from secop_ophyd.SECoPDevices import SECoPNodeDevice
+from secop_ophyd.AsyncFrappyClient import AsyncSecopClient
+from secop_ophyd.SECoPDevices import SECoPDevice, SECoPNodeDevice
 
 
 @pytest.fixture(autouse=True)
-def cleanup_secop_clients():
+async def cleanup_secop_clients():
     """Clear SECoP clients between tests to ensure fresh connections."""
     yield
-    # After each test, clear the cached clients
-    from secop_ophyd.SECoPDevices import SECoPDevice
-
+    print("disconnecting and clearing clients")
+    for client in list(SECoPDevice._clients.values()):
+        try:
+            await client.disconnect(True)
+        except Exception:
+            pass
     SECoPDevice._clients.clear()
 
 
@@ -191,20 +194,26 @@ def logger():
 
 @pytest.fixture()
 async def async_frappy_client(cryo_sim, logger, port="10769"):
-    client = AsyncFrappyClient(host="localhost", port=port, log=logger)
-
+    client = AsyncSecopClient(host="localhost", port=port, log=logger)
     await client.connect(3)
+    yield client
+    await client.disconnect(True)
 
-    return client
+
+@pytest.fixture()
+async def async_secop_client(cryo_sim, logger, port="10769"):
+    client = AsyncSecopClient(host="localhost", port=port, log=logger)
+    await client.connect(3)
+    yield client
+    await client.disconnect(True)
 
 
 @pytest.fixture()
 async def nested_client(nested_struct_sim, logger, port="10771"):
-    client = AsyncFrappyClient(host="localhost", port=port, log=logger)
-
+    client = AsyncSecopClient(host="localhost", port=port, log=logger)
     await client.connect(3)
-
-    return client
+    yield client
+    await client.disconnect(True)
 
 
 @pytest.fixture()
@@ -220,7 +229,13 @@ async def nested_node_no_re():
             sec_node_uri="localhost:10771",
         )
 
-    return nested
+    yield nested
+    client = SECoPDevice._clients.get("localhost:10771")
+    if client is not None:
+        try:
+            await client.disconnect(True)
+        except Exception:
+            pass
 
 
 @pytest.fixture()
@@ -239,7 +254,14 @@ async def cryo_node_no_re():
         cryo = SECoPNodeDevice(
             sec_node_uri="localhost:10769",
         )
-    return cryo
+
+    yield cryo
+    client = SECoPDevice._clients.get("localhost:10769")
+    if client is not None:
+        try:
+            await client.disconnect(True)
+        except Exception:
+            pass
 
 
 @pytest.fixture()

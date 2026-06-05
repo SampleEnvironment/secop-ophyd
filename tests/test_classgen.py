@@ -482,7 +482,7 @@ async def test_gen_cryo_node(
 ):
     """Test generating code for a real SECoP node."""
 
-    cryo_node_no_re.class_from_instance(clean_generated_file)
+    await cryo_node_no_re.class_from_instance(clean_generated_file)
 
     from tests.testgen.genNodeClass import Cryo_7_frappy_demo  # type: ignore
 
@@ -514,7 +514,7 @@ async def test_gen_cryo_status_not_in_cfg(
     """Test that Status signal is not marked as configuration signal but is still
     instantiated."""
 
-    cryo_node_no_re.class_from_instance(clean_generated_file)
+    await cryo_node_no_re.class_from_instance(clean_generated_file)
 
     cryo_cfg = await cryo_node_no_re.read_configuration()
     cryo_reading = await cryo_node_no_re.read()
@@ -571,7 +571,7 @@ async def test_gen_real_node(
     nested_node_no_re: SECoPNodeDevice,  # noqa: N803
 ):
 
-    nested_node_no_re.class_from_instance(clean_generated_file)
+    await nested_node_no_re.class_from_instance(clean_generated_file)
 
     # Read the generated file and verify its contents
     gen_file = clean_generated_file / "genNodeClass.py"
@@ -614,7 +614,7 @@ async def test_subsequent_real_nodes_with_enum(
     nested_node_no_re: SECoPNodeDevice,
 ):
 
-    nested_node_no_re.class_from_instance(clean_generated_file)
+    await nested_node_no_re.class_from_instance(clean_generated_file)
 
     # Read the generated file and verify its contents
     gen_file = clean_generated_file / "genNodeClass.py"
@@ -635,7 +635,62 @@ async def test_subsequent_real_nodes_with_enum(
     for classs_str in cls:
         assert classs_str in generated_code
 
-    cryo_node_no_re.class_from_instance(clean_generated_file)
+    await cryo_node_no_re.class_from_instance(clean_generated_file)
+
+    # Read the generated file and verify its contents
+    gen_file = clean_generated_file / "genNodeClass.py"
+    assert gen_file.exists(), "Generated file should exist"
+
+    generated_code = gen_file.read_text()
+
+    # ===== Assertions for generated enum classes =====
+
+    cls = [
+        "class TestEnum_GasType_Enum(SupersetEnum):",
+        "class TestModStr(SECoPReadableDevice):",
+        "class OphydTestPrimitiveArrays(SECoPReadableDevice):",
+        "class TestEnum(SECoPReadableDevice):",
+        "class TestNdArrays(SECoPReadableDevice):",
+        "class TestStructOfArrays(SECoPReadableDevice):",
+        "class Ophyd_secop_frappy_demo(SECoPNodeDevice):",
+        "class Cryo_7_frappy_demo(SECoPNodeDevice):",
+        "class Cryostat(SECoPMoveableDevice):",
+        "class Cryostat_Mode_Enum(StrictEnum):",
+    ]
+    for classs_str in cls:
+        assert classs_str in generated_code
+
+
+async def test_subsequent_real_nodes_with_enum_RE(
+    clean_generated_file,
+    cryo_sim,
+    cryo_node: SECoPNodeDevice,
+    nested_struct_sim,
+    nested_node: SECoPNodeDevice,
+):
+
+    await nested_node.class_from_instance(clean_generated_file)
+
+    # Read the generated file and verify its contents
+    gen_file = clean_generated_file / "genNodeClass.py"
+    assert gen_file.exists(), "Generated file should exist"
+
+    generated_code = gen_file.read_text()
+
+    # ===== Assertions for generated enum classes =====
+    cls = [
+        "class TestEnum_GasType_Enum(SupersetEnum):",
+        "class TestModStr(SECoPReadableDevice):",
+        "class OphydTestPrimitiveArrays(SECoPReadableDevice):",
+        "class TestEnum(SECoPReadableDevice):",
+        "class TestNdArrays(SECoPReadableDevice):",
+        "class TestStructOfArrays(SECoPReadableDevice):",
+        "class Ophyd_secop_frappy_demo(SECoPNodeDevice):",
+    ]
+    for classs_str in cls:
+        assert classs_str in generated_code
+
+    await cryo_node.class_from_instance(clean_generated_file)
 
     # Read the generated file and verify its contents
     gen_file = clean_generated_file / "genNodeClass.py"

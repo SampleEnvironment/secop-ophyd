@@ -1,6 +1,4 @@
-import asyncio
 import warnings
-from functools import wraps
 from typing import Any, Callable
 
 from bluesky.protocols import DataKey, Reading
@@ -25,7 +23,7 @@ from ophyd_async.core import (
     StrictEnum,
 )
 
-from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient
+from secop_ophyd.AsyncFrappyClient import AsyncSecopClient
 from secop_ophyd.util import Path, SECoPDataKey, SECoPdtype, SECoPReading, deep_get
 
 atomic_dtypes = (
@@ -140,7 +138,7 @@ class SECoPXBackend(SignalBackend):
     def __init__(
         self,
         path: Path,
-        secclient: AsyncFrappyClient,
+        secclient: AsyncSecopClient,
         argument: LocalBackend | None,
         result: LocalBackend | None,
     ) -> None:
@@ -149,14 +147,14 @@ class SECoPXBackend(SignalBackend):
         :param path: Path to the command in the secclient module dict
         :type path: Path
         :param secclient: SECoP client providing communication to the SEC Node
-        :type secclient: AsyncFrappyClient
+        :type secclient: AsyncSecopClient
         :param argument: Refence to Argument Signal
         :type argument: SECoP_CMD_IO_Backend | None
         :param result: Reference to Result Signal
         :type result: SECoP_CMD_IO_Backend | None
         """
 
-        self._secclient: AsyncFrappyClient = secclient
+        self._secclient: AsyncSecopClient = secclient
 
         # module:acessible Path for reading/writing (module,accessible)
         self.path: Path = path
@@ -181,13 +179,10 @@ class SECoPXBackend(SignalBackend):
         else:
             argument = await self.argument.get_value()
 
-        res, qualifiers = await asyncio.wait_for(
-            fut=self._secclient.exec_command(
-                module=self.path._module_name,
-                command=self.path._accessible_name,
-                argument=argument,
-            ),
-            timeout=None,
+        res, qualifiers = await self._secclient.exec_command(
+            module=self.path._module_name,
+            command=self.path._accessible_name,
+            argument=argument,
         )
 
         # write return Value to corresponding Backend
@@ -238,18 +233,19 @@ class SECoPBackend(SignalBackend[SignalDatatypeT]):
     attribute_type: str | None
     _module_name: str | None
     _attribute_name: str | None  # parameter or property name
-    _secclient: AsyncFrappyClient
+    _secclient: AsyncSecopClient
     path_str: str
     SECoPdtype_obj: DataType
     SECoP_type_info: SECoPdtype
     describe_dict: dict
+    _update_callback: Callback[Reading[SignalDatatypeT]] | None
 
     def __init__(
         self,
         datatype: type[SignalDatatypeT] | None,
         path: str | None = None,
         attribute_type: str | None = None,
-        secclient: AsyncFrappyClient | None = None,
+        secclient: AsyncSecopClient | None = None,
     ):
         """Initialize backend (supports deferred initialization).
 
@@ -260,6 +256,7 @@ class SECoPBackend(SignalBackend[SignalDatatypeT]):
         """
         self._module_name = None
         self._attribute_name = None
+        self._update_callback = None
 
         self.attribute_type = attribute_type
 
@@ -282,7 +279,7 @@ class SECoPBackend(SignalBackend[SignalDatatypeT]):
         self,
         datatype: type[SignalDatatypeT],
         path: str,
-        secclient: AsyncFrappyClient,
+        secclient: AsyncSecopClient,
     ):
         if self.attribute_type is not None:
 
@@ -311,7 +308,7 @@ class SECoPBackend(SignalBackend[SignalDatatypeT]):
         self.path_str = path
 
     def init_property_from_introspection(
-        self, datatype: type[SignalDatatypeT], path: str, secclient: AsyncFrappyClient
+        self, datatype: type[SignalDatatypeT], path: str, secclient: AsyncSecopClient
     ):
         if self.attribute_type is not None:
 
@@ -347,6 +344,7 @@ class SECoPBackend(SignalBackend[SignalDatatypeT]):
 
     async def connect(self, timeout: float):
         """Connect and initialize backend (handles both parameters and properties)."""
+
         await self._secclient.connect()
 
         match self.attribute_type:
@@ -384,6 +382,8 @@ class SECoPBackend(SignalBackend[SignalDatatypeT]):
                 f"dtype_descr: {self.SECoP_type_info.dtype_descr}"
             )
 
+        assert self._module_name is not None
+        assert self._attribute_name is not None
         self.source_name = (
             self._secclient.uri
             + ":"
@@ -506,28 +506,21 @@ class SECoPBackend(SignalBackend[SignalDatatypeT]):
             # Properties are static, no callbacks
             return
 
-        def awaitify(sync_func):
-            """Wrap a synchronous callable to allow ``await``'ing it"""
-
-            @wraps(sync_func)
-            async def async_func(*args, **kwargs):
-                return sync_func(*args, **kwargs)
-
-            return async_func
-
-        def updateItem(module, parameter, entry: CacheItem):  # noqa: N802
-            data = SECoPReading(secop_dt=self.SECoP_type_info, entry=entry)
-            async_callback = awaitify(callback)
-
-            asyncio.run_coroutine_threadsafe(
-                async_callback(reading=data.get_reading()),
-                self._secclient.loop,
-            )
-
         if callback is not None:
+
+            def updateItem(module, parameter, entry: CacheItem):  # noqa: N802
+                data = SECoPReading(secop_dt=self.SECoP_type_info, entry=entry)
+                reading = data.get_reading()
+                callback(reading=reading)
+
+            self._update_callback = updateItem
             self._secclient.register_callback(self.get_path_tuple(), updateItem)
         else:
-            self._secclient.unregister_callback(self.get_path_tuple(), updateItem)
+            if self._update_callback is not None:
+                self._secclient.unregister_callback(
+                    self.get_path_tuple(), self._update_callback
+                )
+                self._update_callback = None
 
     def _get_param_desc(self) -> dict:
         return deep_get(

@@ -48,7 +48,7 @@ from ophyd_async.core import (
 )
 from ophyd_async.core._utils import Callback
 
-from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient
+from secop_ophyd.AsyncFrappyClient import AsyncSecopClient
 from secop_ophyd.logs import setup_logging
 from secop_ophyd.propertykeys import DATAINFO, EQUIPMENT_ID, INTERFACE_CLASSES
 from secop_ophyd.SECoPSignal import (
@@ -206,9 +206,9 @@ class SECoPDeviceConnector(DeviceConnector):
             raise RuntimeError(f"Invalid SECoP resource identifier: {sri}")
 
         if SECoPDevice._clients.get(self.node_id) is None:
-            raise RuntimeError(f"No AsyncFrappyClient for URI {sri} exists")
+            raise RuntimeError(f"No AsyncSecopClient for URI {sri} exists")
 
-        self.client: AsyncFrappyClient = SECoPDevice._clients[self.node_id]
+        self.client: AsyncSecopClient = SECoPDevice._clients[self.node_id]
 
     def set_module(self, module_name: str):
         if self.sri.count(":") != 1:
@@ -412,17 +412,17 @@ class SECoPCMDDevice(StandardReadable, Flyable, Triggerable):
 
     """
 
-    def __init__(self, path: Path, secclient: AsyncFrappyClient):
+    def __init__(self, path: Path, secclient: AsyncSecopClient):
         """Initialize the CMD Device
 
         :param path: Path to the command in the secclient module dict
         :type path: Path
         :param secclient: SECoP client providing communication to the SEC Node
-        :type secclient: AsyncFrappyClient
+        :type secclient: AsyncSecopClient
         """
         dev_name: str = path.get_signal_name() + "_CMD"
 
-        self._secclient: AsyncFrappyClient = secclient
+        self._secclient: AsyncSecopClient = secclient
 
         cmd_props = secclient.modules[path._module_name]["commands"][
             path._accessible_name
@@ -506,15 +506,13 @@ class SECoPCMDDevice(StandardReadable, Flyable, Triggerable):
         SEC Node is received
         :rtype: AsyncStatus
         """
-        coro = asyncio.wait_for(fut=self._exec_cmd(), timeout=None)
-        return AsyncStatus(awaitable=coro)
+        return AsyncStatus(awaitable=self._exec_cmd())
 
     def kickoff(self) -> AsyncStatus:
         # trigger execution of secop command, wait until Device is Busy
 
         self._start_time = ttime.time()
-        coro = asyncio.wait_for(fut=asyncio.sleep(1), timeout=None)
-        return AsyncStatus(coro)
+        return AsyncStatus(asyncio.sleep(1))
 
     async def _exec_cmd(self):
         stat = self.commandx.trigger()
@@ -522,8 +520,7 @@ class SECoPCMDDevice(StandardReadable, Flyable, Triggerable):
         await stat
 
     def complete(self) -> AsyncStatus:
-        coro = asyncio.wait_for(fut=self._exec_cmd(), timeout=None)
-        return AsyncStatus(awaitable=coro)
+        return AsyncStatus(awaitable=self._exec_cmd())
 
     def collect(self) -> Iterator[PartialEvent]:
         yield dict(
@@ -533,7 +530,7 @@ class SECoPCMDDevice(StandardReadable, Flyable, Triggerable):
 
 class SECoPDevice(StandardReadable):
 
-    _clients: Dict[str, AsyncFrappyClient] = {}
+    _clients: Dict[str, AsyncSecopClient] = {}
 
     _node_id: str
     _sri: str
@@ -581,13 +578,13 @@ class SECoPDevice(StandardReadable):
             self._module = sri.split(":")[2]
 
         if SECoPDevice._clients.get(self._node_id) is None:
-            SECoPDevice._clients[self._node_id] = AsyncFrappyClient(
+            SECoPDevice._clients[self._node_id] = AsyncSecopClient(
                 host=self._host, port=self._port, log=self._logger
             )
 
         connector = connector or SECoPDeviceConnector(sri=sri)
 
-        self._client: AsyncFrappyClient = SECoPDevice._clients[self._node_id]
+        self._client: AsyncSecopClient = SECoPDevice._clients[self._node_id]
 
         super().__init__(name=name, connector=connector)
 
@@ -840,10 +837,10 @@ class SECoPNodeDevice(SECoPDevice):
         # Node device has no specific interface class formats
         pass
 
-    def class_from_instance(self, path_to_module: str | None = None):
+    async def class_from_instance(self, path_to_module: str | None = None):
         from secop_ophyd.GenNodeCode import GenNodeCode
 
-        description = self._client.client.request("describe")[2]
+        description = (await self._client.request("describe"))[2]
 
         # parse genClass file if already present
         genCode = GenNodeCode(path=path_to_module, log=self._logger)
@@ -893,7 +890,7 @@ class SECoPReadableDevice(SECoPDevice, Triggerable, Subscribable):
         """Initializes the SECoPReadableDevice
 
         :param secclient: SECoP client providing communication to the SEC Node
-        :type secclient: AsyncFrappyClient
+        :type secclient: AsyncSecopClient
         :param module_name: Name of the SEC Node module that is represented by
             this device
         :type module_name: str
@@ -1023,7 +1020,7 @@ class SECoPTriggerableDevice(SECoPReadableDevice, Stoppable):
         """Initialize SECoPTriggerableDevice
 
         :param secclient: SECoP client providing communication to the SEC Node
-        :type secclient: AsyncFrappyClient
+        :type secclient: AsyncSecopClient
         :param module_name: ame of the SEC Node module that is represented by
             this device
         :type module_name: str
@@ -1064,7 +1061,7 @@ class SECoPMoveableDevice(SECoPReadableDevice, Locatable, Stoppable):
         """Initialize SECoPMovableDevice
 
         :param secclient: SECoP client providing communication to the SEC Node
-        :type secclient: AsyncFrappyClient
+        :type secclient: AsyncSecopClient
         :param module_name: ame of the SEC Node module that is represented by
             this device
         :type module_name: str
