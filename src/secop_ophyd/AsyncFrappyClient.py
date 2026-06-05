@@ -226,6 +226,13 @@ class AsyncSecopClient(ProxyClient):
                             encode_msg_frame(HEARTBEATREQUEST, str(noactivity))
                         )
                     continue
+                # Python 3.11: wait_for can suppress a CancelledError when the
+                # inner readline() completes with data at the same moment an
+                # external cancel() is delivered.  The cancel increments
+                # Task.cancelling() but does not re-raise.  Detect and honour it.
+                t = asyncio.current_task()
+                if t is not None and t.cancelling():
+                    raise asyncio.CancelledError()
                 if not line:
                     break
                 noactivity = 0
@@ -238,7 +245,7 @@ class AsyncSecopClient(ProxyClient):
                     except Exception:
                         pass
         except asyncio.CancelledError:
-            return
+            raise
         except Exception as e:
             self.callback(None, "handleError", e)
 
@@ -311,11 +318,12 @@ class AsyncSecopClient(ProxyClient):
         # _do_disconnect() (setting _reader=None and closing the stream), and
         # the new connection's readline() sees EOF -> secop_version=''.
         if self._rx_task and not self._rx_task.done():
-            self._rx_task.cancel()
+            self._rx_task.cancel(msg="connect: replacing stale rx_task")
             try:
                 await self._rx_task
             except asyncio.CancelledError:
-                pass
+                if not self._rx_task.cancelled():
+                    raise
         self._rx_task = None
 
         current = asyncio.current_task()
@@ -324,11 +332,12 @@ class AsyncSecopClient(ProxyClient):
             and not self._reconnect_task.done()
             and self._reconnect_task is not current
         ):
-            self._reconnect_task.cancel()
+            self._reconnect_task.cancel(msg="connect: aborting in-progress reconnect")
             try:
                 await self._reconnect_task
             except asyncio.CancelledError:
-                pass
+                if not self._reconnect_task.cancelled():
+                    raise
             self._reconnect_task = None
 
         if self.online:
@@ -376,19 +385,21 @@ class AsyncSecopClient(ProxyClient):
 
     async def disconnect(self, shutdown=True):
         if self._rx_task and not self._rx_task.done():
-            self._rx_task.cancel()
+            self._rx_task.cancel(msg="disconnect")
             try:
                 await self._rx_task
             except asyncio.CancelledError:
-                pass
+                if not self._rx_task.cancelled():
+                    raise
         self._rx_task = None
 
         if self._reconnect_task and not self._reconnect_task.done():
-            self._reconnect_task.cancel()
+            self._reconnect_task.cancel(msg="disconnect")
             try:
                 await self._reconnect_task
             except asyncio.CancelledError:
-                pass
+                if not self._reconnect_task.cancelled():
+                    raise
         self._reconnect_task = None
 
         await self._do_disconnect(shutdown)
@@ -403,7 +414,7 @@ class AsyncSecopClient(ProxyClient):
                 await self.connect()
                 break
             except asyncio.CancelledError:
-                return
+                raise
             except Exception as e:
                 txt = str(e).split("\n", 1)[0]
                 if txt != self._last_error:

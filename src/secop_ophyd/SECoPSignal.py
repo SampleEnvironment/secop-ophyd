@@ -238,6 +238,7 @@ class SECoPBackend(SignalBackend[SignalDatatypeT]):
     SECoPdtype_obj: DataType
     SECoP_type_info: SECoPdtype
     describe_dict: dict
+    _update_callback: Callback[Reading[SignalDatatypeT]] | None
 
     def __init__(
         self,
@@ -255,6 +256,7 @@ class SECoPBackend(SignalBackend[SignalDatatypeT]):
         """
         self._module_name = None
         self._attribute_name = None
+        self._update_callback = None
 
         self.attribute_type = attribute_type
 
@@ -504,17 +506,21 @@ class SECoPBackend(SignalBackend[SignalDatatypeT]):
             # Properties are static, no callbacks
             return
 
-        def updateItem(module, parameter, entry: CacheItem):  # noqa: N802
-            data = SECoPReading(secop_dt=self.SECoP_type_info, entry=entry)
-            reading = data.get_reading()
+        if callback is not None:
 
-            if callback:
+            def updateItem(module, parameter, entry: CacheItem):  # noqa: N802
+                data = SECoPReading(secop_dt=self.SECoP_type_info, entry=entry)
+                reading = data.get_reading()
                 callback(reading=reading)
 
-        if callback is not None:
+            self._update_callback = updateItem
             self._secclient.register_callback(self.get_path_tuple(), updateItem)
         else:
-            self._secclient.unregister_callback(self.get_path_tuple(), updateItem)
+            if self._update_callback is not None:
+                self._secclient.unregister_callback(
+                    self.get_path_tuple(), self._update_callback
+                )
+                self._update_callback = None
 
     def _get_param_desc(self) -> dict:
         return deep_get(
