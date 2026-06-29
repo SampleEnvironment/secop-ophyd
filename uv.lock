@@ -1802,7 +1802,7 @@ wheels = [
 
 [[package]]
 name = "ophyd-async"
-version = "0.19.2"
+version = "0.18"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "bluesky" },
@@ -1817,9 +1817,9 @@ dependencies = [
     { name = "stamina" },
     { name = "velocity-profile" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/1d/d9/bc09637a5caff453a205fa3c26474f497964618b72074413a6315d36725b/ophyd_async-0.19.2.tar.gz", hash = "sha256:138dcd5ac2ccc30194c9d74525aefb291b8a0be2ef3468a60e294f0fcea5495a", size = 588686, upload-time = "2026-06-16T15:31:31.055Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/51/d8/2e739ac3243dc4cbdbe2835c82a4f78419016d6bf6d503fdb68b8ae0e55c/ophyd_async-0.18.tar.gz", hash = "sha256:5a6cda1e34f9d137b235ee730266713351f0619ffe66d141e57d6b0618f66260", size = 565915, upload-time = "2026-06-04T16:28:25.042Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/90/36/96ac313cc51e147556e80d2388ca7c55672d13c06cb87353d8d607125284/ophyd_async-0.19.2-py3-none-any.whl", hash = "sha256:2cdd5ce876ce00246d043c581b1bb4074984822a879a330637a3188ace8e1f3e", size = 228241, upload-time = "2026-06-16T15:31:29.546Z" },
+    { url = "https://files.pythonhosted.org/packages/cd/75/cf84ce11f860acade0b6f5b54182c70d61fea7d5e8bc0013b4ece9af6787/ophyd_async-0.18-py3-none-any.whl", hash = "sha256:3c5d0924286b18e7ec579d9849147d7fe7e3dcc4621e3caf19bb853cf7c24d0f", size = 211676, upload-time = "2026-06-04T16:28:23.661Z" },
 ]
 
 [[package]]
@@ -2822,7 +2822,7 @@ requires-dist = [
     { name = "black" },
     { name = "frappy-core", specifier = ">=0.20.8" },
     { name = "jinja2" },
-    { name = "ophyd-async", specifier = ">=0.13.1" },
+    { name = "ophyd-async", specifier = ">=0.13.1,<=0.18" },
 ]
 
 [package.metadata.requires-dev]
