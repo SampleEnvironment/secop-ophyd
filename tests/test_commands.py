@@ -2,88 +2,67 @@
 import asyncio
 
 import pytest
-from bluesky.protocols import Triggerable
 from frappy.errors import ImpossibleError
-from ophyd_async.core import SignalR, SignalX
+from ophyd_async.core import Command, TriggerableCommand
 
 from secop_ophyd.SECoPDevices import (
-    SECoPCMDDevice,
     SECoPMoveableDevice,
     SECoPNodeDevice,
 )
 
 
 async def test_struct_inp_cmd(nested_struct_sim, nested_node_no_re: SECoPNodeDevice):
-    test_cmd: SECoPCMDDevice = nested_node_no_re.ophy_struct.test_cmd_CMD
+    test_cmd: Command = nested_node_no_re.ophy_struct.test_cmd_CMD
 
     input_dict = {"name": "test_name", "id": 900, "sort": False}
 
-    await test_cmd.argument.set(input_dict)  # type: ignore
+    status = test_cmd.execute(input_dict)
 
-    res: SignalR = test_cmd.result  # type: ignore
+    await status
 
-    run_obj: SignalX = test_cmd.commandx
-
-    stat = run_obj.trigger()
-
-    await stat
-
-    reading_res = await res.read()
-    print(reading_res)
-    assert isinstance(reading_res.get(res.name)["value"], int)
+    assert isinstance(status.result, int)
 
 
-def test_triggerable(nested_struct_sim, nested_node_no_re: SECoPNodeDevice):
-    test_cmd: SECoPCMDDevice = nested_node_no_re.ophy_struct.test_cmd_CMD
+def test_command_is_not_triggerable(
+    nested_struct_sim, nested_node_no_re: SECoPNodeDevice
+):
+    test_cmd: Command = nested_node_no_re.ophy_struct.test_cmd_CMD
 
-    assert isinstance(test_cmd, Triggerable)
+    # Commands with an argument or a result are exposed via execute(), not the
+    # bluesky Triggerable protocol
+    assert not hasattr(test_cmd, "trigger")
 
 
 async def test_secop_error_on_cmd(
     nested_struct_sim, nested_node_no_re: SECoPNodeDevice
 ):
-    test_cmd: SECoPCMDDevice = nested_node_no_re.ophy_struct.test_cmd_CMD
+    test_cmd: Command = nested_node_no_re.ophy_struct.test_cmd_CMD
 
-    error_triggered = False
     # Triggers SECoP Error
     input_dict = {"name": "bad_name", "id": 900, "sort": False}
 
-    await test_cmd.argument.set(input_dict)  # type: ignore
-
-    res: SignalR = test_cmd.result  # type: ignore
-
-    run_obj: SignalX = test_cmd.commandx
-
-    try:
-        stat = run_obj.trigger()
-        await stat
-
-    except ImpossibleError:
-        error_triggered = True
-
-    assert error_triggered is True
-
-    reading_res = await res.read()
-    assert reading_res.get(res.name)["value"] is None
+    with pytest.raises(ImpossibleError):
+        await test_cmd.execute(input_dict)
 
 
-async def test_secop_triggering_cmd_dev(
-    nested_struct_sim, nested_node_no_re: SECoPNodeDevice
-):
-    test_cmd: SECoPCMDDevice = nested_node_no_re.ophy_struct.test_cmd_CMD
-
+def test_secop_command_plan(nested_struct_sim, nested_node: SECoPNodeDevice, RE):
     input_dict = {"name": "test_name", "id": 900, "sort": False}
 
-    await test_cmd.argument.set(input_dict)  # type: ignore
+    result = None
 
-    res: SignalR = test_cmd.result  # type: ignore
+    def plan():
+        nonlocal result
+        result = yield from nested_node.ophy_struct.test_cmd(input_dict)
 
-    stat = test_cmd.trigger()
+    RE(plan())
 
-    await stat
+    assert isinstance(result, int)
 
-    reading_res = await res.read()
-    assert isinstance(reading_res.get(res.name)["value"], int)
+
+def test_stop_cmd_is_triggerable_command(cryo_sim, cryo_node_no_re: SECoPNodeDevice):
+    cryo: SECoPMoveableDevice = cryo_node_no_re.cryo
+
+    assert isinstance(cryo.stop_CMD, TriggerableCommand)
 
 
 async def test_stop_cmd_success(cryo_sim, cryo_node_no_re: SECoPNodeDevice):

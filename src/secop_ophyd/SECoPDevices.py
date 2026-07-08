@@ -1,4 +1,3 @@
-import asyncio
 import logging
 import re
 import time as ttime
@@ -8,12 +7,10 @@ from dataclasses import dataclass
 from functools import cached_property
 from logging import Logger
 from types import MethodType
-from typing import Any, Dict, Iterator, Type
+from typing import Any, Dict, Type
 
 import bluesky.plan_stubs as bps
 from bluesky.protocols import (
-    Flyable,
-    PartialEvent,
     Reading,
     Stoppable,
     Subscribable,
@@ -34,6 +31,7 @@ from frappy.datatypes import (
 from ophyd_async.core import (
     DEFAULT_TIMEOUT,
     AsyncStatus,
+    Command,
     Device,
     DeviceConnector,
     DeviceFiller,
@@ -43,11 +41,11 @@ from ophyd_async.core import (
     Signal,
     SignalR,
     SignalRW,
-    SignalX,
     StandardMovable,
     StandardReadable,
     StandardReadableFormat,
     TimeoutCalculator,
+    TriggerableCommand,
     observe_value,
     wait_for_value,
 )
@@ -55,12 +53,11 @@ from ophyd_async.core._utils import Callback
 
 from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient
 from secop_ophyd.logs import setup_logging
-from secop_ophyd.propertykeys import DATAINFO, EQUIPMENT_ID, INTERFACE_CLASSES
+from secop_ophyd.propertykeys import EQUIPMENT_ID, INTERFACE_CLASSES
 from secop_ophyd.SECoPSignal import (
     AttributeType,
-    LocalBackend,
     SECoPBackend,
-    SECoPXBackend,
+    SECoPCommandBackend,
 )
 from secop_ophyd.util import Path
 
@@ -228,8 +225,10 @@ class SECoPDeviceConnector(DeviceConnector):
 
             def _unsupported_command_backend_factory(signature):
                 raise NotImplementedError(
-                    "ophyd_async 'Command' annotations are not supported by "
-                    "secop-ophyd; SECoP commands are exposed via SECoPCMDDevice"
+                    "Declaring 'Command'/'TriggerableCommand' annotations on a "
+                    "SECoPDevice is not supported; SECoP commands are "
+                    "auto-discovered and exposed as '<command>_CMD' attributes "
+                    "and generated bluesky plan methods by SECoPDevice.connect()"
                 )
 
             self.filler = DeviceFiller(
@@ -414,136 +413,6 @@ class SECoPDeviceConnector(DeviceConnector):
         await device._assign_default_formats()
 
 
-class SECoPCMDDevice(StandardReadable, Flyable, Triggerable):
-    """
-    Command devices that have Signals for command args, return values and a signal
-    for triggering command execution (SignalX). They themselves are triggerable.
-
-    Once the CMD Device is triggered, the command args are retrieved from the 'argument'
-    Signal. The command message is sent to the SEC Node and the return value is written
-    to 'result' signal.
-
-    """
-
-    def __init__(self, path: Path, secclient: AsyncFrappyClient):
-        """Initialize the CMD Device
-
-        :param path: Path to the command in the secclient module dict
-        :type path: Path
-        :param secclient: SECoP client providing communication to the SEC Node
-        :type secclient: AsyncFrappyClient
-        """
-        dev_name: str = path.get_signal_name() + "_CMD"
-
-        self._secclient: AsyncFrappyClient = secclient
-
-        cmd_props = secclient.modules[path._module_name]["commands"][
-            path._accessible_name
-        ]  # noqa: E501
-        cmd_datatype: CommandType = cmd_props["datatype"]
-        datainfo = cmd_props[DATAINFO]
-
-        self.description: str = cmd_props["description"]
-        self.arg_dtype = cmd_datatype.argument
-        self.res_dtype = cmd_datatype.result
-
-        self.argument: SignalRW | None
-        self.result: SignalR | None
-
-        # result signals
-        read = []
-        # argument signals
-        config = []
-
-        self._start_time: float
-        self.commandx: SignalX
-
-        self.wait_idle: bool = False
-
-        with self.add_children_as_readables(
-            format=StandardReadableFormat.CONFIG_SIGNAL
-        ):
-            # Argument Signals (config Signals, can also be read)
-            arg_path = path.append("argument")
-            if self.arg_dtype is None:
-                self.argument = None
-            else:
-                arg_backend = LocalBackend(
-                    path=arg_path,
-                    secop_dtype_obj=self.arg_dtype,
-                    sig_datainfo=datainfo["argument"],
-                )
-                self.argument = SignalRW(arg_backend)
-                config.append(self.argument)
-
-            # Result Signals  (read Signals)
-            res_path = path.append("result")
-
-            if self.res_dtype is None:
-                self.result = None
-            else:
-                res_backend = LocalBackend(
-                    path=res_path,
-                    secop_dtype_obj=self.res_dtype,
-                    sig_datainfo=datainfo["result"],
-                )
-                self.result = SignalRW(res_backend)
-                read.append(self.argument)
-
-            argument = None
-            result = None
-            if isinstance(self.argument, SignalR):
-                argument = self.argument._connector.backend
-
-            if isinstance(self.result, SignalR):
-                result = self.result._connector.backend
-
-            # SignalX (signal that triggers execution of the Command)
-            exec_backend = SECoPXBackend(
-                path=path,
-                secclient=secclient,
-                argument=argument,  # type: ignore
-                result=result,  # type: ignore
-            )
-
-        self.commandx = SignalX(exec_backend)
-
-        super().__init__(name=dev_name)
-
-    def trigger(self) -> AsyncStatus:
-        """Triggers the SECoPCMDDevice and sends command message to SEC Node.
-        Command argument is taken form 'argument' Signal, and return value is
-        written in the 'return' Signal
-
-        :return: A Status object, that is marked Done once the answer from the
-        SEC Node is received
-        :rtype: AsyncStatus
-        """
-        coro = asyncio.wait_for(fut=self._exec_cmd(), timeout=None)
-        return AsyncStatus(awaitable=coro)
-
-    def kickoff(self) -> AsyncStatus:
-        # trigger execution of secop command, wait until Device is Busy
-
-        self._start_time = ttime.time()
-        coro = asyncio.wait_for(fut=asyncio.sleep(1), timeout=None)
-        return AsyncStatus(coro)
-
-    async def _exec_cmd(self):
-        stat = self.commandx.trigger()
-
-        await stat
-
-    def complete(self) -> AsyncStatus:
-        coro = asyncio.wait_for(fut=self._exec_cmd(), timeout=None)
-        return AsyncStatus(awaitable=coro)
-
-    def collect(self) -> Iterator[PartialEvent]:
-        yield dict(
-            time=self._start_time, timestamps={self.name: []}, data={self.name: []}
-        )
-
-
 class SECoPDevice(StandardReadable):
 
     _clients: Dict[str, AsyncFrappyClient] = {}
@@ -627,17 +496,24 @@ class SECoPDevice(StandardReadable):
             module_desc = self._client.modules[self._module]
 
             # Initialize Command Devices
-            for command, _ in module_desc["commands"].items():
+            for command, cmd_props in module_desc["commands"].items():
                 # generate new root path
                 cmd_path = Path(parameter_name=command, module_name=self._module)
-                cmd_dev_name = command + "_CMD"
-                setattr(
-                    self,
-                    cmd_dev_name,
-                    SECoPCMDDevice(path=cmd_path, secclient=self._client),
+                cmd_datatype: CommandType = cmd_props["datatype"]
+
+                backend = SECoPCommandBackend(
+                    path=cmd_path, secclient=self._client, cmd_datatype=cmd_datatype
                 )
 
-                cmd_dev: SECoPCMDDevice = getattr(self, cmd_dev_name)
+                cmd_dev_name = command + "_CMD"
+                if cmd_datatype.argument is None and cmd_datatype.result is None:
+                    cmd_dev = TriggerableCommand(
+                        backend, timeout=None, name=cmd_dev_name
+                    )
+                else:
+                    cmd_dev = Command(backend, timeout=None, name=cmd_dev_name)
+
+                setattr(self, cmd_dev_name, cmd_dev)
                 # Add Bluesky Plan Methods
 
                 # Stop is already an ophyd native operation
@@ -645,7 +521,7 @@ class SECoPDevice(StandardReadable):
                     continue
 
                 cmd_plan = self.generate_cmd_plan(
-                    cmd_dev, cmd_dev.arg_dtype, cmd_dev.res_dtype
+                    cmd_dev, cmd_datatype.argument, cmd_datatype.result
                 )
 
                 setattr(self, command, MethodType(cmd_plan, self))
@@ -660,15 +536,16 @@ class SECoPDevice(StandardReadable):
 
     def generate_cmd_plan(
         self,
-        cmd_dev: SECoPCMDDevice,
+        cmd_dev: Command | TriggerableCommand,
         argument_type: Type | None = None,
         return_type: Type | None = None,
     ):
 
         def command_plan_no_arg(self, wait_for_idle: bool = False):
-            # Trigger the Command device, meaning that the command gets sent to the
+            # Execute the command, meaning that the command gets sent to the
             # SEC Node
-            yield from bps.trigger(cmd_dev, wait=True)
+            status = cmd_dev.execute()
+            yield from bps.wait_for([lambda: status])
 
             if wait_for_idle:
 
@@ -677,23 +554,16 @@ class SECoPDevice(StandardReadable):
 
                 yield from bps.wait_for([wait_for_idle_factory])
 
-            if (
-                return_type is not None
-                and isinstance(cmd_dev.result, SignalR)
-                and isinstance(cmd_dev.result._connector.backend, LocalBackend)
-            ):
-
-                return cmd_dev.result._connector.backend.reading.get_value()
+            if return_type is not None:
+                return status.result
 
         def command_plan(self, arg, wait_for_idle: bool = False):
             # TODO  Type checking
 
-            if arg is not None:
-                yield from bps.abs_set(cmd_dev.argument, arg)
-
-            # Trigger the Command device, meaning that the command gets sent to the
+            # Execute the command, meaning that the command gets sent to the
             # SEC Node
-            yield from bps.trigger(cmd_dev, wait=True)
+            status = cmd_dev.execute(arg)
+            yield from bps.wait_for([lambda: status])
 
             if wait_for_idle:
 
@@ -702,13 +572,8 @@ class SECoPDevice(StandardReadable):
 
                 yield from bps.wait_for([wait_for_idle_factory])
 
-            if (
-                return_type is not None
-                and isinstance(cmd_dev.result, SignalR)
-                and isinstance(cmd_dev.result._connector.backend, LocalBackend)
-            ):
-
-                return cmd_dev.result._connector.backend.reading.get_value()
+            if return_type is not None:
+                return status.result
 
         cmd_meth = command_plan_no_arg if argument_type is None else command_plan
 
@@ -1042,7 +907,7 @@ class SECoPTriggerableDevice(SECoPReadableDevice, Stoppable):
         :type module_name: str
         """
 
-        self.go_CMD: SECoPCMDDevice
+        self.go_CMD: TriggerableCommand
 
         self._success = True
         self._stopped = False
