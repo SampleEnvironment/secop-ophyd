@@ -1,6 +1,7 @@
 # mypy: disable-error-code="attr-defined"
 import asyncio
 
+import pytest
 from bluesky.protocols import Triggerable
 from frappy.errors import ImpossibleError
 from ophyd_async.core import SignalR, SignalX
@@ -85,35 +86,40 @@ async def test_secop_triggering_cmd_dev(
     assert isinstance(reading_res.get(res.name)["value"], int)
 
 
-async def test_stop_cmd(cryo_sim, cryo_node_no_re: SECoPNodeDevice):
+async def test_stop_cmd_success(cryo_sim, cryo_node_no_re: SECoPNodeDevice):
     cryo: SECoPMoveableDevice = cryo_node_no_re.cryo
 
     await cryo.window.set(5)
-
     await cryo.tolerance.set(1)
-
     await cryo.ramp.set(20)
 
     stat = cryo.set(15)
 
     await asyncio.sleep(3)
 
-    # essentially a NOOP (stops are only passed through to SECoP on success=False)
+    # stop() always halts the SEC node module; success=True means the
+    # resulting AsyncStatus should still report successful completion
     await cryo.stop(success=True)
 
-    assert cryo._stopped is False, "Move should not be stopped when success=True"
-    assert (
-        cryo._success is True
-    ), "Move should be marked as successful when success=True"
-    assert (
-        not stat.done
-    ), "Move should still be in progress after stop with success=True"
-
-    # move is still going on
-    await cryo.stop(success=False)
-    assert cryo._stopped is True, "Move should be stopped when success=False"
-    assert (
-        cryo._success is False
-    ), "Move should be marked as unsuccessful when success=False"
-
     await stat
+    assert stat.success
+
+
+async def test_stop_cmd_failure(cryo_sim, cryo_node_no_re: SECoPNodeDevice):
+    cryo: SECoPMoveableDevice = cryo_node_no_re.cryo
+
+    await cryo.window.set(5)
+    await cryo.tolerance.set(1)
+    await cryo.ramp.set(20)
+
+    stat = cryo.set(15)
+
+    await asyncio.sleep(3)
+
+    # stop() always halts the SEC node module; success=False means the
+    # resulting AsyncStatus should report failure
+    await cryo.stop(success=False)
+
+    with pytest.raises(RuntimeError):
+        await stat
+    assert not stat.success

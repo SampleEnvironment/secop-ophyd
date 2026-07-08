@@ -4,15 +4,15 @@ import re
 import time as ttime
 import warnings
 from abc import abstractmethod
+from dataclasses import dataclass
+from functools import cached_property
 from logging import Logger
 from types import MethodType
-from typing import Any, Dict, Iterator, Optional, Type
+from typing import Any, Dict, Iterator, Type
 
 import bluesky.plan_stubs as bps
 from bluesky.protocols import (
     Flyable,
-    Locatable,
-    Location,
     PartialEvent,
     Reading,
     Stoppable,
@@ -37,14 +37,19 @@ from ophyd_async.core import (
     Device,
     DeviceConnector,
     DeviceFiller,
+    DeviceMock,
     LazyMock,
+    MovableLogic,
     Signal,
     SignalR,
     SignalRW,
     SignalX,
+    StandardMovable,
     StandardReadable,
     StandardReadableFormat,
+    TimeoutCalculator,
     observe_value,
+    wait_for_value,
 )
 from ophyd_async.core._utils import Callback
 
@@ -220,12 +225,20 @@ class SECoPDeviceConnector(DeviceConnector):
 
     def create_children_from_annotations(self, device: Device):
         if not hasattr(self, "filler"):
+
+            def _unsupported_command_backend_factory(signature):
+                raise NotImplementedError(
+                    "ophyd_async 'Command' annotations are not supported by "
+                    "secop-ophyd; SECoP commands are exposed via SECoPCMDDevice"
+                )
+
             self.filler = DeviceFiller(
                 device=device,
                 signal_backend_factory=SECoPBackend,
                 device_connector_factory=lambda: SECoPDeviceConnector(
                     self.sri, self._auto_fill_signals, self.loglevel, self.logdir
                 ),
+                command_backend_factory=_unsupported_command_backend_factory,
             )
 
         list(self.filler.create_signals_from_annotations())
@@ -1045,13 +1058,66 @@ class SECoPWritableDevice(SECoPReadableDevice):
     pass
 
 
-class SECoPMoveableDevice(SECoPReadableDevice, Locatable, Stoppable):
+@dataclass
+class SECoPMovableLogic(MovableLogic[Any]):
+    """Move logic for a SECoP "Drivable" module.
+
+    A move is considered complete once the module's status parameter
+    leaves BUSY and enters the IDLE range, rather than when readback
+    equals setpoint.
+    """
+
+    status: SignalR
+    secclient: AsyncFrappyClient
+    module: str
+    logger: Logger
+
+    async def stop(self) -> None:
+        self.logger.info(f"Stopping {self.module}")
+        await self.secclient.exec_command(self.module, "stop")
+
+    async def move(self, new_position: Any, timeout: TimeoutCalculator) -> None:
+        # status has type Tuple, transported as a structured numpy array
+        # ('f0': statuscode, 'f1': status message)
+        def _left_busy(current_stat) -> bool:
+            stat_code = current_stat["f0"]
+            return not (BUSY <= stat_code < ERROR)
+
+        self.logger.info(f"Moving {self.module} to {new_position}")
+
+        # set 'target' first, *then* start watching 'status' -- the resting
+        # (pre-move) state is already "not busy", so watching from before the
+        # set would match immediately instead of waiting for a real move
+        await self.setpoint.set(new_position)
+
+        # force a fresh read so we don't wait on a stale, pre-move cached value
+        await self.status.read(False)
+
+        await wait_for_value(self.status, _left_busy, timeout=timeout())
+
+        stat_code = (await self.status.get_value())["f0"]
+        if stat_code >= ERROR or stat_code < IDLE:
+            self.logger.error(f"Module {self.module} --> ERROR/DISABLED")
+            raise RuntimeError(
+                f"Move of {self.module} to {new_position} failed: module "
+                "entered ERROR/DISABLED state"
+            )
+
+        self.logger.info(f"Reached target, module {self.module} --> IDLE")
+
+
+class SECoPMoveableDevice(SECoPReadableDevice, StandardMovable[Any]):
     """
     Standard movable SECoP device, corresponding to a SECoP module with the
     interface class "Drivable"
     """
 
     hinted_signals: list[str] = ["target", "value"]
+
+    # StandardMovable is @default_mock_class(InstantMovableMock), which would
+    # otherwise also install a mock put-callback on 'target' on top of this
+    # project's own SECoPBackend mock machinery when connecting with mock=True.
+    _mock_class = DeviceMock
 
     def __init__(
         self,
@@ -1076,9 +1142,6 @@ class SECoPMoveableDevice(SECoPReadableDevice, Locatable, Stoppable):
             sri=sri, name=name, connector=connector, loglevel=loglevel, logdir=logdir
         )
 
-        self._success = True
-        self._stopped = False
-
     async def connect(self, mock=False, timeout=DEFAULT_TIMEOUT, force_reconnect=False):
 
         await super().connect(mock, timeout, force_reconnect)
@@ -1089,84 +1152,30 @@ class SECoPMoveableDevice(SECoPReadableDevice, Locatable, Stoppable):
                 + "but is needed for 'Drivable' interface class!"
             )
 
-    def set(self, new_target, timeout: Optional[float] = None) -> AsyncStatus:
-        """Sends new target to SEC Nonde and waits until module is IDLE again
+    @cached_property
+    def movable_logic(self) -> MovableLogic:
+        if self._module is None:
+            raise RuntimeError
 
-        :param new_target: new taget/setpoint for module
-        :type new_target: _type_
-        :param timeout: timeout for set operation, defaults to None
-        :type timeout: Optional[float], optional
-        :return: Asyncstatus that gets set to Done once module is IDLE again
-        :rtype: AsyncStatus
-        """
-        coro = asyncio.wait_for(self._move(new_target), timeout=timeout)
-        return AsyncStatus(coro)
+        return SECoPMovableLogic(
+            setpoint=self.target,
+            readback=self.value,
+            status=self.status,
+            secclient=self._client,
+            module=self._module,
+            logger=self._logger,
+        )
 
-    async def _move(self, new_target):
-        self._success = True
-        self._stopped = False
-
-        await self.target.set(new_target)
-        self._logger.info(f"Moving {self.name} to {new_target}")
-
-        # force reading of status from device
-        await self.status.read(False)
-
-        # observe status and wait until dvice is IDLE again
-        async for current_stat in observe_value(self.status):
-            stat_code = current_stat["f0"]
-
-            if self._stopped is True:
-                self._logger.info(
-                    f"Move of {self.name} to {new_target} was stopped STOPPED"
-                )
-                break
-
-            # Error State or DISABLED
-            if stat_code >= ERROR or stat_code < IDLE:
-                self._logger.error(f"Module {self.name} --> ERROR/DISABLED")
-                self._success = False
-                break
-
-            # Module is in IDLE/WARN state
-            if IDLE <= stat_code < BUSY:
-                self._logger.info(f"Reached Target Module {self.name} --> IDLE")
-                break
-
-            # TODO other status transitions
-
-        if not self._success:
-            self._logger.error(
-                f"Move of {self.name} to {new_target} was not successful"
-            )
-
-    async def stop(self, success=True):
-        """Calls stop command on the SEC Node module
-
-        :param success:
-            True: device is stopped as planned
-            False: something has gone wrong
-            (defaults to True)
-        :type success: bool, optional
-        """
-        self._success = success
-
-        if not success:
-            self._logger.info(f"Stopping {self.name} success={success}")
-            await self._client.exec_command(self._module, "stop")
-            self._stopped = True
-
-    async def locate(self) -> Location:
-        # return current location of the device (setpoint and readback).
-        # Only locally cached values are returned
-        setpoint = await self._client.get_parameter(self._module, "target", True)
-        readback = await self._client.get_parameter(self._module, "value", True)
-
-        location: Location = {
-            "setpoint": setpoint.value,
-            "readback": readback.value,
-        }
-        return location
+    def set_name(self, name: str, *, child_name_separator: str | None = None) -> None:
+        # set_name() runs once before 'target' exists (when the node attaches
+        # this device as a child) and again after connect_real() fills it in.
+        # StandardMovable.set_name() needs 'target' to resolve movable_logic,
+        # so skip it on the early call and fall back to plain Device.set_name();
+        # the later call does the real renaming.
+        if not hasattr(self, "target"):
+            Device.set_name(self, name, child_name_separator=child_name_separator)
+            return
+        super().set_name(name, child_name_separator=child_name_separator)
 
     async def _assign_interface_formats(self):
         await super()._assign_interface_formats()
