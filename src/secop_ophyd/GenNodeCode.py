@@ -16,15 +16,16 @@ from inspect import Signature
 from logging import Logger
 from pathlib import Path
 from types import ModuleType
-from typing import get_type_hints
+from typing import get_args, get_type_hints
 
 import autoflake
 import black
 from frappy.client import get_datatype
-from frappy.datatypes import DataType
+from frappy.datatypes import CommandType, DataType
 from jinja2 import Environment, PackageLoader, select_autoescape
-from ophyd_async.core import Signal, SignalR, SignalRW, StandardReadable
+from ophyd_async.core import Command, Signal, SignalR, SignalRW, StandardReadable
 from ophyd_async.core import StandardReadableFormat as Format
+from ophyd_async.core import TriggerableCommand
 from ophyd_async.core._utils import get_origin_class
 
 from secop_ophyd.SECoPDevices import (
@@ -35,7 +36,11 @@ from secop_ophyd.SECoPDevices import (
     secop_enum_name_to_python,
 )
 from secop_ophyd.SECoPSignal import secop_dtype_obj_from_json
-from secop_ophyd.util import SECoPdtype
+from secop_ophyd.util import (
+    SECoPdtype,
+    command_dtype_to_annotation_str,
+    python_type_to_str,
+)
 
 
 def internalize_name(name: str) -> str:
@@ -105,6 +110,18 @@ class ParameterAttribute:
     format_annotation: str | None = None  # StandardReadableFormat.CONFIG_SIGNAL, etc.
 
 
+@dataclass
+class CommandAttribute:
+    """Represents a SECoP command exposed as a Command/TriggerableCommand
+    class-level annotation (the '<name>' attribute)."""
+
+    name: str  # SECoP command name, e.g. "test_cmd"; also the attribute name
+    command_type: str = "Command"  # "Command" or "TriggerableCommand"
+    arg_type: str | None = None  # e.g. "dict[str, Any]"; None means no argument
+    return_type: str | None = None  # e.g. "int"; None means no result
+    description: str | None = None
+
+
 class Method:
     """Represents a class method with signature and description.
 
@@ -142,6 +159,7 @@ class ModuleClass:
     parameters: list[ParameterAttribute] = field(default_factory=list)
     properties: list[PropertyAttribute] = field(default_factory=list)
     methods: list[Method] = field(default_factory=list)
+    commands: list[CommandAttribute] = field(default_factory=list)
     description: str = ""
     enums: list[EnumClass] = field(default_factory=list)  # Enum classes for this module
 
@@ -194,7 +212,8 @@ class GenNodeCode:
         self.add_import("typing", "Annotated as A")
         self.add_import("ophyd_async.core", "SignalR")
         self.add_import("ophyd_async.core", "SignalRW")
-        self.add_import("ophyd_async.core", "SignalX")
+        self.add_import("ophyd_async.core", "Command")
+        self.add_import("ophyd_async.core", "TriggerableCommand")
         self.add_import("ophyd_async.core", "StandardReadableFormat as Format")
         self.add_import("ophyd_async.core", "StrictEnum")
         self.add_import("ophyd_async.core", "SupersetEnum")
@@ -313,7 +332,7 @@ class GenNodeCode:
         # Extract description from docstring
         description = inspect.getdoc(class_obj) or ""
 
-        _, properties, modules = self._get_attr_list(class_obj)
+        _, properties, modules, _ = self._get_attr_list(class_obj)
 
         node_cls = NodeClass(
             name=class_symbol,
@@ -406,10 +425,11 @@ class GenNodeCode:
         normalized = description.rstrip()
         return normalized if normalized else ""
 
-    def _get_attr_list(
-        self, class_obj: type
-    ) -> tuple[
-        list[ParameterAttribute], list[PropertyAttribute], list[ModuleAttribute]
+    def _get_attr_list(self, class_obj: type) -> tuple[
+        list[ParameterAttribute],
+        list[PropertyAttribute],
+        list[ModuleAttribute],
+        list[CommandAttribute],
     ]:
         hints = get_type_hints(class_obj)
         # Get hints with Annotated for wrapping signals and backends
@@ -421,6 +441,7 @@ class GenNodeCode:
         modules = []
         properties = []
         parameters = []
+        commands = []
 
         for attr_name, annotation in hints.items():
             extras = getattr(extra_hints[attr_name], "__metadata__", ())
@@ -477,10 +498,39 @@ class GenNodeCode:
                             )
                         )
 
+            if issubclass(origin, Command):
+                cmd_name = attr_name
+                command_type = (
+                    "TriggerableCommand"
+                    if issubclass(origin, TriggerableCommand)
+                    else "Command"
+                )
+
+                arg_type = None
+                return_type = None
+                if command_type == "Command":
+                    args = get_args(annotation)
+                    if len(args) == 2:
+                        arg_types, return_annotation = args
+                        if arg_types:
+                            arg_type = python_type_to_str(arg_types[0])
+                        if return_annotation not in (None, type(None)):
+                            return_type = python_type_to_str(return_annotation)
+
+                commands.append(
+                    CommandAttribute(
+                        name=cmd_name,
+                        command_type=command_type,
+                        arg_type=arg_type,
+                        return_type=return_type,
+                        description=descriptions.get(attr_name),
+                    )
+                )
+
             if issubclass(origin, StandardReadable):
                 modules.append(ModuleAttribute(name=attr_name, type=origin.__name__))
 
-        return parameters, properties, modules
+        return parameters, properties, modules, commands
 
     def _parse_enum_class(self, class_symbol: str, class_obj: type):
         """Parse an enum class from existing module.
@@ -528,7 +578,7 @@ class GenNodeCode:
         """
         # Extract attributes from source code to get proper type annotations
 
-        parameters, properties, _ = self._get_attr_list(class_obj)
+        parameters, properties, _, commands = self._get_attr_list(class_obj)
 
         methods = []
         for method_name, method in class_obj.__dict__.items():
@@ -559,6 +609,7 @@ class GenNodeCode:
             parameters=parameters,
             properties=properties,
             methods=methods,
+            commands=commands,
             description=description,
             enums=mod_enums,
         )
@@ -612,6 +663,7 @@ class GenNodeCode:
         cmd_plans: list[Method],
         description: str = "",
         enum_classes: list[EnumClass] | None = None,
+        commands: list[CommandAttribute] | None = None,
     ):
         """Add a module class to be generated.
 
@@ -622,6 +674,7 @@ class GenNodeCode:
             properties: List of property attributes
             cmd_plans: List of method definitions
             description: Optional class description
+            commands: List of command annotations (Command/TriggerableCommand)
         """
         # Check if class already exists (loaded from file)
         existing_class = next(
@@ -644,6 +697,7 @@ class GenNodeCode:
             parameters=parameters,
             properties=properties,
             methods=cmd_plans,
+            commands=commands or [],
             description=description,
             enums=enum_classes or [],
         )
@@ -769,43 +823,47 @@ class GenNodeCode:
             # Prepare attributes
 
             # Module Commands
-            command_plans = []
+            # No bound bluesky plan methods are generated: a command is fully
+            # represented by its Command/TriggerableCommand class annotation
+            # (below), exactly like Parameters/Properties.
+            command_plans: list[Method] = []
+            mod_commands: list[CommandAttribute] = []
 
             for command, command_data in commands.items():
-                # Stop is already an ophyd native operation
+                # "stop" is skipped: SECoPMoveableDevice already implements
+                # Stoppable.stop() (a real bound method) via StandardMovable,
+                # so the generated annotation must not claim an attribute
+                # that will never actually be created (see connect_real's
+                # matching skip in SECoPDevices.py).
                 if command == "stop":
                     continue
 
-                argument = command_data["datainfo"].get("argument")
-                result = command_data["datainfo"].get("result")
+                cmd_datatype: CommandType = command_data["datatype"]
+                arg_dt, res_dt = cmd_datatype.argument, cmd_datatype.result
 
-                description: str = ""
-                description += f"{command_data['description']}\n"
-
-                if argument:
-                    description += (
-                        f"       argument: {command_data['datainfo'].get('argument')}\n"
+                mod_commands.append(
+                    CommandAttribute(
+                        name=command,
+                        command_type=(
+                            "TriggerableCommand"
+                            if arg_dt is None and res_dt is None
+                            else "Command"
+                        ),
+                        arg_type=(
+                            command_dtype_to_annotation_str(arg_dt)
+                            if arg_dt is not None
+                            else None
+                        ),
+                        return_type=(
+                            command_dtype_to_annotation_str(res_dt)
+                            if res_dt is not None
+                            else None
+                        ),
+                        description=self._normalize_description(
+                            command_data.get("description", "")
+                        ),
                     )
-                if result:
-                    description += (
-                        f"       result: {command_data['datainfo'].get('result')}"
-                    )
-
-                def command_plan(self, arg, wait_for_idle: bool = False):
-                    pass
-
-                def command_plan_no_arg(self, wait_for_idle: bool = False):
-                    pass
-
-                plan = Method(
-                    cmd_name=command,
-                    description=description,
-                    cmd_sign=inspect.signature(
-                        command_plan if argument else command_plan_no_arg
-                    ),
                 )
-
-                command_plans.append(plan)
 
             mod_parameters: list[ParameterAttribute] = []
 
@@ -937,6 +995,7 @@ class GenNodeCode:
                 cmd_plans=command_plans,
                 description=properties.get("description", ""),
                 enum_classes=module_enum_classes,
+                commands=mod_commands,
             )
 
             # Add to node attributes

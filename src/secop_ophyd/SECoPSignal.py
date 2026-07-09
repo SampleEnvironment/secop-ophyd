@@ -1,6 +1,7 @@
 import asyncio
 import inspect
 import warnings
+from collections.abc import Awaitable, Callable
 from functools import wraps
 from typing import Any
 
@@ -29,7 +30,14 @@ from ophyd_async.core import (
 )
 
 from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient
-from secop_ophyd.util import Path, SECoPDataKey, SECoPdtype, SECoPReading, deep_get
+from secop_ophyd.util import (
+    Path,
+    SECoPDataKey,
+    SECoPdtype,
+    SECoPReading,
+    build_command_signature,
+    deep_get,
+)
 
 atomic_dtypes = (
     StringType,
@@ -56,20 +64,40 @@ class SECoPCommandBackend(CommandBackend[Any, Any]):
 
     Converts the argument/result between SECoP wire format and numpy/python
     values and calls `AsyncFrappyClient.exec_command` to execute the command.
+
+    Supports deferred initialization (matching the `SECoPBackend` pattern used
+    for Parameters/Properties): constructed empty by the `DeviceFiller` when a
+    command is declared via a `Command`/`TriggerableCommand` class annotation,
+    then bound to a concrete SECoP command via `init_command_from_introspection`
+    once the SEC node has been introspected.
     """
 
-    def __init__(
-        self, path: Path, secclient: AsyncFrappyClient, cmd_datatype: CommandType
-    ) -> None:
-        """Initialize SECoPCommandBackend
+    def __init__(self, signature: inspect.Signature | None = None) -> None:
+        """Initialize SECoPCommandBackend (optionally with a signature derived
+        from a `Command[[ArgT], ResT]` class annotation; purely informational,
+        overwritten by `init_command_from_introspection`)."""
+        super().__init__(signature=signature or inspect.Signature())
 
+    def init_command_from_introspection(
+        self,
+        cmd_datatype: CommandType,
+        path: Path,
+        secclient: AsyncFrappyClient,
+        wait_for_idle_fn: Callable[[], Awaitable[None]] | None = None,
+    ) -> None:
+        """Bind this backend to a concrete SECoP command.
+
+        :param cmd_datatype: SECoP command datatype, holding the argument and
+        result datatypes (either of which may be None)
+        :type cmd_datatype: CommandType
         :param path: Path to the command in the secclient module dict
         :type path: Path
         :param secclient: SECoP client providing communication to the SEC Node
         :type secclient: AsyncFrappyClient
-        :param cmd_datatype: SECoP command datatype, holding the argument and
-        result datatypes (either of which may be None)
-        :type cmd_datatype: CommandType
+        :param wait_for_idle_fn: Owning module's `wait_for_idle` coroutine
+        (bound method), if it has one (i.e. it has a status signal); used to
+        support the `wait_for_idle` kwarg on `execute()`.
+        :type wait_for_idle_fn: Callable[[], Awaitable[None]] | None
         """
         self._secclient: AsyncFrappyClient = secclient
 
@@ -86,24 +114,11 @@ class SECoPCommandBackend(CommandBackend[Any, Any]):
             SECoPdtype(self.raw_result) if self.raw_result is not None else None
         )
 
+        self._wait_for_idle_fn = wait_for_idle_fn
+
         self.source_name = self.path._module_name + ":" + self.path._accessible_name
 
-        super().__init__(signature=self._build_signature())
-
-    def _build_signature(self) -> inspect.Signature:
-        params = []
-        if self._arg_type is not None:
-            params.append(
-                inspect.Parameter(
-                    "arg",
-                    inspect.Parameter.POSITIONAL_OR_KEYWORD,
-                    annotation=self._arg_type.np_datatype,
-                )
-            )
-        return_annotation = (
-            self._res_type.np_datatype if self._res_type is not None else None
-        )
-        return inspect.Signature(params, return_annotation=return_annotation)
+        self.signature = build_command_signature(cmd_datatype)
 
     def source(self, name: str) -> str:
         return self.source_name
@@ -112,10 +127,17 @@ class SECoPCommandBackend(CommandBackend[Any, Any]):
         pass
 
     async def execute(self, *args: Any, **kwargs: Any) -> Any:
+        bound = self.signature.bind(*args, **kwargs)
+        bound.apply_defaults()
+
+        wait_for_idle = bound.arguments.pop("wait_for_idle")
+
         argument = None
         if self._arg_type is not None:
-            value = args[0] if args else kwargs["arg"]
-            argument = self._arg_type.val2secop(value)
+            if isinstance(self.raw_argument, StructOf):
+                argument = self._arg_type.val2secop(dict(bound.arguments))
+            else:
+                argument = self._arg_type.val2secop(bound.arguments["arg"])
 
         res, _qualifiers = await self._secclient.exec_command(
             module=self.path._module_name,
@@ -123,10 +145,17 @@ class SECoPCommandBackend(CommandBackend[Any, Any]):
             argument=argument,
         )
 
-        if self._res_type is None:
-            return None
+        result = None if self._res_type is None else self._res_type.secop2val(res)
 
-        return self._res_type.secop2val(res)
+        if wait_for_idle:
+            if self._wait_for_idle_fn is None:
+                raise RuntimeError(
+                    f"wait_for_idle is not supported for command "
+                    f"'{self.source_name}': module has no status signal"
+                )
+            await self._wait_for_idle_fn()
+
+        return result
 
 
 class SECoPBackend(SignalBackend[SignalDatatypeT]):

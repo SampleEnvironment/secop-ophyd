@@ -4,9 +4,11 @@ import inspect
 import sys
 from pathlib import Path
 
-from ophyd_async.core import SignalR, init_devices
+from frappy.datatypes import StructOf
+from ophyd_async.core import Command, SignalR, TriggerableCommand, init_devices
 
 from secop_ophyd.GenNodeCode import (
+    CommandAttribute,
     GenNodeCode,
     Method,
     ModuleAttribute,
@@ -67,6 +69,78 @@ def test_generated_command_methods_are_concrete(tmp_path: Path):
     assert "def factory_reset" in generated_code
     assert "@abstractmethod" not in generated_code
     assert "raise RuntimeError(" in generated_code
+
+
+def test_generated_command_annotations(tmp_path: Path):
+    """Commands should be rendered as Command/TriggerableCommand annotations
+    (no bound bluesky-plan-method stub is generated anymore)."""
+    gen_code = GenNodeCode(path=str(tmp_path), log=None)
+
+    gen_code.add_mod_class(
+        module_cls="CommandAnnotationTestModule",
+        bases=["SECoPReadableDevice"],
+        parameters=[],
+        properties=[],
+        cmd_plans=[],
+        description="test module",
+        commands=[
+            CommandAttribute(
+                name="test_cmd",
+                command_type="Command",
+                arg_type="dict[str, Any]",
+                return_type="int",
+            ),
+            CommandAttribute(name="go", command_type="TriggerableCommand"),
+        ],
+    )
+
+    generated_code = gen_code.generate_code()
+
+    assert "test_cmd: Command[[dict[str, Any]], int]" in generated_code
+    assert "go: TriggerableCommand" in generated_code
+    assert "@abstractmethod" not in generated_code
+
+
+def test_get_attr_list_parses_command_annotations():
+    """_get_attr_list should recognize Command/TriggerableCommand annotations
+    when round-trip parsing a previously generated module."""
+
+    class _CommandAnnotationSample:
+        foo: Command[[int], str]
+        bar: TriggerableCommand
+
+    gen_code = GenNodeCode(log=None)
+    _, _, _, commands = gen_code._get_attr_list(_CommandAnnotationSample)
+
+    by_name = {cmd.name: cmd for cmd in commands}
+
+    assert by_name["foo"].command_type == "Command"
+    assert by_name["foo"].arg_type == "int"
+    assert by_name["foo"].return_type == "str"
+
+    assert by_name["bar"].command_type == "TriggerableCommand"
+    assert by_name["bar"].arg_type is None
+    assert by_name["bar"].return_type is None
+
+
+def test_build_command_signature_unravels_struct_argument():
+    """A StructOf command argument should unravel into one KEYWORD_ONLY
+    parameter per member, used for the runtime backend signature. Required
+    members (not in `.optional`) have no default; optional members default
+    to None. A trailing 'wait_for_idle' keyword-only param is always added."""
+    from frappy.datatypes import BoolType, CommandType, IntRange
+
+    from secop_ophyd.util import build_command_signature
+
+    cmd_datatype = CommandType(
+        argument=StructOf(a=IntRange(), b=BoolType(), optional=["b"]), result=None
+    )
+
+    sig = build_command_signature(cmd_datatype)
+
+    assert (
+        str(sig) == "(*, a: int, b: bool = None, wait_for_idle: bool = False) -> None"
+    )
 
 
 def test_basic_functionality(clean_generated_file):
@@ -579,12 +653,20 @@ async def test_gen_real_node(
 
     generated_code = gen_file.read_text()
 
-    # ===== Assertions for generated command plans =====
-    # The ophy_struct module has a test_cmd command
-    assert "def test_cmd" in generated_code, "test_cmd plan should be generated"
+    # ===== Assertions for generated commands =====
+    # No bound bluesky plan method is generated anymore; the command is fully
+    # represented by its Command/TriggerableCommand class annotation.
+    assert (
+        "def test_cmd" not in generated_code
+    ), "no bound plan method should be generated for commands"
     assert (
         "@abstractmethod" not in generated_code
     ), "Command methods should be concrete so generated classes are instantiable"
+
+    # test_cmd takes a struct argument and returns an int
+    assert (
+        "test_cmd: Command[[dict[str, Any]], int]" in generated_code
+    ), "test_cmd annotation should be generated"
 
     # ===== Assertions for generated enum classes =====
     # Enum classes should be generated for enum parameters
@@ -700,6 +782,12 @@ def test_gen_shall_mass_spec_node(
         in generated_code
     )
 
+    # Void "go" command should be annotated as TriggerableCommand; "stop" is
+    # skipped since SECoPMoveableDevice already implements Stoppable.stop()
+    # natively and a raw command device would shadow it.
+    assert "go: TriggerableCommand" in generated_code
+    assert "stop: TriggerableCommand" not in generated_code
+
     # Reparse generated code and verify multiline comments survive round-trip generation
     roundtrip_gen = GenNodeCode(path=str(clean_generated_file))
     roundtrip_code = roundtrip_gen.generate_code()
@@ -708,6 +796,10 @@ def test_gen_shall_mass_spec_node(
     assert "Example:" in roundtrip_code
     assert "\n# ; Unit: (V)" not in roundtrip_code
     assert "resolution: A[SignalR[float], ParamT()]\n" in roundtrip_code
+
+    # Command annotations should also survive round-trip generation
+    assert "go: TriggerableCommand" in roundtrip_code
+    assert "stop: TriggerableCommand" not in roundtrip_code
 
 
 def test_gen_shall_mass_spec_node_no_impl(

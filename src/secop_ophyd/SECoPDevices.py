@@ -6,8 +6,7 @@ from abc import abstractmethod
 from dataclasses import dataclass
 from functools import cached_property
 from logging import Logger
-from types import MethodType
-from typing import Any, Dict, Type
+from typing import Any, Dict
 
 import bluesky.plan_stubs as bps
 from bluesky.protocols import (
@@ -16,18 +15,7 @@ from bluesky.protocols import (
     Subscribable,
     Triggerable,
 )
-from frappy.datatypes import (
-    ArrayOf,
-    BLOBType,
-    BoolType,
-    CommandType,
-    FloatRange,
-    IntRange,
-    ScaledInteger,
-    StringType,
-    StructOf,
-    TupleOf,
-)
+from frappy.datatypes import CommandType
 from ophyd_async.core import (
     DEFAULT_TIMEOUT,
     AsyncStatus,
@@ -222,26 +210,18 @@ class SECoPDeviceConnector(DeviceConnector):
 
     def create_children_from_annotations(self, device: Device):
         if not hasattr(self, "filler"):
-
-            def _unsupported_command_backend_factory(signature):
-                raise NotImplementedError(
-                    "Declaring 'Command'/'TriggerableCommand' annotations on a "
-                    "SECoPDevice is not supported; SECoP commands are "
-                    "auto-discovered and exposed as '<command>_CMD' attributes "
-                    "and generated bluesky plan methods by SECoPDevice.connect()"
-                )
-
             self.filler = DeviceFiller(
                 device=device,
                 signal_backend_factory=SECoPBackend,
                 device_connector_factory=lambda: SECoPDeviceConnector(
                     self.sri, self._auto_fill_signals, self.loglevel, self.logdir
                 ),
-                command_backend_factory=_unsupported_command_backend_factory,
+                command_backend_factory=SECoPCommandBackend,
             )
 
         list(self.filler.create_signals_from_annotations())
         list(self.filler.create_devices_from_annotations(filled=False))
+        list(self.filler.create_commands_from_annotations(filled=False))
 
         self.filler.check_created()
 
@@ -331,6 +311,39 @@ class SECoPDeviceConnector(DeviceConnector):
                         datatype=datatype,
                         path=self.module + ":" + mod_property_name,
                         secclient=self.client,
+                    )
+
+            # Fill Commands
+            command_dict = self.client.modules[self.module]["commands"]
+
+            # "stop" is skipped: SECoPMoveableDevice already implements
+            # Stoppable.stop() (a real bound method) via StandardMovable, so
+            # exposing a raw command device at the same bare name would
+            # silently shadow it.
+            commands = [
+                c
+                for c in command_dict.keys()
+                if c not in self.filler.ignored_signals and c != "stop"
+            ]
+
+            wait_for_idle_fn = getattr(device, "wait_for_idle", None)
+
+            for command_name in commands:
+                if self._auto_fill_signals or command_name in not_filled:
+                    cmd_datatype: CommandType = command_dict[command_name]["datatype"]
+                    command_type = (
+                        TriggerableCommand
+                        if cmd_datatype.argument is None and cmd_datatype.result is None
+                        else Command
+                    )
+
+                    backend = self.filler.fill_child_command(command_name, command_type)
+
+                    cmd_path = Path(
+                        parameter_name=command_name, module_name=self.module
+                    )
+                    backend.init_command_from_introspection(
+                        cmd_datatype, cmd_path, self.client, wait_for_idle_fn
                     )
 
         # Node Device: fill child devices (modules)
@@ -492,40 +505,6 @@ class SECoPDevice(StandardReadable):
             # Establish connection to SEC Node
             await self._client.connect(3)
 
-        if self._module:
-            module_desc = self._client.modules[self._module]
-
-            # Initialize Command Devices
-            for command, cmd_props in module_desc["commands"].items():
-                # generate new root path
-                cmd_path = Path(parameter_name=command, module_name=self._module)
-                cmd_datatype: CommandType = cmd_props["datatype"]
-
-                backend = SECoPCommandBackend(
-                    path=cmd_path, secclient=self._client, cmd_datatype=cmd_datatype
-                )
-
-                cmd_dev_name = command + "_CMD"
-                if cmd_datatype.argument is None and cmd_datatype.result is None:
-                    cmd_dev = TriggerableCommand(
-                        backend, timeout=None, name=cmd_dev_name
-                    )
-                else:
-                    cmd_dev = Command(backend, timeout=None, name=cmd_dev_name)
-
-                setattr(self, cmd_dev_name, cmd_dev)
-                # Add Bluesky Plan Methods
-
-                # Stop is already an ophyd native operation
-                if command == "stop":
-                    continue
-
-                cmd_plan = self.generate_cmd_plan(
-                    cmd_dev, cmd_datatype.argument, cmd_datatype.result
-                )
-
-                setattr(self, command, MethodType(cmd_plan, self))
-
         await super().connect(mock, timeout, force_reconnect)
 
         if self._module is None:
@@ -533,70 +512,6 @@ class SECoPDevice(StandardReadable):
             self.set_name(self._client.properties[EQUIPMENT_ID].replace(".", "-"))
         else:
             self.set_name(self._module)
-
-    def generate_cmd_plan(
-        self,
-        cmd_dev: Command | TriggerableCommand,
-        argument_type: Type | None = None,
-        return_type: Type | None = None,
-    ):
-
-        def command_plan_no_arg(self, wait_for_idle: bool = False):
-            # Execute the command, meaning that the command gets sent to the
-            # SEC Node
-            status = cmd_dev.execute()
-            yield from bps.wait_for([lambda: status])
-
-            if wait_for_idle:
-
-                def wait_for_idle_factory():
-                    return self.wait_for_idle()
-
-                yield from bps.wait_for([wait_for_idle_factory])
-
-            if return_type is not None:
-                return status.result
-
-        def command_plan(self, arg, wait_for_idle: bool = False):
-            # TODO  Type checking
-
-            # Execute the command, meaning that the command gets sent to the
-            # SEC Node
-            status = cmd_dev.execute(arg)
-            yield from bps.wait_for([lambda: status])
-
-            if wait_for_idle:
-
-                def wait_for_idle_factory():
-                    return self.wait_for_idle()
-
-                yield from bps.wait_for([wait_for_idle_factory])
-
-            if return_type is not None:
-                return status.result
-
-        cmd_meth = command_plan_no_arg if argument_type is None else command_plan
-
-        anno_dict = cmd_meth.__annotations__
-
-        dtype_mapping = {
-            StructOf: dict[str, Any],
-            ArrayOf: list[Any],
-            TupleOf: tuple[Any],
-            BLOBType: str,
-            BoolType: bool,
-            FloatRange: float,
-            IntRange: int,
-            ScaledInteger: int,
-            StringType: str,
-        }
-
-        if return_type is not None:
-            anno_dict["return"] = dtype_mapping[return_type.__class__]
-        if argument_type is not None:
-            anno_dict["arg"] = dtype_mapping[argument_type.__class__]
-
-        return cmd_meth
 
     @abstractmethod
     async def _assign_interface_formats(self):
@@ -890,6 +805,8 @@ class SECoPTriggerableDevice(SECoPReadableDevice, Stoppable):
 
     hinted_signals: list[str] = ["value"]
 
+    go: TriggerableCommand
+
     def __init__(
         self,
         sri: str = "",  # SECoP resource identifier host:port:optional[module]
@@ -906,8 +823,6 @@ class SECoPTriggerableDevice(SECoPReadableDevice, Stoppable):
             this device
         :type module_name: str
         """
-
-        self.go_CMD: TriggerableCommand
 
         self._success = True
         self._stopped = False

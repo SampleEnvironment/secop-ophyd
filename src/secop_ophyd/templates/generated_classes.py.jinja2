@@ -62,6 +62,26 @@ class {{ module_cls.name }}({{ module_cls.bases | join(', ') }}):
 {%- endif %}
 {%- endfor %}
 {%- endif %}
+{%- if module_cls.commands %}
+
+    # SECoP Commands
+{%- for cmd in module_cls.commands %}
+{%- if cmd.command_type == "TriggerableCommand" %}
+    {{ cmd.name }}: TriggerableCommand
+{%- else %}
+    {{ cmd.name }}: Command[[{{ cmd.arg_type if cmd.arg_type else '' }}], {{ cmd.return_type or 'None' }}]
+{%- endif %}
+{%- if cmd.description %}
+{%- set render_below = '\n' in cmd.description or cmd.description|length > inline_comment_threshold %}
+{%- if render_below %}
+{%- set wrapped_desc = cmd.description | wordwrap(comment_wrap_width, break_long_words=False, wrapstring='\n') %}
+    # {{ (wrapped_desc | replace('\n', '\n    # ')) ~ '\n' }}
+
+{%- else %}  # {{ cmd.description }}
+{%- endif %}
+{%- endif %}
+{%- endfor %}
+{%- endif %}
 {%- if module_cls.methods %}
 
     # SECoP Commands wrapped as Bluesky Plans:

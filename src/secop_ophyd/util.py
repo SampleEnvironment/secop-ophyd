@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import inspect
 import time
 import warnings
 from abc import ABC, abstractmethod
@@ -16,6 +17,7 @@ from frappy.datatypes import (
     ArrayOf,
     BLOBType,
     BoolType,
+    CommandType,
     DataType,
     EnumType,
     FloatRange,
@@ -734,6 +736,102 @@ class SECoPdtype:
             dt = self.dtype_tree.make_concrete_numpy_dtype(input_val)
 
             self.shape = dt[2]
+
+
+# Maps a SECoP command argument/result datatype to the plain python type used
+# for both the runtime bluesky-plan-method signature and the generated
+# Command[[ArgT], ResT] annotation (as opposed to SECoPdtype.np_datatype, which
+# is the numpy-facing type used for Parameter/Property SignalR annotations).
+COMMAND_DTYPE_MAPPING: dict[type[DataType], type] = {
+    StructOf: dict[str, Any],
+    ArrayOf: list[Any],
+    TupleOf: tuple[Any],
+    BLOBType: str,
+    BoolType: bool,
+    FloatRange: float,
+    IntRange: int,
+    ScaledInteger: int,
+    StringType: str,
+}
+
+
+def command_dtype_to_python_type(datatype: DataType) -> type:
+    """Map a SECoP command argument/result datatype to a plain python type."""
+    return COMMAND_DTYPE_MAPPING[datatype.__class__]
+
+
+def python_type_to_str(python_type: Any) -> str:
+    """Render a python type object as it should appear in generated source,
+    e.g. int -> "int", dict[str, Any] -> "dict[str, Any]"."""
+    if python_type in (None, type(None)):
+        return "None"
+    if isinstance(python_type, type):
+        return python_type.__name__
+    return str(python_type).replace("typing.", "")
+
+
+def command_dtype_to_annotation_str(datatype: DataType) -> str:
+    """Render a SECoP command argument/result datatype as a python type string,
+    e.g. for use in a generated Command[[ArgT], ResT] annotation."""
+    return python_type_to_str(command_dtype_to_python_type(datatype))
+
+
+def build_command_signature(cmd_datatype: CommandType) -> inspect.Signature:
+    """Build the call signature for a SECoP command's argument(s)/result.
+
+    A StructOf argument is unraveled into one KEYWORD_ONLY parameter per
+    member (optional members default to None, matching frappy's own "None
+    means missing" convention for structs); any other argument datatype
+    becomes a single POSITIONAL_OR_KEYWORD 'arg' parameter; no argument means
+    no argument parameters. A trailing 'wait_for_idle: bool = False' is
+    always appended (KEYWORD_ONLY if the preceding param is, to avoid mixing
+    keyword-only and positional-or-keyword params). Used by
+    SECoPCommandBackend to build both its real call signature and to
+    validate/convert calls via Signature.bind().
+    """
+    params: list[inspect.Parameter] = []
+    arg_dt = cmd_datatype.argument
+
+    if isinstance(arg_dt, StructOf):
+        for member_name, member_dtype in arg_dt.members.items():
+            params.append(
+                inspect.Parameter(
+                    member_name,
+                    inspect.Parameter.KEYWORD_ONLY,
+                    annotation=command_dtype_to_python_type(member_dtype),
+                    default=(
+                        None
+                        if member_name in arg_dt.optional
+                        else inspect.Parameter.empty
+                    ),
+                )
+            )
+    elif arg_dt is not None:
+        params.append(
+            inspect.Parameter(
+                "arg",
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                annotation=command_dtype_to_python_type(arg_dt),
+            )
+        )
+
+    wait_for_idle_kind = (
+        inspect.Parameter.KEYWORD_ONLY
+        if params and params[-1].kind is inspect.Parameter.KEYWORD_ONLY
+        else inspect.Parameter.POSITIONAL_OR_KEYWORD
+    )
+    params.append(
+        inspect.Parameter(
+            "wait_for_idle", wait_for_idle_kind, annotation=bool, default=False
+        )
+    )
+
+    return_annotation = (
+        command_dtype_to_python_type(cmd_datatype.result)
+        if cmd_datatype.result is not None
+        else None
+    )
+    return inspect.Signature(params, return_annotation=return_annotation)
 
 
 class SECoPReading:
