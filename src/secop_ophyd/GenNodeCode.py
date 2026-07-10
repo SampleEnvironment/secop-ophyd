@@ -16,7 +16,7 @@ from inspect import Signature
 from logging import Logger
 from pathlib import Path
 from types import ModuleType
-from typing import get_args, get_type_hints
+from typing import Any, get_args, get_type_hints
 
 import autoflake
 import black
@@ -623,14 +623,30 @@ class GenNodeCode:
 
         parameters, properties, _, commands = self._get_attr_list(class_obj)
 
+        # Generated `<command>_plan` methods are fully derived from `commands`
+        # (already correctly round-tripped above) and must be reconstructed
+        # via their exact original source text (see
+        # `_parse_command_plan_method`), not via the generic method-scanning
+        # below: `inspect.signature()` resolves annotations to live runtime
+        # objects and re-stringifies them with a fully-qualified dotted path
+        # (e.g. "ophyd_async.core._utils.StrictEnum"), which is not
+        # necessarily an importable name in the regenerated file and breaks
+        # on the next `reload()`.
+        plan_method_names = {f"{cmd.name}_plan" for cmd in commands}
+
         methods = []
+        command_plans: list[CommandPlanMethod] = []
         for method_name, method in class_obj.__dict__.items():
-            if callable(method) and not method_name.startswith("__"):
-                method_source = inspect.getsource(method)
-                description = self._extract_method_description(method_source)
-                methods.append(
-                    Method(method_name, description, inspect.signature(method))
-                )
+            if not callable(method) or method_name.startswith("__"):
+                continue
+            if method_name in plan_method_names:
+                plan = self._parse_command_plan_method(method)
+                if plan is not None:
+                    command_plans.append(plan)
+                continue
+            method_source = inspect.getsource(method)
+            description = self._extract_method_description(method_source)
+            methods.append(Method(method_name, description, inspect.signature(method)))
 
         bases = [base.__name__ for base in class_obj.__bases__]
 
@@ -653,10 +669,75 @@ class GenNodeCode:
             properties=properties,
             methods=methods,
             commands=commands,
+            command_plans=command_plans,
             description=description,
             enums=mod_enums,
         )
         self.module_classes.append(mod_cls)
+
+    def _parse_command_plan_method(self, method: Any) -> "CommandPlanMethod | None":
+        """Reconstruct a CommandPlanMethod from an already-generated
+        `<command>_plan` method by extracting its exact original source text
+        (via `ast`), rather than `inspect.signature()` -- which resolves
+        annotations to the live, imported runtime objects and re-stringifies
+        them with their fully-qualified dotted path, breaking round-trip
+        regeneration whenever the annotation isn't a builtin (e.g. a
+        generated enum class)."""
+        try:
+            source = inspect.getsource(method)
+        except (OSError, TypeError):
+            return None
+
+        dedented = textwrap.dedent(source)
+        try:
+            tree = ast.parse(dedented)
+        except SyntaxError:
+            return None
+
+        if not tree.body or not isinstance(tree.body[0], ast.FunctionDef):
+            return None
+
+        func_node = tree.body[0]
+
+        args_str = ast.unparse(func_node.args)
+        return_str = (
+            f" -> {ast.unparse(func_node.returns)}" if func_node.returns else ""
+        )
+        signature = f"({args_str}){return_str}"
+
+        body_nodes = list(func_node.body)
+        description = ""
+        if (
+            body_nodes
+            and isinstance(body_nodes[0], ast.Expr)
+            and isinstance(body_nodes[0].value, ast.Constant)
+            and isinstance(body_nodes[0].value.value, str)
+        ):
+            description = body_nodes[0].value.value
+            body_nodes = body_nodes[1:]
+
+        dedented_lines = dedented.splitlines()
+        if body_nodes:
+            start = body_nodes[0].lineno - 1
+            end = body_nodes[-1].end_lineno
+            # dedented_lines still carry whatever residual indent the method
+            # body had relative to its `def` line (e.g. 4 spaces) -- strip
+            # that too before applying the fixed 8-space class-method-body
+            # indent below, or lines end up over-indented.
+            body_lines = textwrap.dedent(
+                "\n".join(dedented_lines[start:end])
+            ).splitlines()
+        else:
+            body_lines = ["pass"]
+
+        body = "\n".join(f"        {line}" for line in body_lines)
+
+        return CommandPlanMethod(
+            name=method.__name__,
+            signature=signature,
+            body=body,
+            description=description,
+        )
 
     def _extract_method_description(self, method_source: str) -> str:
         """Extract description from method docstring.

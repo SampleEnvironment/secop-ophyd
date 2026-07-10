@@ -1124,3 +1124,70 @@ def test_gen_command_with_enum_argument_and_result(clean_generated_file):
         "status = self.set_mode.execute(arg, wait_for_idle=wait_for_idle)"
         in generated_code
     )
+
+
+def test_gen_command_with_struct_enum_member_survives_regeneration(
+    clean_generated_file,
+):
+    """Regression test: regenerating a class file a second time (e.g. a user
+    re-running class_from_instance() against the same node/path) must not
+    corrupt a `<command>_plan` method whose signature contains a non-builtin
+    annotation (e.g. a struct member typed as the generic StrictEnum, since
+    struct members don't get a named enum class at codegen time). Previously,
+    round-trip parsing reconstructed such methods via
+    `str(inspect.signature(method))`, which renders non-builtin annotations
+    as a fully-qualified dotted path (e.g. "ophyd_async.core._utils.StrictEnum")
+    that isn't an importable name in the regenerated file, breaking the
+    `reload()` call in `write_gen_node_class_file()` with a NameError."""
+
+    describe_data = {
+        "equipment_id": "struct_enum_cmd.test.demo",
+        "description": "node for testing struct+enum command regeneration",
+        "modules": {
+            "mfcgroup": {
+                "description": "module for testing struct+enum command regeneration",
+                "interface_classes": ["Readable"],
+                "accessibles": {
+                    "value": {
+                        "datainfo": {"type": "double"},
+                        "description": "the value",
+                        "readonly": True,
+                    },
+                    "add_preset": {
+                        "datainfo": {
+                            "type": "command",
+                            "argument": {
+                                "type": "struct",
+                                "members": {
+                                    "preset": {
+                                        "type": "enum",
+                                        "members": {"preset_01": 1, "preset_02": 2},
+                                    },
+                                    "name": {"type": "string"},
+                                },
+                            },
+                            "result": None,
+                        },
+                        "description": "sets the preset to the given values",
+                    },
+                },
+            },
+        },
+    }
+
+    # First generation, matching class_from_instance()'s
+    # from_json_describe() + write_gen_node_class_file() sequence.
+    gen_code = GenNodeCode(path=str(clean_generated_file))
+    gen_code.from_json_describe(describe_data)
+    gen_code.write_gen_node_class_file()
+
+    # Second generation against a *new* GenNodeCode instance, matching a
+    # second class_from_instance() call: this constructor loads and parses
+    # the file just written above.
+    regen_code = GenNodeCode(path=str(clean_generated_file))
+    regen_code.from_json_describe(describe_data)
+    regen_code.write_gen_node_class_file()  # must not raise NameError on reload()
+
+    generated_code = (clean_generated_file / "genNodeClass.py").read_text()
+    assert "def add_preset_plan(" in generated_code
+    assert "ophyd_async.core._utils.StrictEnum" not in generated_code
