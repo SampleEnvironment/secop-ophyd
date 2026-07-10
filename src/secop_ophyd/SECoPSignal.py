@@ -3,7 +3,7 @@ import inspect
 import warnings
 from collections.abc import Awaitable, Callable
 from functools import wraps
-from typing import Any
+from typing import Any, cast
 
 from bluesky.protocols import DataKey, Reading
 from frappy.client import CacheItem
@@ -59,6 +59,18 @@ class AttributeType(StrictEnum):
     PROPERTY = "property"
 
 
+def _is_concrete_enum_class(datatype: Any) -> bool:
+    """True only for a genuine, member-carrying StrictEnum subclass produced
+    by codegen (e.g. Cryostat_Mode_Enum) -- as opposed to the generic,
+    member-less StrictEnum base class used when there is no class annotation
+    (pure introspection instantiation)."""
+    return (
+        isinstance(datatype, type)
+        and issubclass(datatype, StrictEnum)
+        and datatype is not StrictEnum
+    )
+
+
 class SECoPCommandBackend(CommandBackend[Any, Any]):
     """Backend for a SECoP command.
 
@@ -74,9 +86,16 @@ class SECoPCommandBackend(CommandBackend[Any, Any]):
 
     def __init__(self, signature: inspect.Signature | None = None) -> None:
         """Initialize SECoPCommandBackend (optionally with a signature derived
-        from a `Command[[ArgT], ResT]` class annotation; purely informational,
-        overwritten by `init_command_from_introspection`)."""
-        super().__init__(signature=signature or inspect.Signature())
+        from a `Command[[ArgT], ResT]` class annotation)."""
+        resolved_signature = signature or inspect.Signature()
+        # Snapshot of the annotation-derived signature (e.g. carrying the
+        # concrete `Cryostat_SetMode_Arg_Enum` class from a generated
+        # `Command[[Cryostat_SetMode_Arg_Enum], ...]` annotation), captured
+        # before init_command_from_introspection() rebuilds self.signature
+        # from live introspection. Empty inspect.Signature() for pure
+        # introspection instantiation (no class annotation).
+        self._annotated_signature: inspect.Signature = resolved_signature
+        super().__init__(signature=resolved_signature)
 
     def init_command_from_introspection(
         self,
@@ -118,7 +137,9 @@ class SECoPCommandBackend(CommandBackend[Any, Any]):
 
         self.source_name = self.path._module_name + ":" + self.path._accessible_name
 
-        self.signature = build_command_signature(cmd_datatype)
+        self.signature = build_command_signature(
+            cmd_datatype, annotated_signature=self._annotated_signature
+        )
 
     def source(self, name: str) -> str:
         return self.source_name
@@ -207,6 +228,13 @@ class SECoPBackend(SignalBackend[SignalDatatypeT]):
                 self._attribute_name = path
             else:
                 self._module_name, self._attribute_name = path.split(":", maxsplit=1)
+
+        # Snapshot of whatever datatype the class annotation provided (e.g.
+        # `Cryostat_Mode_Enum` from `SignalRW[Cryostat_Mode_Enum]`), captured
+        # before init_parameter_from_introspection()/init_property_from_introspection()
+        # overwrite self.datatype with a throwaway string. None for pure
+        # introspection instantiation (no class annotation).
+        self._annotated_datatype: type | None = datatype
 
         super().__init__(datatype)
 
@@ -342,7 +370,10 @@ class SECoPBackend(SignalBackend[SignalDatatypeT]):
                 property_name = "units"
             self.describe_dict[property_name] = prop_val
 
-        self.datatype = self.SECoP_type_info.np_datatype
+        if _is_concrete_enum_class(self._annotated_datatype):
+            self.datatype = cast(type, self._annotated_datatype)
+        else:
+            self.datatype = self.SECoP_type_info.np_datatype
 
     async def _init_property(self):
         """Initialize as a property signal."""
@@ -372,7 +403,10 @@ class SECoPBackend(SignalBackend[SignalDatatypeT]):
         # Properties are always readonly
         self.format = StandardReadableFormat.CONFIG_SIGNAL
         self.readonly = True
-        self.datatype = self.SECoP_type_info.np_datatype
+        if _is_concrete_enum_class(self._annotated_datatype):
+            self.datatype = cast(type, self._annotated_datatype)
+        else:
+            self.datatype = self.SECoP_type_info.np_datatype
 
     async def put(self, value: Any | None):
         """Put a value to the parameter. Properties are readonly."""

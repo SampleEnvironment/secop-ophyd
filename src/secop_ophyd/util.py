@@ -803,6 +803,23 @@ def _dynamic_enum_class(enum_dt: EnumType, context_name: str) -> type[StrictEnum
     return cast("type[StrictEnum]", enum_cls)
 
 
+def _reused_annotated_enum(candidate: Any) -> type[StrictEnum] | None:
+    """If `candidate` (a parameter/return annotation captured from a real
+    `Command[[ArgT], ResT]` class annotation, before init_command_from_introspection
+    would otherwise discard it) is already a genuine, concrete StrictEnum
+    subclass -- not the bare base class, not `inspect.Parameter.empty`/
+    `inspect.Signature.empty` -- return it so it can be reused verbatim
+    instead of building a fresh, differently-named class via
+    `_dynamic_enum_class`."""
+    if (
+        isinstance(candidate, type)
+        and issubclass(candidate, StrictEnum)
+        and candidate is not StrictEnum
+    ):
+        return cast("type[StrictEnum]", candidate)
+    return None
+
+
 def python_type_to_str(python_type: Any) -> str:
     """Render a python type object as it should appear in generated source,
     e.g. int -> "int", dict[str, Any] -> "dict[str, Any]"."""
@@ -819,7 +836,10 @@ def command_dtype_to_annotation_str(datatype: DataType) -> str:
     return python_type_to_str(command_dtype_to_python_type(datatype))
 
 
-def build_command_signature(cmd_datatype: CommandType) -> inspect.Signature:
+def build_command_signature(
+    cmd_datatype: CommandType,
+    annotated_signature: inspect.Signature | None = None,
+) -> inspect.Signature:
     """Build the call signature for a SECoP command's argument(s)/result.
 
     A StructOf argument is unraveled into one KEYWORD_ONLY parameter per
@@ -831,9 +851,22 @@ def build_command_signature(cmd_datatype: CommandType) -> inspect.Signature:
     keyword-only and positional-or-keyword params). Used by
     SECoPCommandBackend to build both its real call signature and to
     validate/convert calls via Signature.bind().
+
+    `annotated_signature`, if given, is the signature captured from a real
+    `Command[[ArgT], ResT]` class annotation (before this function's caller
+    would otherwise discard it) -- when the bare (non-struct) argument or
+    result is an Enum and `annotated_signature` already carries a concrete
+    generated enum class there, that class is reused instead of building a
+    fresh, differently-named one via `_dynamic_enum_class`. Struct members
+    are unaffected: `annotated_signature` has a different shape there (a
+    single flat argument, not a per-member decomposition), and struct
+    members never get named enum classes at codegen time anyway.
     """
     params: list[inspect.Parameter] = []
     arg_dt = cmd_datatype.argument
+    annotated_params = (
+        list(annotated_signature.parameters.values()) if annotated_signature else []
+    )
 
     if isinstance(arg_dt, StructOf):
         for member_name, member_dtype in arg_dt.members.items():
@@ -855,11 +888,15 @@ def build_command_signature(cmd_datatype: CommandType) -> inspect.Signature:
                 )
             )
     elif arg_dt is not None:
-        annotation = (
-            _dynamic_enum_class(arg_dt, "arg")
-            if isinstance(arg_dt, EnumType)
-            else command_dtype_to_python_type(arg_dt)
-        )
+        if isinstance(arg_dt, EnumType):
+            reused = (
+                _reused_annotated_enum(annotated_params[0].annotation)
+                if annotated_params
+                else None
+            )
+            annotation = reused or _dynamic_enum_class(arg_dt, "arg")
+        else:
+            annotation = command_dtype_to_python_type(arg_dt)
         params.append(
             inspect.Parameter(
                 "arg",
@@ -882,7 +919,12 @@ def build_command_signature(cmd_datatype: CommandType) -> inspect.Signature:
     res_dt = cmd_datatype.result
     return_annotation: type | None
     if isinstance(res_dt, EnumType):
-        return_annotation = _dynamic_enum_class(res_dt, "result")
+        reused = (
+            _reused_annotated_enum(annotated_signature.return_annotation)
+            if annotated_signature
+            else None
+        )
+        return_annotation = reused or _dynamic_enum_class(res_dt, "result")
     else:
         return_annotation = (
             command_dtype_to_python_type(res_dt) if res_dt is not None else None

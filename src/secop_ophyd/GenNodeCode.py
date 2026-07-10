@@ -21,7 +21,7 @@ from typing import get_args, get_type_hints
 import autoflake
 import black
 from frappy.client import get_datatype
-from frappy.datatypes import CommandType, DataType, EnumType
+from frappy.datatypes import CommandType, DataType, EnumType, StructOf
 from jinja2 import Environment, PackageLoader, select_autoescape
 from ophyd_async.core import Command, Signal, SignalR, SignalRW, StandardReadable
 from ophyd_async.core import StandardReadableFormat as Format
@@ -141,6 +141,28 @@ class CommandAttribute:
     description: str | None = None
 
 
+@dataclass
+class CommandPlanMethod:
+    """A bound bluesky-plan wrapper method generated for a SECoP command,
+    e.g. `def set_mode_plan(self, arg: Cryostat_SetMode_Arg_Enum,
+    wait_for_idle: bool = False) -> Cryostat_SetMode_Result_Enum:`, calling
+    the sibling `Command`/`TriggerableCommand` attribute's `execute()`/
+    `trigger()` directly -- no runtime patching needed.
+
+    `signature`/`body` are pre-rendered source-text fragments (not real
+    `inspect.Signature` objects) since at codegen time there is no live
+    connected device to introspect -- only the type-name strings already
+    computed for the sibling `CommandAttribute.arg_type`/`return_type`.
+    """
+
+    name: str  # e.g. "set_mode_plan"
+    # e.g. "(self, arg: Cryostat_SetMode_Arg_Enum, wait_for_idle: bool = False)
+    # -> Cryostat_SetMode_Result_Enum"
+    signature: str
+    body: str  # pre-indented (8-space) multi-line statement block
+    description: str | None = None
+
+
 class Method:
     """Represents a class method with signature and description.
 
@@ -181,6 +203,7 @@ class ModuleClass:
     commands: list[CommandAttribute] = field(default_factory=list)
     description: str = ""
     enums: list[EnumClass] = field(default_factory=list)  # Enum classes for this module
+    command_plans: list[CommandPlanMethod] = field(default_factory=list)
 
 
 @dataclass
@@ -228,6 +251,7 @@ class GenNodeCode:
         self.comment_wrap_width: int = 100
 
         # Required imports for generated classes
+        self.add_import("bluesky", "plan_stubs as bps")
         self.add_import("typing", "Annotated as A")
         self.add_import("ophyd_async.core", "SignalR")
         self.add_import("ophyd_async.core", "SignalRW")
@@ -683,6 +707,7 @@ class GenNodeCode:
         description: str = "",
         enum_classes: list[EnumClass] | None = None,
         commands: list[CommandAttribute] | None = None,
+        command_plans: list[CommandPlanMethod] | None = None,
     ):
         """Add a module class to be generated.
 
@@ -694,6 +719,7 @@ class GenNodeCode:
             cmd_plans: List of method definitions
             description: Optional class description
             commands: List of command annotations (Command/TriggerableCommand)
+            command_plans: List of generated bluesky-plan wrapper methods for commands
         """
         # Check if class already exists (loaded from file)
         existing_class = next(
@@ -717,6 +743,7 @@ class GenNodeCode:
             properties=properties,
             methods=cmd_plans,
             commands=commands or [],
+            command_plans=command_plans or [],
             description=description,
             enums=enum_classes or [],
         )
@@ -842,11 +869,9 @@ class GenNodeCode:
             # Prepare attributes
 
             # Module Commands
-            # No bound bluesky plan methods are generated: a command is fully
-            # represented by its Command/TriggerableCommand class annotation
-            # (below), exactly like Parameters/Properties.
             command_plans: list[Method] = []
             mod_commands: list[CommandAttribute] = []
+            mod_command_plans: list[CommandPlanMethod] = []
 
             for command, command_data in commands.items():
                 # "stop" is skipped: SECoPMoveableDevice already implements
@@ -895,19 +920,63 @@ class GenNodeCode:
                         module_enum_classes.append(enum_cls)
                         return_type = enum_cls.name
 
+                is_triggerable = arg_dt is None and res_dt is None
+                description = self._normalize_description(
+                    command_data.get("description", "")
+                )
+
                 mod_commands.append(
                     CommandAttribute(
                         name=command,
                         command_type=(
-                            "TriggerableCommand"
-                            if arg_dt is None and res_dt is None
-                            else "Command"
+                            "TriggerableCommand" if is_triggerable else "Command"
                         ),
                         arg_type=arg_type,
                         return_type=return_type,
-                        description=self._normalize_description(
-                            command_data.get("description", "")
-                        ),
+                        description=description,
+                    )
+                )
+
+                # Generated bluesky-plan wrapper method (`<command>_plan`),
+                # calling the sibling Command/TriggerableCommand attribute's
+                # execute()/trigger() directly -- suffixed to avoid colliding
+                # with the attribute name itself.
+                plan_params: list[str] = []
+                call_args: list[str] = []
+
+                if isinstance(arg_dt, StructOf):
+                    plan_params.append("*")
+                    for member_name, member_dtype in arg_dt.members.items():
+                        member_type_str = command_dtype_to_annotation_str(member_dtype)
+                        default = " = None" if member_name in arg_dt.optional else ""
+                        plan_params.append(f"{member_name}: {member_type_str}{default}")
+                        call_args.append(f"{member_name}={member_name}")
+                elif arg_dt is not None:
+                    plan_params.append(f"arg: {arg_type}")
+                    call_args.append("arg")
+
+                if not is_triggerable:
+                    plan_params.append("wait_for_idle: bool = False")
+                    call_args.append("wait_for_idle=wait_for_idle")
+
+                sig_str = "(" + ", ".join(["self", *plan_params]) + ")"
+                if return_type:
+                    sig_str += f" -> {return_type}"
+
+                call_target = "trigger" if is_triggerable else "execute"
+                body_lines = [
+                    f"status = self.{command}.{call_target}({', '.join(call_args)})",
+                    "yield from bps.wait_for([lambda: status])",
+                    "return status.result",
+                ]
+                body_str = "\n".join(f"        {line}" for line in body_lines)
+
+                mod_command_plans.append(
+                    CommandPlanMethod(
+                        name=f"{command}_plan",
+                        signature=sig_str,
+                        body=body_str,
+                        description=description,
                     )
                 )
 
@@ -1022,6 +1091,7 @@ class GenNodeCode:
                 description=properties.get("description", ""),
                 enum_classes=module_enum_classes,
                 commands=mod_commands,
+                command_plans=mod_command_plans,
             )
 
             # Add to node attributes

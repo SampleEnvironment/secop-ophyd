@@ -199,6 +199,155 @@ def test_build_command_signature_enum_struct_member():
     assert sig.parameters["other"].annotation is int
 
 
+def test_build_command_signature_reuses_annotated_enum_argument():
+    """When a Command class annotation already carries a concrete generated
+    enum class (e.g. Cryostat_SetMode_Arg_Enum), build_command_signature()
+    should reuse that exact class instead of building a fresh, differently-
+    named one -- this is what makes the concrete generated class survive
+    connect()."""
+    import inspect
+
+    from frappy.datatypes import CommandType, EnumType
+    from ophyd_async.core import StrictEnum
+
+    from secop_ophyd.util import build_command_signature
+
+    class SomeGeneratedArgEnum(StrictEnum):
+        LOW = "low"
+        HIGH = "high"
+
+    annotated_signature = inspect.Signature(
+        [
+            inspect.Parameter(
+                "arg0",
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                annotation=SomeGeneratedArgEnum,
+            )
+        ]
+    )
+
+    cmd_datatype = CommandType(argument=EnumType(LOW=0, HIGH=1), result=None)
+    sig = build_command_signature(cmd_datatype, annotated_signature=annotated_signature)
+
+    assert sig.parameters["arg"].annotation is SomeGeneratedArgEnum
+
+
+def test_build_command_signature_reuses_annotated_enum_result():
+    """Same as above, for the return annotation."""
+    import inspect
+
+    from frappy.datatypes import CommandType, EnumType
+    from ophyd_async.core import StrictEnum
+
+    from secop_ophyd.util import build_command_signature
+
+    class SomeGeneratedResultEnum(StrictEnum):
+        OK = "ok"
+        FAIL = "fail"
+
+    annotated_signature = inspect.Signature(
+        [], return_annotation=SomeGeneratedResultEnum
+    )
+
+    cmd_datatype = CommandType(argument=None, result=EnumType(OK=0, FAIL=1))
+    sig = build_command_signature(cmd_datatype, annotated_signature=annotated_signature)
+
+    assert sig.return_annotation is SomeGeneratedResultEnum
+
+
+def test_build_command_signature_ignores_annotated_signature_for_struct():
+    """A StructOf argument's annotated_signature has a different shape (a
+    single flat arg0, not a per-member decomposition) and struct members
+    never get named enum classes at codegen time -- struct members must
+    always get a fresh _dynamic_enum_class, never attempt to reuse
+    annotated_signature."""
+    import inspect
+
+    from frappy.datatypes import CommandType, EnumType
+    from ophyd_async.core import StrictEnum
+
+    from secop_ophyd.util import build_command_signature
+
+    class SomeGeneratedArgEnum(StrictEnum):
+        LOW = "low"
+        HIGH = "high"
+
+    annotated_signature = inspect.Signature(
+        [
+            inspect.Parameter(
+                "arg0",
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                annotation=dict,
+            )
+        ]
+    )
+
+    cmd_datatype = CommandType(
+        argument=StructOf(preset=EnumType(LOW=0, HIGH=1)), result=None
+    )
+    sig = build_command_signature(cmd_datatype, annotated_signature=annotated_signature)
+
+    preset_annotation = sig.parameters["preset"].annotation
+    assert issubclass(preset_annotation, StrictEnum)
+    assert preset_annotation is not SomeGeneratedArgEnum
+
+
+def test_build_command_signature_no_reuse_when_no_annotation():
+    """With no annotated_signature (pure introspection instantiation, no
+    generated class involved), behavior must be identical to before this
+    fix: a fresh, dynamically built enum class."""
+    from frappy.datatypes import CommandType, EnumType
+    from ophyd_async.core import StrictEnum
+
+    from secop_ophyd.util import build_command_signature
+
+    cmd_datatype = CommandType(argument=EnumType(LOW=0, HIGH=1), result=None)
+    sig = build_command_signature(cmd_datatype)
+
+    annotation = sig.parameters["arg"].annotation
+    assert issubclass(annotation, StrictEnum)
+    assert annotation is not StrictEnum
+
+
+def test_command_backend_preserves_annotated_enum_end_to_end():
+    """SECoPCommandBackend, constructed with a signature carrying a concrete
+    generated enum class (as ophyd_async's DeviceFiller does from a real
+    `Command[[SomeEnum], ...]` class annotation), should still have that
+    exact class as its signature's annotation after
+    init_command_from_introspection() runs -- not a freshly, anonymously
+    built one."""
+    from frappy.datatypes import CommandType, EnumType
+    from ophyd_async.core import StrictEnum
+
+    from secop_ophyd.SECoPSignal import SECoPCommandBackend
+    from secop_ophyd.util import Path as SECoPPath
+
+    class SomeGeneratedArgEnum(StrictEnum):
+        LOW = "low"
+        HIGH = "high"
+
+    annotated_signature = inspect.Signature(
+        [
+            inspect.Parameter(
+                "arg0",
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                annotation=SomeGeneratedArgEnum,
+            )
+        ]
+    )
+
+    backend = SECoPCommandBackend(signature=annotated_signature)
+
+    cmd_datatype = CommandType(argument=EnumType(LOW=0, HIGH=1), result=None)
+    backend.init_command_from_introspection(
+        cmd_datatype,
+        SECoPPath(parameter_name="set_mode", module_name="cryo"),
+        secclient=object(),  # type: ignore[arg-type]
+    )
+
+    assert backend.signature.parameters["arg"].annotation is SomeGeneratedArgEnum
+
+
 def test_basic_functionality(clean_generated_file):
     """Test basic GenNodeCode functionality."""
     print("Testing GenNodeCode refactored implementation...")
@@ -638,6 +787,27 @@ async def test_gen_cryo_node(
     assert read_target == 10
 
 
+async def test_generated_enum_parameter_datatype_is_preserved(
+    clean_generated_file, cryo_sim, cryo_node_no_re: SECoPNodeDevice
+):
+    """A Parameter declared with a concrete generated enum class annotation
+    (e.g. `mode: A[SignalRW[Cryostat_Mode_Enum], ParamT()]`) should keep that
+    exact class as its runtime datatype after connect() -- not be silently
+    replaced by the generic, member-less StrictEnum base class."""
+
+    cryo_node_no_re.class_from_instance(clean_generated_file)
+
+    from tests.testgen.genNodeClass import (  # type: ignore
+        Cryo_7_frappy_demo,
+        Cryostat_Mode_Enum,
+    )
+
+    async with init_devices():
+        cryo_gen_code = Cryo_7_frappy_demo(sec_node_uri="localhost:10769")
+
+    assert cryo_gen_code.cryo.mode.datatype is Cryostat_Mode_Enum
+
+
 async def test_gen_cryo_status_not_in_cfg(
     clean_generated_file, cryo_sim, cryo_node_no_re: SECoPNodeDevice
 ):
@@ -710,11 +880,12 @@ async def test_gen_real_node(
     generated_code = gen_file.read_text()
 
     # ===== Assertions for generated commands =====
-    # No bound bluesky plan method is generated anymore; the command is fully
-    # represented by its Command/TriggerableCommand class annotation.
+    # The command is represented by both its Command/TriggerableCommand class
+    # annotation and a generated `<command>_plan` bluesky-plan wrapper method
+    # (suffixed so it doesn't collide with the Command attribute itself).
     assert (
-        "def test_cmd" not in generated_code
-    ), "no bound plan method should be generated for commands"
+        "def test_cmd(" not in generated_code
+    ), "no bare test_cmd method should shadow the Command attribute"
     assert (
         "@abstractmethod" not in generated_code
     ), "Command methods should be concrete so generated classes are instantiable"
@@ -723,6 +894,18 @@ async def test_gen_real_node(
     assert (
         "test_cmd: Command[[dict[str, Any]], int]" in generated_code
     ), "test_cmd annotation should be generated"
+
+    # generated plan method should decompose the struct argument into real
+    # keyword parameters/call args (matching the actual execute() calling
+    # convention, not the flat Command[[dict[str, Any]], ...] annotation)
+    assert (
+        "def test_cmd_plan(self, *, name: str, id: int, sort: bool, "
+        "wait_for_idle: bool = False) -> int:" in generated_code
+    ), "test_cmd_plan should be generated with a decomposed struct signature"
+    assert (
+        "status = self.test_cmd.execute(name=name, id=id, sort=sort, "
+        "wait_for_idle=wait_for_idle)" in generated_code
+    ), "test_cmd_plan should call execute() with real keyword arguments"
 
     # ===== Assertions for generated enum classes =====
     # Enum classes should be generated for enum parameters
@@ -844,6 +1027,12 @@ def test_gen_shall_mass_spec_node(
     assert "go: TriggerableCommand" in generated_code
     assert "stop: TriggerableCommand" not in generated_code
 
+    # generated plan method for a no-arg/no-result command calls .trigger(),
+    # not .execute(), and has no wait_for_idle param (TriggerableCommand's
+    # trigger() doesn't accept one)
+    assert "def go_plan(self):" in generated_code
+    assert "status = self.go.trigger()" in generated_code
+
     # Reparse generated code and verify multiline comments survive round-trip generation
     roundtrip_gen = GenNodeCode(path=str(clean_generated_file))
     roundtrip_code = roundtrip_gen.generate_code()
@@ -923,5 +1112,15 @@ def test_gen_command_with_enum_argument_and_result(clean_generated_file):
 
     assert (
         "set_mode: Command[[Enummod_SetMode_Arg_Enum], Enummod_SetMode_Result_Enum]"
+        in generated_code
+    )
+
+    # generated plan method should use the same concrete enum classes
+    assert (
+        "def set_mode_plan(self, arg: Enummod_SetMode_Arg_Enum, "
+        "wait_for_idle: bool = False) -> Enummod_SetMode_Result_Enum:" in generated_code
+    )
+    assert (
+        "status = self.set_mode.execute(arg, wait_for_idle=wait_for_idle)"
         in generated_code
     )
