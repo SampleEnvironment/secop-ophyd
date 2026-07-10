@@ -33,13 +33,13 @@ from secop_ophyd.SECoPDevices import (
     ParameterType,
     PropertyType,
     class_from_interface,
-    secop_enum_name_to_python,
 )
 from secop_ophyd.SECoPSignal import secop_dtype_obj_from_json
 from secop_ophyd.util import (
     SECoPdtype,
     command_dtype_to_annotation_str,
     python_type_to_str,
+    secop_enum_name_to_python,
 )
 
 

@@ -144,9 +144,10 @@ def test_build_command_signature_unravels_struct_argument():
 
 
 def test_build_command_signature_enum_argument():
-    """A bare Enum command argument should be typed as StrictEnum (frappy's
-    own tolerant EnumType.validate() still accepts ints or member names at
-    call time; this annotation is purely informational)."""
+    """A bare Enum command argument should be typed as a dynamically built
+    StrictEnum subclass carrying the real SECoP member names (frappy's own
+    tolerant EnumType.validate() still accepts ints or member names at call
+    time; this annotation only affects introspection/typing, not binding)."""
     from frappy.datatypes import CommandType, EnumType
     from ophyd_async.core import StrictEnum
 
@@ -155,11 +156,15 @@ def test_build_command_signature_enum_argument():
     cmd_datatype = CommandType(argument=EnumType(LOW=0, HIGH=1), result=None)
     sig = build_command_signature(cmd_datatype)
 
-    assert sig.parameters["arg"].annotation is StrictEnum
+    annotation = sig.parameters["arg"].annotation
+    assert issubclass(annotation, StrictEnum)
+    assert annotation is not StrictEnum
+    assert {m.name for m in annotation} == {"LOW", "HIGH"}
 
 
 def test_build_command_signature_enum_result():
-    """A bare Enum command result should be typed as StrictEnum."""
+    """A bare Enum command result should be typed as a dynamically built
+    StrictEnum subclass carrying the real SECoP member names."""
     from frappy.datatypes import CommandType, EnumType
     from ophyd_async.core import StrictEnum
 
@@ -168,13 +173,15 @@ def test_build_command_signature_enum_result():
     cmd_datatype = CommandType(argument=None, result=EnumType(OFF=0, ON=1))
     sig = build_command_signature(cmd_datatype)
 
-    assert sig.return_annotation is StrictEnum
+    annotation = sig.return_annotation
+    assert issubclass(annotation, StrictEnum)
+    assert {m.name for m in annotation} == {"OFF", "ON"}
 
 
 def test_build_command_signature_enum_struct_member():
     """An Enum member nested in a StructOf command argument should also be
-    typed as StrictEnum (mirrors the original bug report: a 'preset' member
-    inside a struct argument)."""
+    typed as a dynamically built StrictEnum subclass (mirrors the original
+    bug report: a 'preset' member inside a struct argument)."""
     from frappy.datatypes import CommandType, EnumType, IntRange
     from ophyd_async.core import StrictEnum
 
@@ -186,7 +193,9 @@ def test_build_command_signature_enum_struct_member():
     )
     sig = build_command_signature(cmd_datatype)
 
-    assert sig.parameters["preset"].annotation is StrictEnum
+    preset_annotation = sig.parameters["preset"].annotation
+    assert issubclass(preset_annotation, StrictEnum)
+    assert {m.name for m in preset_annotation} == {"PRESET_01", "PRESET_02"}
     assert sig.parameters["other"].annotation is int
 
 

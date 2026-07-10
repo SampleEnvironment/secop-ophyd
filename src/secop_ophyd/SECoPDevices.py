@@ -79,28 +79,6 @@ def clean_identifier(anystring):
     return str(re.sub(r"\W+|^(?=\d)", "_", anystring))
 
 
-def secop_enum_name_to_python(member_name: str) -> str:
-    """Convert SECoP enum member name to Python identifier.
-
-    Examples:
-        'Low Energy' -> 'LOW_ENERGY'
-        'high-power' -> 'HIGH_POWER'
-        'Mode 1' -> 'MODE_1'
-
-    :param member_name: Original SECoP enum member name
-    :return: Python-compatible identifier in UPPER_CASE
-    """
-    # Replace spaces and hyphens with underscores, remove other special chars
-    cleaned = re.sub(r"[\s-]+", "_", member_name)
-    cleaned = re.sub(r"[^a-zA-Z0-9_]", "", cleaned)
-    # Convert to uppercase
-    cleaned = cleaned.upper()
-    # Ensure it doesn't start with a digit
-    if cleaned and cleaned[0].isdigit():
-        cleaned = "_" + cleaned
-    return cleaned
-
-
 def format_assigned(device: StandardReadable, signal: SignalR) -> bool:
     if (
         signal.describe in device._describe_funcs

@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import copy
 import inspect
+import re
 import time
 import warnings
 from abc import ABC, abstractmethod
 from functools import reduce
 from itertools import chain
-from typing import Any, List, Union
+from typing import Any, List, Union, cast
 
 import numpy as np
 from bluesky.protocols import Reading
@@ -738,6 +739,28 @@ class SECoPdtype:
             self.shape = dt[2]
 
 
+def secop_enum_name_to_python(member_name: str) -> str:
+    """Convert SECoP enum member name to Python identifier.
+
+    Examples:
+        'Low Energy' -> 'LOW_ENERGY'
+        'high-power' -> 'HIGH_POWER'
+        'Mode 1' -> 'MODE_1'
+
+    :param member_name: Original SECoP enum member name
+    :return: Python-compatible identifier in UPPER_CASE
+    """
+    # Replace spaces and hyphens with underscores, remove other special chars
+    cleaned = re.sub(r"[\s-]+", "_", member_name)
+    cleaned = re.sub(r"[^a-zA-Z0-9_]", "", cleaned)
+    # Convert to uppercase
+    cleaned = cleaned.upper()
+    # Ensure it doesn't start with a digit
+    if cleaned and cleaned[0].isdigit():
+        cleaned = "_" + cleaned
+    return cleaned
+
+
 # Maps a SECoP command argument/result datatype to the plain python type used
 # for both the runtime bluesky-plan-method signature and the generated
 # Command[[ArgT], ResT] annotation (as opposed to SECoPdtype.np_datatype, which
@@ -759,6 +782,25 @@ COMMAND_DTYPE_MAPPING: dict[type[DataType], type] = {
 def command_dtype_to_python_type(datatype: DataType) -> type:
     """Map a SECoP command argument/result datatype to a plain python type."""
     return COMMAND_DTYPE_MAPPING[datatype.__class__]
+
+
+def _dynamic_enum_class(enum_dt: EnumType, context_name: str) -> type[StrictEnum]:
+    """Dynamically build a StrictEnum subclass with the real SECoP member
+    names/values, for a command signature annotation built at pure-runtime
+    introspection (no codegen involved, so no generated source file to name
+    a concrete class in) -- gives `build_command_signature()` a real,
+    member-carrying enum instead of the generic `StrictEnum` base class,
+    using Python's functional Enum API rather than generated source text.
+    """
+    members = enum_dt.export_datatype().get("members", {})
+    class_name = f"{context_name.capitalize()}Enum"
+    # mypy doesn't recognize the functional Enum API on a custom StrEnum
+    # subclass with its own metaclass; this is exercised at runtime in
+    # tests/test_classgen.py.
+    enum_cls = StrictEnum(  # type: ignore[call-arg]
+        class_name, {secop_enum_name_to_python(name): name for name in members}
+    )
+    return cast("type[StrictEnum]", enum_cls)
 
 
 def python_type_to_str(python_type: Any) -> str:
@@ -795,11 +837,16 @@ def build_command_signature(cmd_datatype: CommandType) -> inspect.Signature:
 
     if isinstance(arg_dt, StructOf):
         for member_name, member_dtype in arg_dt.members.items():
+            annotation = (
+                _dynamic_enum_class(member_dtype, member_name)
+                if isinstance(member_dtype, EnumType)
+                else command_dtype_to_python_type(member_dtype)
+            )
             params.append(
                 inspect.Parameter(
                     member_name,
                     inspect.Parameter.KEYWORD_ONLY,
-                    annotation=command_dtype_to_python_type(member_dtype),
+                    annotation=annotation,
                     default=(
                         None
                         if member_name in arg_dt.optional
@@ -808,11 +855,16 @@ def build_command_signature(cmd_datatype: CommandType) -> inspect.Signature:
                 )
             )
     elif arg_dt is not None:
+        annotation = (
+            _dynamic_enum_class(arg_dt, "arg")
+            if isinstance(arg_dt, EnumType)
+            else command_dtype_to_python_type(arg_dt)
+        )
         params.append(
             inspect.Parameter(
                 "arg",
                 inspect.Parameter.POSITIONAL_OR_KEYWORD,
-                annotation=command_dtype_to_python_type(arg_dt),
+                annotation=annotation,
             )
         )
 
@@ -827,11 +879,14 @@ def build_command_signature(cmd_datatype: CommandType) -> inspect.Signature:
         )
     )
 
-    return_annotation = (
-        command_dtype_to_python_type(cmd_datatype.result)
-        if cmd_datatype.result is not None
-        else None
-    )
+    res_dt = cmd_datatype.result
+    return_annotation: type | None
+    if isinstance(res_dt, EnumType):
+        return_annotation = _dynamic_enum_class(res_dt, "result")
+    else:
+        return_annotation = (
+            command_dtype_to_python_type(res_dt) if res_dt is not None else None
+        )
     return inspect.Signature(params, return_annotation=return_annotation)
 
 
