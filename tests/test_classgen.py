@@ -880,9 +880,6 @@ async def test_gen_real_node(
     generated_code = gen_file.read_text()
 
     # ===== Assertions for generated commands =====
-    # The command is represented by both its Command/TriggerableCommand class
-    # annotation and a generated `<command>_plan` bluesky-plan wrapper method
-    # (suffixed so it doesn't collide with the Command attribute itself).
     assert (
         "def test_cmd(" not in generated_code
     ), "no bare test_cmd method should shadow the Command attribute"
@@ -894,18 +891,6 @@ async def test_gen_real_node(
     assert (
         "test_cmd: Command[[dict[str, Any]], int]" in generated_code
     ), "test_cmd annotation should be generated"
-
-    # generated plan method should decompose the struct argument into real
-    # keyword parameters/call args (matching the actual execute() calling
-    # convention, not the flat Command[[dict[str, Any]], ...] annotation)
-    assert (
-        "def test_cmd_plan(self, *, name: str, id: int, sort: bool, "
-        "wait_for_idle: bool = False) -> int:" in generated_code
-    ), "test_cmd_plan should be generated with a decomposed struct signature"
-    assert (
-        "status = self.test_cmd.execute(name=name, id=id, sort=sort, "
-        "wait_for_idle=wait_for_idle)" in generated_code
-    ), "test_cmd_plan should call execute() with real keyword arguments"
 
     # ===== Assertions for generated enum classes =====
     # Enum classes should be generated for enum parameters
@@ -1027,12 +1012,6 @@ def test_gen_shall_mass_spec_node(
     assert "go: TriggerableCommand" in generated_code
     assert "stop: TriggerableCommand" not in generated_code
 
-    # generated plan method for a no-arg/no-result command calls .trigger(),
-    # not .execute(), and has no wait_for_idle param (TriggerableCommand's
-    # trigger() doesn't accept one)
-    assert "def go_plan(self):" in generated_code
-    assert "status = self.go.trigger()" in generated_code
-
     # Reparse generated code and verify multiline comments survive round-trip generation
     roundtrip_gen = GenNodeCode(path=str(clean_generated_file))
     roundtrip_code = roundtrip_gen.generate_code()
@@ -1114,80 +1093,3 @@ def test_gen_command_with_enum_argument_and_result(clean_generated_file):
         "set_mode: Command[[Enummod_SetMode_Arg_Enum], Enummod_SetMode_Result_Enum]"
         in generated_code
     )
-
-    # generated plan method should use the same concrete enum classes
-    assert (
-        "def set_mode_plan(self, arg: Enummod_SetMode_Arg_Enum, "
-        "wait_for_idle: bool = False) -> Enummod_SetMode_Result_Enum:" in generated_code
-    )
-    assert (
-        "status = self.set_mode.execute(arg, wait_for_idle=wait_for_idle)"
-        in generated_code
-    )
-
-
-def test_gen_command_with_struct_enum_member_survives_regeneration(
-    clean_generated_file,
-):
-    """Regression test: regenerating a class file a second time (e.g. a user
-    re-running class_from_instance() against the same node/path) must not
-    corrupt a `<command>_plan` method whose signature contains a non-builtin
-    annotation (e.g. a struct member typed as the generic StrictEnum, since
-    struct members don't get a named enum class at codegen time). Previously,
-    round-trip parsing reconstructed such methods via
-    `str(inspect.signature(method))`, which renders non-builtin annotations
-    as a fully-qualified dotted path (e.g. "ophyd_async.core._utils.StrictEnum")
-    that isn't an importable name in the regenerated file, breaking the
-    `reload()` call in `write_gen_node_class_file()` with a NameError."""
-
-    describe_data = {
-        "equipment_id": "struct_enum_cmd.test.demo",
-        "description": "node for testing struct+enum command regeneration",
-        "modules": {
-            "mfcgroup": {
-                "description": "module for testing struct+enum command regeneration",
-                "interface_classes": ["Readable"],
-                "accessibles": {
-                    "value": {
-                        "datainfo": {"type": "double"},
-                        "description": "the value",
-                        "readonly": True,
-                    },
-                    "add_preset": {
-                        "datainfo": {
-                            "type": "command",
-                            "argument": {
-                                "type": "struct",
-                                "members": {
-                                    "preset": {
-                                        "type": "enum",
-                                        "members": {"preset_01": 1, "preset_02": 2},
-                                    },
-                                    "name": {"type": "string"},
-                                },
-                            },
-                            "result": None,
-                        },
-                        "description": "sets the preset to the given values",
-                    },
-                },
-            },
-        },
-    }
-
-    # First generation, matching class_from_instance()'s
-    # from_json_describe() + write_gen_node_class_file() sequence.
-    gen_code = GenNodeCode(path=str(clean_generated_file))
-    gen_code.from_json_describe(describe_data)
-    gen_code.write_gen_node_class_file()
-
-    # Second generation against a *new* GenNodeCode instance, matching a
-    # second class_from_instance() call: this constructor loads and parses
-    # the file just written above.
-    regen_code = GenNodeCode(path=str(clean_generated_file))
-    regen_code.from_json_describe(describe_data)
-    regen_code.write_gen_node_class_file()  # must not raise NameError on reload()
-
-    generated_code = (clean_generated_file / "genNodeClass.py").read_text()
-    assert "def add_preset_plan(" in generated_code
-    assert "ophyd_async.core._utils.StrictEnum" not in generated_code

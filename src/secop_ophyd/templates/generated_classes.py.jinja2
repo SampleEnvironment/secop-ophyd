@@ -82,17 +82,6 @@ class {{ module_cls.name }}({{ module_cls.bases | join(', ') }}):
 {%- endif %}
 {%- endfor %}
 {%- endif %}
-{%- if module_cls.command_plans %}
-
-    # SECoP Commands wrapped as Bluesky Plans:
-{%- for plan in module_cls.command_plans %}
-    def {{ plan.name }}{{ plan.signature }}:
-        """{{ plan.description }}"""
-
-{{ plan.body }}
-
-{%- endfor %}
-{%- endif %}
 {%- if module_cls.methods %}
 
     # SECoP Commands wrapped as Bluesky Plans:

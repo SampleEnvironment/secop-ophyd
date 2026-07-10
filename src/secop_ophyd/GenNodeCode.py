@@ -16,12 +16,12 @@ from inspect import Signature
 from logging import Logger
 from pathlib import Path
 from types import ModuleType
-from typing import Any, get_args, get_type_hints
+from typing import get_args, get_type_hints
 
 import autoflake
 import black
 from frappy.client import get_datatype
-from frappy.datatypes import CommandType, DataType, EnumType, StructOf
+from frappy.datatypes import CommandType, DataType, EnumType
 from jinja2 import Environment, PackageLoader, select_autoescape
 from ophyd_async.core import Command, Signal, SignalR, SignalRW, StandardReadable
 from ophyd_async.core import StandardReadableFormat as Format
@@ -141,28 +141,6 @@ class CommandAttribute:
     description: str | None = None
 
 
-@dataclass
-class CommandPlanMethod:
-    """A bound bluesky-plan wrapper method generated for a SECoP command,
-    e.g. `def set_mode_plan(self, arg: Cryostat_SetMode_Arg_Enum,
-    wait_for_idle: bool = False) -> Cryostat_SetMode_Result_Enum:`, calling
-    the sibling `Command`/`TriggerableCommand` attribute's `execute()`/
-    `trigger()` directly -- no runtime patching needed.
-
-    `signature`/`body` are pre-rendered source-text fragments (not real
-    `inspect.Signature` objects) since at codegen time there is no live
-    connected device to introspect -- only the type-name strings already
-    computed for the sibling `CommandAttribute.arg_type`/`return_type`.
-    """
-
-    name: str  # e.g. "set_mode_plan"
-    # e.g. "(self, arg: Cryostat_SetMode_Arg_Enum, wait_for_idle: bool = False)
-    # -> Cryostat_SetMode_Result_Enum"
-    signature: str
-    body: str  # pre-indented (8-space) multi-line statement block
-    description: str | None = None
-
-
 class Method:
     """Represents a class method with signature and description.
 
@@ -203,7 +181,6 @@ class ModuleClass:
     commands: list[CommandAttribute] = field(default_factory=list)
     description: str = ""
     enums: list[EnumClass] = field(default_factory=list)  # Enum classes for this module
-    command_plans: list[CommandPlanMethod] = field(default_factory=list)
 
 
 @dataclass
@@ -251,7 +228,6 @@ class GenNodeCode:
         self.comment_wrap_width: int = 100
 
         # Required imports for generated classes
-        self.add_import("bluesky", "plan_stubs as bps")
         self.add_import("typing", "Annotated as A")
         self.add_import("ophyd_async.core", "SignalR")
         self.add_import("ophyd_async.core", "SignalRW")
@@ -623,26 +599,9 @@ class GenNodeCode:
 
         parameters, properties, _, commands = self._get_attr_list(class_obj)
 
-        # Generated `<command>_plan` methods are fully derived from `commands`
-        # (already correctly round-tripped above) and must be reconstructed
-        # via their exact original source text (see
-        # `_parse_command_plan_method`), not via the generic method-scanning
-        # below: `inspect.signature()` resolves annotations to live runtime
-        # objects and re-stringifies them with a fully-qualified dotted path
-        # (e.g. "ophyd_async.core._utils.StrictEnum"), which is not
-        # necessarily an importable name in the regenerated file and breaks
-        # on the next `reload()`.
-        plan_method_names = {f"{cmd.name}_plan" for cmd in commands}
-
         methods = []
-        command_plans: list[CommandPlanMethod] = []
         for method_name, method in class_obj.__dict__.items():
             if not callable(method) or method_name.startswith("__"):
-                continue
-            if method_name in plan_method_names:
-                plan = self._parse_command_plan_method(method)
-                if plan is not None:
-                    command_plans.append(plan)
                 continue
             method_source = inspect.getsource(method)
             description = self._extract_method_description(method_source)
@@ -669,75 +628,10 @@ class GenNodeCode:
             properties=properties,
             methods=methods,
             commands=commands,
-            command_plans=command_plans,
             description=description,
             enums=mod_enums,
         )
         self.module_classes.append(mod_cls)
-
-    def _parse_command_plan_method(self, method: Any) -> "CommandPlanMethod | None":
-        """Reconstruct a CommandPlanMethod from an already-generated
-        `<command>_plan` method by extracting its exact original source text
-        (via `ast`), rather than `inspect.signature()` -- which resolves
-        annotations to the live, imported runtime objects and re-stringifies
-        them with their fully-qualified dotted path, breaking round-trip
-        regeneration whenever the annotation isn't a builtin (e.g. a
-        generated enum class)."""
-        try:
-            source = inspect.getsource(method)
-        except (OSError, TypeError):
-            return None
-
-        dedented = textwrap.dedent(source)
-        try:
-            tree = ast.parse(dedented)
-        except SyntaxError:
-            return None
-
-        if not tree.body or not isinstance(tree.body[0], ast.FunctionDef):
-            return None
-
-        func_node = tree.body[0]
-
-        args_str = ast.unparse(func_node.args)
-        return_str = (
-            f" -> {ast.unparse(func_node.returns)}" if func_node.returns else ""
-        )
-        signature = f"({args_str}){return_str}"
-
-        body_nodes = list(func_node.body)
-        description = ""
-        if (
-            body_nodes
-            and isinstance(body_nodes[0], ast.Expr)
-            and isinstance(body_nodes[0].value, ast.Constant)
-            and isinstance(body_nodes[0].value.value, str)
-        ):
-            description = body_nodes[0].value.value
-            body_nodes = body_nodes[1:]
-
-        dedented_lines = dedented.splitlines()
-        if body_nodes:
-            start = body_nodes[0].lineno - 1
-            end = body_nodes[-1].end_lineno
-            # dedented_lines still carry whatever residual indent the method
-            # body had relative to its `def` line (e.g. 4 spaces) -- strip
-            # that too before applying the fixed 8-space class-method-body
-            # indent below, or lines end up over-indented.
-            body_lines = textwrap.dedent(
-                "\n".join(dedented_lines[start:end])
-            ).splitlines()
-        else:
-            body_lines = ["pass"]
-
-        body = "\n".join(f"        {line}" for line in body_lines)
-
-        return CommandPlanMethod(
-            name=method.__name__,
-            signature=signature,
-            body=body,
-            description=description,
-        )
 
     def _extract_method_description(self, method_source: str) -> str:
         """Extract description from method docstring.
@@ -788,7 +682,6 @@ class GenNodeCode:
         description: str = "",
         enum_classes: list[EnumClass] | None = None,
         commands: list[CommandAttribute] | None = None,
-        command_plans: list[CommandPlanMethod] | None = None,
     ):
         """Add a module class to be generated.
 
@@ -800,7 +693,6 @@ class GenNodeCode:
             cmd_plans: List of method definitions
             description: Optional class description
             commands: List of command annotations (Command/TriggerableCommand)
-            command_plans: List of generated bluesky-plan wrapper methods for commands
         """
         # Check if class already exists (loaded from file)
         existing_class = next(
@@ -824,7 +716,6 @@ class GenNodeCode:
             properties=properties,
             methods=cmd_plans,
             commands=commands or [],
-            command_plans=command_plans or [],
             description=description,
             enums=enum_classes or [],
         )
@@ -952,7 +843,6 @@ class GenNodeCode:
             # Module Commands
             command_plans: list[Method] = []
             mod_commands: list[CommandAttribute] = []
-            mod_command_plans: list[CommandPlanMethod] = []
 
             for command, command_data in commands.items():
                 # "stop" is skipped: SECoPMoveableDevice already implements
@@ -1014,49 +904,6 @@ class GenNodeCode:
                         ),
                         arg_type=arg_type,
                         return_type=return_type,
-                        description=description,
-                    )
-                )
-
-                # Generated bluesky-plan wrapper method (`<command>_plan`),
-                # calling the sibling Command/TriggerableCommand attribute's
-                # execute()/trigger() directly -- suffixed to avoid colliding
-                # with the attribute name itself.
-                plan_params: list[str] = []
-                call_args: list[str] = []
-
-                if isinstance(arg_dt, StructOf):
-                    plan_params.append("*")
-                    for member_name, member_dtype in arg_dt.members.items():
-                        member_type_str = command_dtype_to_annotation_str(member_dtype)
-                        default = " = None" if member_name in arg_dt.optional else ""
-                        plan_params.append(f"{member_name}: {member_type_str}{default}")
-                        call_args.append(f"{member_name}={member_name}")
-                elif arg_dt is not None:
-                    plan_params.append(f"arg: {arg_type}")
-                    call_args.append("arg")
-
-                if not is_triggerable:
-                    plan_params.append("wait_for_idle: bool = False")
-                    call_args.append("wait_for_idle=wait_for_idle")
-
-                sig_str = "(" + ", ".join(["self", *plan_params]) + ")"
-                if return_type:
-                    sig_str += f" -> {return_type}"
-
-                call_target = "trigger" if is_triggerable else "execute"
-                body_lines = [
-                    f"status = self.{command}.{call_target}({', '.join(call_args)})",
-                    "yield from bps.wait_for([lambda: status])",
-                    "return status.result",
-                ]
-                body_str = "\n".join(f"        {line}" for line in body_lines)
-
-                mod_command_plans.append(
-                    CommandPlanMethod(
-                        name=f"{command}_plan",
-                        signature=sig_str,
-                        body=body_str,
                         description=description,
                     )
                 )
@@ -1172,7 +1019,6 @@ class GenNodeCode:
                 description=properties.get("description", ""),
                 enum_classes=module_enum_classes,
                 commands=mod_commands,
-                command_plans=mod_command_plans,
             )
 
             # Add to node attributes
