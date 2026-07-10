@@ -21,7 +21,7 @@ from typing import get_args, get_type_hints
 import autoflake
 import black
 from frappy.client import get_datatype
-from frappy.datatypes import CommandType, DataType
+from frappy.datatypes import CommandType, DataType, EnumType
 from jinja2 import Environment, PackageLoader, select_autoescape
 from ophyd_async.core import Command, Signal, SignalR, SignalRW, StandardReadable
 from ophyd_async.core import StandardReadableFormat as Format
@@ -67,6 +67,25 @@ class EnumClass:
     members: list[EnumMember]
     description: str | None = None  # Optional enum description
     base_enum_class: str = "StrictEnum"  # "StrictEnum" or "SupersetEnum"
+
+
+def _build_enum_class(
+    enum_class_name: str, members_dict: dict, description: str
+) -> "EnumClass | None":
+    """Build an EnumClass from a SECoP enum members dict ({name: value}),
+    shared by the parameter and command enum-detection code paths.
+    Returns None if there are no members."""
+    if not members_dict:
+        return None
+
+    enum_members = [
+        EnumMember(name=secop_enum_name_to_python(member_name), value=member_name)
+        for member_name in members_dict
+    ]
+
+    return EnumClass(
+        name=enum_class_name, members=enum_members, description=description
+    )
 
 
 @dataclass
@@ -841,6 +860,41 @@ class GenNodeCode:
                 cmd_datatype: CommandType = command_data["datatype"]
                 arg_dt, res_dt = cmd_datatype.argument, cmd_datatype.result
 
+                command_name_list = (
+                    command.replace(" ", "_").replace("-", "_").split("_")
+                )
+                command_camel = "".join(word.capitalize() for word in command_name_list)
+
+                arg_type = (
+                    command_dtype_to_annotation_str(arg_dt)
+                    if arg_dt is not None
+                    else None
+                )
+                if isinstance(arg_dt, EnumType):
+                    enum_cls = _build_enum_class(
+                        f"{module_class}_{command_camel}_Arg_Enum",
+                        arg_dt.export_datatype().get("members", {}),
+                        f"{command} argument enum for `{module_class}`.",
+                    )
+                    if enum_cls:
+                        module_enum_classes.append(enum_cls)
+                        arg_type = enum_cls.name
+
+                return_type = (
+                    command_dtype_to_annotation_str(res_dt)
+                    if res_dt is not None
+                    else None
+                )
+                if isinstance(res_dt, EnumType):
+                    enum_cls = _build_enum_class(
+                        f"{module_class}_{command_camel}_Result_Enum",
+                        res_dt.export_datatype().get("members", {}),
+                        f"{command} result enum for `{module_class}`.",
+                    )
+                    if enum_cls:
+                        module_enum_classes.append(enum_cls)
+                        return_type = enum_cls.name
+
                 mod_commands.append(
                     CommandAttribute(
                         name=command,
@@ -849,16 +903,8 @@ class GenNodeCode:
                             if arg_dt is None and res_dt is None
                             else "Command"
                         ),
-                        arg_type=(
-                            command_dtype_to_annotation_str(arg_dt)
-                            if arg_dt is not None
-                            else None
-                        ),
-                        return_type=(
-                            command_dtype_to_annotation_str(res_dt)
-                            if res_dt is not None
-                            else None
-                        ),
+                        arg_type=arg_type,
+                        return_type=return_type,
                         description=self._normalize_description(
                             command_data.get("description", "")
                         ),
@@ -922,32 +968,12 @@ class GenNodeCode:
 
                     enum_class_name = f"{module_class}_{param_name_camel}_Enum"
 
-                    # Extract enum members from datainfo
-                    enum_members_dict = datainfo.get("members", {})
-                    if enum_members_dict:
-                        from secop_ophyd.GenNodeCode import EnumClass, EnumMember
-
-                        enum_members = []
-                        for member_value, _ in enum_members_dict.items():
-                            # Convert member name to Python identifier
-                            python_name = secop_enum_name_to_python(member_value)
-                            enum_members.append(
-                                EnumMember(
-                                    name=python_name,
-                                    value=member_value,
-                                    description=None,
-                                )
-                            )
-
-                        # Create enum class definition
-                        enum_descr = f"{param_name} enum for `{module_class}`."
-
-                        enum_cls = EnumClass(
-                            name=enum_class_name,
-                            members=enum_members,
-                            description=enum_descr,
-                        )
-
+                    enum_cls = _build_enum_class(
+                        enum_class_name,
+                        datainfo.get("members", {}),
+                        f"{param_name} enum for `{module_class}`.",
+                    )
+                    if enum_cls:
                         module_enum_classes.append(enum_cls)
 
                         # Use the specific enum class name instead of generic

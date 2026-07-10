@@ -143,6 +143,53 @@ def test_build_command_signature_unravels_struct_argument():
     )
 
 
+def test_build_command_signature_enum_argument():
+    """A bare Enum command argument should be typed as StrictEnum (frappy's
+    own tolerant EnumType.validate() still accepts ints or member names at
+    call time; this annotation is purely informational)."""
+    from frappy.datatypes import CommandType, EnumType
+    from ophyd_async.core import StrictEnum
+
+    from secop_ophyd.util import build_command_signature
+
+    cmd_datatype = CommandType(argument=EnumType(LOW=0, HIGH=1), result=None)
+    sig = build_command_signature(cmd_datatype)
+
+    assert sig.parameters["arg"].annotation is StrictEnum
+
+
+def test_build_command_signature_enum_result():
+    """A bare Enum command result should be typed as StrictEnum."""
+    from frappy.datatypes import CommandType, EnumType
+    from ophyd_async.core import StrictEnum
+
+    from secop_ophyd.util import build_command_signature
+
+    cmd_datatype = CommandType(argument=None, result=EnumType(OFF=0, ON=1))
+    sig = build_command_signature(cmd_datatype)
+
+    assert sig.return_annotation is StrictEnum
+
+
+def test_build_command_signature_enum_struct_member():
+    """An Enum member nested in a StructOf command argument should also be
+    typed as StrictEnum (mirrors the original bug report: a 'preset' member
+    inside a struct argument)."""
+    from frappy.datatypes import CommandType, EnumType, IntRange
+    from ophyd_async.core import StrictEnum
+
+    from secop_ophyd.util import build_command_signature
+
+    cmd_datatype = CommandType(
+        argument=StructOf(preset=EnumType(preset_01=1, preset_02=2), other=IntRange()),
+        result=None,
+    )
+    sig = build_command_signature(cmd_datatype)
+
+    assert sig.parameters["preset"].annotation is StrictEnum
+    assert sig.parameters["other"].annotation is int
+
+
 def test_basic_functionality(clean_generated_file):
     """Test basic GenNodeCode functionality."""
     print("Testing GenNodeCode refactored implementation...")
@@ -813,3 +860,59 @@ def test_gen_shall_mass_spec_node_no_impl(
     gen_code.from_json_describe(mass_spectrometer_description_no_impl)
 
     gen_code.write_gen_node_class_file()
+
+
+def test_gen_command_with_enum_argument_and_result(clean_generated_file):
+    """A command with a bare Enum argument and a bare Enum result should each
+    get their own concrete named StrictEnum class generated and substituted
+    into the Command[[...], ...] annotation."""
+
+    describe_data = {
+        "equipment_id": "enum_cmd.test.demo",
+        "description": "node for testing command enum codegen",
+        "modules": {
+            "enummod": {
+                "description": "module for testing command enum codegen",
+                "interface_classes": ["Readable"],
+                "accessibles": {
+                    "value": {
+                        "datainfo": {"type": "double"},
+                        "description": "the value",
+                        "readonly": True,
+                    },
+                    "set_mode": {
+                        "datainfo": {
+                            "type": "command",
+                            "argument": {
+                                "type": "enum",
+                                "members": {"ramp": 0, "pid": 1},
+                            },
+                            "result": {
+                                "type": "enum",
+                                "members": {"ok": 0, "fail": 1},
+                            },
+                        },
+                        "description": "set the mode",
+                    },
+                },
+            },
+        },
+    }
+
+    gen_code = GenNodeCode(path=str(clean_generated_file))
+    gen_code.from_json_describe(describe_data)
+
+    generated_code = gen_code.generate_code()
+
+    assert "class Enummod_SetMode_Arg_Enum(StrictEnum):" in generated_code
+    assert 'RAMP = "ramp"' in generated_code
+    assert 'PID = "pid"' in generated_code
+
+    assert "class Enummod_SetMode_Result_Enum(StrictEnum):" in generated_code
+    assert 'OK = "ok"' in generated_code
+    assert 'FAIL = "fail"' in generated_code
+
+    assert (
+        "set_mode: Command[[Enummod_SetMode_Arg_Enum], Enummod_SetMode_Result_Enum]"
+        in generated_code
+    )

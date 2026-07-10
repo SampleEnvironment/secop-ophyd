@@ -748,7 +748,7 @@ COMMAND_DTYPE_MAPPING: dict[type[DataType], type] = {
     TupleOf: tuple[Any],
     BLOBType: str,
     BoolType: bool,
-    EnumType: int,
+    EnumType: StrictEnum,
     FloatRange: float,
     IntRange: int,
     ScaledInteger: int,
