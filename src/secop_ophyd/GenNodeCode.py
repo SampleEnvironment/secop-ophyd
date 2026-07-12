@@ -21,7 +21,7 @@ from typing import get_args, get_type_hints
 import autoflake
 import black
 from frappy.client import get_datatype
-from frappy.datatypes import CommandType, DataType, EnumType
+from frappy.datatypes import CommandType, DataType, EnumType, StructOf
 from jinja2 import Environment, PackageLoader, select_autoescape
 from ophyd_async.core import Command, Signal, SignalR, SignalRW, StandardReadable
 from ophyd_async.core import StandardReadableFormat as Format
@@ -37,6 +37,7 @@ from secop_ophyd.SECoPDevices import (
 from secop_ophyd.SECoPSignal import secop_dtype_obj_from_json
 from secop_ophyd.util import (
     SECoPdtype,
+    build_command_signature,
     command_dtype_to_annotation_str,
     python_type_to_str,
     secop_enum_name_to_python,
@@ -139,6 +140,11 @@ class CommandAttribute:
     arg_type: str | None = None  # e.g. "dict[str, Any]"; None means no argument
     return_type: str | None = None  # e.g. "int"; None means no result
     description: str | None = None
+    # Human-readable call signature, e.g. "execute(*, preset: PresetEnum, ...) -> None",
+    # rendered as an attribute docstring so IDEs can show it on hover -- the
+    # Command[[ArgT], ResT] annotation itself can't express per-field keyword
+    # arguments for struct commands (ParamSpec only encodes a positional type list).
+    call_signature: str | None = None
 
 
 class Method:
@@ -399,7 +405,7 @@ class GenNodeCode:
                     comment_text
                 )
 
-            for node in class_node.body:
+            for idx, node in enumerate(class_node.body):
                 if not isinstance(node, ast.AnnAssign):
                     continue
 
@@ -424,6 +430,21 @@ class GenNodeCode:
                     next_line_no += 1
 
                 description = "\n".join(description_lines).rstrip()
+
+                # Commands are documented with a trailing attribute docstring
+                # (not a comment) so the description and the unravelled call
+                # signature show up on IDE hover; extract the description
+                # portion back out of it (everything before the appended
+                # "Call as: ..." line) so it survives round-trip regeneration.
+                if not description and idx + 1 < len(class_node.body):
+                    next_node = class_node.body[idx + 1]
+                    if (
+                        isinstance(next_node, ast.Expr)
+                        and isinstance(next_node.value, ast.Constant)
+                        and isinstance(next_node.value.value, str)
+                    ):
+                        description = next_node.value.value.split("Call as:")[0].strip()
+
                 if description:
                     descriptions[attr_name] = description
         except Exception as e:
@@ -896,6 +917,28 @@ class GenNodeCode:
                     command_data.get("description", "")
                 )
 
+                # Struct args unravel into one keyword-only parameter per member --
+                # a shape the Command[[ArgT], ResT] annotation above can't express,
+                # so spell it out here. build_command_signature() is the same
+                # function used to build the real runtime signature, so the
+                # rendered text matches `.signature` exactly (including the
+                # dynamically-named member enum classes, e.g. PresetEnum).
+                # For a bare (non-struct) arg/result, the already-resolved
+                # arg_type/return_type (which reuse the concrete generated enum
+                # class name, unlike a fresh build_command_signature() call) are
+                # used directly instead.
+                call_signature: str | None = None
+                if not is_triggerable:
+                    if isinstance(arg_dt, StructOf):
+                        sig = build_command_signature(cmd_datatype)
+                        call_signature = "execute" + str(sig).replace("typing.", "")
+                    else:
+                        arg_part = f"arg: {arg_type}, " if arg_type else ""
+                        call_signature = (
+                            f"execute({arg_part}wait_for_idle: bool = False) -> "
+                            f"{return_type or 'None'}"
+                        )
+
                 mod_commands.append(
                     CommandAttribute(
                         name=command,
@@ -905,6 +948,7 @@ class GenNodeCode:
                         arg_type=arg_type,
                         return_type=return_type,
                         description=description,
+                        call_signature=call_signature,
                     )
                 )
 
