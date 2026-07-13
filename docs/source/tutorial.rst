@@ -96,14 +96,17 @@ Generate class files with:
     gas_dosing_introspected.class_from_instance()
     reactor_cell_introspected.class_from_instance()
 
-This creates ``genNodeClass.py`` in your current working directory. You can specify a custom path:
+This writes one file per SEC node into ``.secop_ophyd_devs/`` in your current working
+directory, e.g. ``Gas_dosing.py`` and ``Reactor_cell.py``, named after the generated node
+class. Regenerating always fully overwrites that node's file. You can specify a custom
+output directory:
 
 .. code-block:: python
 
     gas_dosing_introspected.class_from_instance('/path/to/output/directory')
 
 
-The generated class file contains declarative device definitions that match the
+Each generated class file contains declarative device definitions that match the
  structure of the SECoP node. Signals are annotated with their types,
  and commands are exposed as method stubs that get overwritten on ``.connect()``.
 
@@ -121,7 +124,11 @@ Import the generated classes and instantiate your devices from the generated cla
 
 .. code-block:: python
 
-    from genNodeClass import Gas_dosing, Reactor_cell
+    import sys
+    sys.path.insert(0, ".secop_ophyd_devs")
+
+    from Gas_dosing import Gas_dosing
+    from Reactor_cell import Reactor_cell
 
     # once the class files are generated, instantiate your devices using the generated classes
     with init_devices():
@@ -177,7 +184,7 @@ they're exposed as instance methods that return Bluesky plans.
 Understanding Command Signatures
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Commands can have arguments and return values. From the generated ``genNodeClass.py``,
+Commands can have arguments and return values. From the generated node class file,
 you can see the signature:
 
 .. code-block:: python

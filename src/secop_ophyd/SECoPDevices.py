@@ -612,11 +612,14 @@ class SECoPNodeDevice(SECoPDevice):
         pass
 
     def class_from_instance(self, path_to_module: str | None = None):
+        """Generate an annotated device class for this SEC node and write it
+        to its own file, named after the generated node class, inside
+        ``path_to_module`` (default: ``./.secop_ophyd_devs/``). Any existing
+        file of that name is overwritten."""
         from secop_ophyd.GenNodeCode import GenNodeCode
 
         description = self._client.client.request("describe")[2]
 
-        # parse genClass file if already present
         genCode = GenNodeCode(path=path_to_module, log=self._logger)
 
         genCode.from_json_describe(description)

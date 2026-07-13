@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 from frappy.datatypes import StructOf
-from ophyd_async.core import Command, SignalR, TriggerableCommand, init_devices
+from ophyd_async.core import SignalR, init_devices
 
 from secop_ophyd.GenNodeCode import (
     CommandAttribute,
@@ -21,25 +21,6 @@ from secop_ophyd.SECoPDevices import ParameterType, PropertyType, SECoPNodeDevic
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-
-
-class _DescriptionParseSample:
-    count: int  # count comment
-    label: str = "value # not a comment"
-    # label continuation
-
-    def helper(self):
-        local: int  # must not be parsed  # noqa: F842
-
-
-def test_extract_descriptions_from_source_is_token_safe():
-    """Ensure parser only reads real comments and ignores '#' inside strings."""
-    gen_code = GenNodeCode(log=None)
-    descriptions = gen_code._extract_descriptions_from_source(_DescriptionParseSample)
-
-    assert descriptions["count"] == "count comment"
-    assert descriptions["label"] == "label continuation"
-    assert "local" not in descriptions
 
 
 def test_generated_command_methods_are_concrete(tmp_path: Path):
@@ -99,28 +80,6 @@ def test_generated_command_annotations(tmp_path: Path):
     assert "test_cmd: Command[[dict[str, Any]], int]" in generated_code
     assert "go: TriggerableCommand" in generated_code
     assert "@abstractmethod" not in generated_code
-
-
-def test_get_attr_list_parses_command_annotations():
-    """_get_attr_list should recognize Command/TriggerableCommand annotations
-    when round-trip parsing a previously generated module."""
-
-    class _CommandAnnotationSample:
-        foo: Command[[int], str]
-        bar: TriggerableCommand
-
-    gen_code = GenNodeCode(log=None)
-    _, _, _, commands = gen_code._get_attr_list(_CommandAnnotationSample)
-
-    by_name = {cmd.name: cmd for cmd in commands}
-
-    assert by_name["foo"].command_type == "Command"
-    assert by_name["foo"].arg_type == "int"
-    assert by_name["foo"].return_type == "str"
-
-    assert by_name["bar"].command_type == "TriggerableCommand"
-    assert by_name["bar"].arg_type is None
-    assert by_name["bar"].return_type is None
 
 
 def test_build_command_signature_unravels_struct_argument():
@@ -483,13 +442,15 @@ def test_dataclasses():
 
 
 def test_subsequent_node_generation(clean_generated_file):
-    """Test generating code for two nodes sequentially, appending to the same file.
+    """Test generating code for two different nodes into the same output
+    directory.
 
     Tests that:
-    - First: Generate NodeA with modules Type1 and Type2, write to file
-    - Second: Load existing file, add NodeB with Type1 (shared) and Type3 (new)
-    - Type1 should appear only once in the final file (not duplicated)
-    - All classes (Type1, Type2, Type3, NodeA, NodeB) are in the final file
+    - First: Generate NodeA with modules Type1 and Type2, written to NodeA.py
+    - Second: Generate NodeB with Type1 (same module class name) and Type3,
+      written to NodeB.py
+    - Each node gets its own file, with no cross-file merging or dedup: both
+      files independently contain their own "Type1" class definition
     """
 
     from inspect import signature
@@ -616,13 +577,9 @@ def test_subsequent_node_generation(clean_generated_file):
     assert "modA: Type1" in code1
     assert "modB: Type2" in code1
 
-    # ===== STEP 2: Load existing file and add second node (NodeB) =====
+    # ===== STEP 2: Generate second node (NodeB) into its own file =====
 
     gen_code2 = GenNodeCode(path=str(clean_generated_file), log=None)
-
-    # Add necessary imports again
-    gen_code2.add_import("secop_ophyd.SECoPDevices", "SECoPDevice")
-    gen_code2.add_import("secop_ophyd.SECoPDevices", "SECoPNodeDevice")
 
     # Create method for Type3
     def type3_command(self, count: int) -> int:
@@ -635,7 +592,8 @@ def test_subsequent_node_generation(clean_generated_file):
         cmd_sign=signature(type3_command),
     )
 
-    # Add Type1 again - GenNodeCode should detect it already exists
+    # Add a module class also named "Type1" -- a different GenNodeCode
+    # instance/node, so this must NOT be affected by gen_code1's Type1 at all
     gen_code2.add_mod_class(
         module_cls="Type1",
         bases=["SECoPDevice"],
@@ -721,39 +679,43 @@ def test_subsequent_node_generation(clean_generated_file):
         description="NodeB with Type1 and Type3 modules",
     )
 
-    # Generate and write second node (appends to the file)
+    # Generate and write second node to its own file
     code2 = gen_code2.generate_code()
     gen_code2.write_gen_node_class_file()
 
     # ===== VERIFICATION =====
-    # Verify that Type1 appears only once in the final code
-    type1_count = code2.count("class Type1(SECoPDevice):")
+    # Each node was written to its own file, named after the node class
+    node_a_file = clean_generated_file / "NodeA.py"
+    node_b_file = clean_generated_file / "NodeB.py"
+    assert node_a_file.exists()
+    assert node_b_file.exists()
 
-    assert (
-        type1_count == 1
-    ), f"Type1 should appear exactly once, but appears {type1_count} times"
+    # NodeA's file only has NodeA's classes -- unaffected by NodeB's generation
+    assert "class Type1(SECoPDevice):" in code1
+    assert "class Type2(SECoPDevice):" in code1
+    assert "class NodeA(SECoPNodeDevice):" in code1
+    assert "class Type3(SECoPDevice):" not in code1
+    assert "class NodeB(SECoPNodeDevice):" not in code1
+    assert "def type1_cmd" in code1
+    assert "def type2_cmd" in code1
 
-    # Verify all module classes are present
+    # NodeB's file only has NodeB's classes, including its own independent
+    # "Type1" class definition -- no cross-file merge/dedup
     assert "class Type1(SECoPDevice):" in code2
-    assert "class Type2(SECoPDevice):" in code2
     assert "class Type3(SECoPDevice):" in code2
-
-    # Verify both node classes are present
-    assert "class NodeA(SECoPNodeDevice):" in code2
     assert "class NodeB(SECoPNodeDevice):" in code2
-
-    # Verify all methods are present
+    assert "class Type2(SECoPDevice):" not in code2
+    assert "class NodeA(SECoPNodeDevice):" not in code2
     assert "def type1_cmd" in code2
-    assert "def type2_cmd" in code2
     assert "def type3_cmd" in code2
 
     # Verify section comments are present
     assert "# Module Properties" in code2
     assert "# Module Parameters" in code2
 
-    # Verify that descriptive  comments are preserved in generated code
+    # Verify that descriptive comments are preserved in generated code
     assert "# this is a description" in code2
-    assert "# this has to be in the final output" in code2
+    assert "# this has to be in the final output" in code1
 
 
 async def test_gen_cryo_node(
@@ -763,7 +725,7 @@ async def test_gen_cryo_node(
 
     cryo_node_no_re.class_from_instance(clean_generated_file)
 
-    from tests.testgen.genNodeClass import Cryo_7_frappy_demo  # type: ignore
+    from tests.testgen.Cryo_7_frappy_demo import Cryo_7_frappy_demo  # type: ignore
 
     async with init_devices():
         cryo_gen_code = Cryo_7_frappy_demo(sec_node_uri="localhost:10769")
@@ -797,7 +759,7 @@ async def test_generated_enum_parameter_datatype_is_preserved(
 
     cryo_node_no_re.class_from_instance(clean_generated_file)
 
-    from tests.testgen.genNodeClass import (  # type: ignore
+    from tests.testgen.Cryo_7_frappy_demo import (  # type: ignore
         Cryo_7_frappy_demo,
         Cryostat_Mode_Enum,
     )
@@ -837,7 +799,7 @@ async def test_gen_cryo_status_not_in_cfg(
     assert status_reding.get(stat_name) is not None, "Status signal should be readable"
 
     # Import generated class
-    from tests.testgen.genNodeClass import Cryo_7_frappy_demo  # type: ignore
+    from tests.testgen.Cryo_7_frappy_demo import Cryo_7_frappy_demo  # type: ignore
 
     async with init_devices():
         cryo_gen_code = Cryo_7_frappy_demo(sec_node_uri="localhost:10769")
@@ -874,7 +836,7 @@ async def test_gen_real_node(
     nested_node_no_re.class_from_instance(clean_generated_file)
 
     # Read the generated file and verify its contents
-    gen_file = clean_generated_file / "genNodeClass.py"
+    gen_file = clean_generated_file / "Ophyd_secop_frappy_demo.py"
     assert gen_file.exists(), "Generated file should exist"
 
     generated_code = gen_file.read_text()
@@ -919,17 +881,20 @@ async def test_subsequent_real_nodes_with_enum(
     nested_struct_sim,
     nested_node_no_re: SECoPNodeDevice,
 ):
+    """Generating two different real nodes into the same output directory
+    must write two independent files -- each containing only its own node's
+    classes, with no cross-node merging."""
 
     nested_node_no_re.class_from_instance(clean_generated_file)
+    cryo_node_no_re.class_from_instance(clean_generated_file)
 
-    # Read the generated file and verify its contents
-    gen_file = clean_generated_file / "genNodeClass.py"
-    assert gen_file.exists(), "Generated file should exist"
+    # ===== nested node: its own file, only its own classes =====
+    nested_file = clean_generated_file / "Ophyd_secop_frappy_demo.py"
+    assert nested_file.exists(), "Generated file should exist"
 
-    generated_code = gen_file.read_text()
+    nested_code = nested_file.read_text()
 
-    # ===== Assertions for generated enum classes =====
-    cls = [
+    nested_cls = [
         "class TestEnum_GasType_Enum(SupersetEnum):",
         "class TestModStr(SECoPReadableDevice):",
         "class OphydTestPrimitiveArrays(SECoPReadableDevice):",
@@ -938,33 +903,28 @@ async def test_subsequent_real_nodes_with_enum(
         "class TestStructOfArrays(SECoPReadableDevice):",
         "class Ophyd_secop_frappy_demo(SECoPNodeDevice):",
     ]
-    for classs_str in cls:
-        assert classs_str in generated_code
+    for classs_str in nested_cls:
+        assert classs_str in nested_code
 
-    cryo_node_no_re.class_from_instance(clean_generated_file)
+    assert "class Cryo_7_frappy_demo(SECoPNodeDevice):" not in nested_code
+    assert "class Cryostat(SECoPMoveableDevice):" not in nested_code
 
-    # Read the generated file and verify its contents
-    gen_file = clean_generated_file / "genNodeClass.py"
-    assert gen_file.exists(), "Generated file should exist"
+    # ===== cryo node: its own file, only its own classes =====
+    cryo_file = clean_generated_file / "Cryo_7_frappy_demo.py"
+    assert cryo_file.exists(), "Generated file should exist"
 
-    generated_code = gen_file.read_text()
+    cryo_code = cryo_file.read_text()
 
-    # ===== Assertions for generated enum classes =====
-
-    cls = [
-        "class TestEnum_GasType_Enum(SupersetEnum):",
-        "class TestModStr(SECoPReadableDevice):",
-        "class OphydTestPrimitiveArrays(SECoPReadableDevice):",
-        "class TestEnum(SECoPReadableDevice):",
-        "class TestNdArrays(SECoPReadableDevice):",
-        "class TestStructOfArrays(SECoPReadableDevice):",
-        "class Ophyd_secop_frappy_demo(SECoPNodeDevice):",
+    cryo_cls = [
         "class Cryo_7_frappy_demo(SECoPNodeDevice):",
         "class Cryostat(SECoPMoveableDevice):",
         "class Cryostat_Mode_Enum(StrictEnum):",
     ]
-    for classs_str in cls:
-        assert classs_str in generated_code
+    for classs_str in cryo_cls:
+        assert classs_str in cryo_code
+
+    assert "class Ophyd_secop_frappy_demo(SECoPNodeDevice):" not in cryo_code
+    assert "class TestEnum_GasType_Enum(SupersetEnum):" not in cryo_code
 
 
 def test_gen_shall_mass_spec_node(
@@ -979,7 +939,7 @@ def test_gen_shall_mass_spec_node(
 
     gen_code.write_gen_node_class_file()
 
-    gen_file = clean_generated_file / "genNodeClass.py"
+    gen_file = clean_generated_file / "Hiden_ms.py"
     assert gen_file.exists(), "Generated file should exist"
 
     generated_code = gen_file.read_text()
@@ -1011,19 +971,6 @@ def test_gen_shall_mass_spec_node(
     # natively and a raw command device would shadow it.
     assert "go: TriggerableCommand" in generated_code
     assert "stop: TriggerableCommand" not in generated_code
-
-    # Reparse generated code and verify multiline comments survive round-trip generation
-    roundtrip_gen = GenNodeCode(path=str(clean_generated_file))
-    roundtrip_code = roundtrip_gen.generate_code()
-
-    assert "mid_descriptor: A[SignalRW[ndarray], ParamT()]" in roundtrip_code
-    assert "Example:" in roundtrip_code
-    assert "\n# ; Unit: (V)" not in roundtrip_code
-    assert "resolution: A[SignalR[float], ParamT()]\n" in roundtrip_code
-
-    # Command annotations should also survive round-trip generation
-    assert "go: TriggerableCommand" in roundtrip_code
-    assert "stop: TriggerableCommand" not in roundtrip_code
 
 
 def test_gen_shall_mass_spec_node_no_impl(

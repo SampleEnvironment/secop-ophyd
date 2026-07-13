@@ -1,32 +1,18 @@
 """Code generation for annotated ophyd device classes using Jinja2 templates."""
 
-import ast
-import inspect
-import io
 import json
-import linecache
-import re
-import sys
-import textwrap
-import tokenize
 from dataclasses import dataclass, field
-from enum import StrEnum
-from importlib import import_module, reload
 from inspect import Signature
 from logging import Logger
 from pathlib import Path
-from types import ModuleType
-from typing import get_args, get_type_hints
 
 import autoflake
 import black
 from frappy.client import get_datatype
 from frappy.datatypes import CommandType, DataType, EnumType, StructOf
 from jinja2 import Environment, PackageLoader, select_autoescape
-from ophyd_async.core import Command, Signal, SignalR, SignalRW, StandardReadable
+from ophyd_async.core import SignalR, SignalRW
 from ophyd_async.core import StandardReadableFormat as Format
-from ophyd_async.core import TriggerableCommand
-from ophyd_async.core._utils import get_origin_class
 
 from secop_ophyd.SECoPDevices import (
     IGNORED_PROPS,
@@ -39,7 +25,6 @@ from secop_ophyd.util import (
     SECoPdtype,
     build_command_signature,
     command_dtype_to_annotation_str,
-    python_type_to_str,
     secop_enum_name_to_python,
 )
 
@@ -201,35 +186,35 @@ class NodeClass:
 
 
 class GenNodeCode:
-    """Generates annotated Python classes for SECoP ophyd devices.
+    """Generates annotated Python classes for a single SECoP node.
 
-    This class can generate Python code in two ways:
-    1. By introspecting a fully instantiated SECoP ophyd device
-    2. From a SECoP JSON describe message (future feature)
+    Each instance describes exactly one SEC node. ``write_gen_node_class_file``
+    writes it to its own file, named after the generated node class, inside
+    the configured output directory -- overwriting any previous file of that
+    name.
 
     The generated code uses Jinja2 templates and is formatted with Black.
     """
 
-    ModName: str = "genNodeClass"
+    default_output_dir: str = ".secop_ophyd_devs"
 
     def __init__(self, path: str | None = None, log=None):
         """Initialize the code generator.
 
         Args:
-            path: Optional path to the module folder
+            path: Optional path to the output folder. Defaults to
+                ``.secop_ophyd_devs`` relative to the current working
+                directory when not given.
             log: Optional logger instance
         """
         self.log: Logger | None = log
-        self.module_folder_path: Path | None = None
-        if path is not None:
-            self.module_folder_path = Path(path)
+        self.module_folder_path: Path = Path(path or self.default_output_dir)
 
         # Data structures for classes and imports
         self.imports: dict[str, set[str] | None] = {}
         self.module_classes: list[ModuleClass] = []
         self.node_classes: list[NodeClass] = []
         self.enum_classes: list[EnumClass] = []
-        self.node_mod: ModuleType | None = None
         self.inline_comment_threshold: int = 120
         self.comment_wrap_width: int = 100
 
@@ -264,195 +249,6 @@ class GenNodeCode:
             keep_trailing_newline=True,
         )
 
-        # Try to load existing generated module
-        self._load_existing_module()
-
-    def _load_existing_module(self):
-        """Load existing generated module if present."""
-
-        mod_path = self.ModName
-
-        if self.module_folder_path is not None:
-            # For absolute paths, we need to add to sys.path and import just the module
-            # name
-            if self.module_folder_path.is_absolute():
-                str_path = str(self.module_folder_path)
-                if str_path not in sys.path:
-                    sys.path.insert(0, str_path)
-                # Just use the module name when the folder is in sys.path
-                mod_path = self.ModName
-            else:
-                # For relative paths, construct the module path with dots
-                str_path = str(self.module_folder_path)
-                rep_slash = str_path.replace("/", ".").replace("\\", ".")
-                mod_path = f"{rep_slash}.{self.ModName}"
-
-        # Remove cached module to ensure fresh import (important when module file
-        # has been modified or recreated between imports)
-        if mod_path in sys.modules:
-            del sys.modules[mod_path]
-
-        # Clear linecache for the module file to ensure inspect.getsource() works
-        if self.module_folder_path is not None:
-            module_file = self.module_folder_path / f"{self.ModName}.py"
-            linecache.checkcache(str(module_file))
-
-        try:
-            self.node_mod = import_module(mod_path)
-            self._parse_existing_module()
-        except ModuleNotFoundError:
-            if self.log is None:
-                print("No code generated yet, building from scratch")
-            else:
-                self.log.info("No code generated yet, building from scratch")
-
-    def _parse_existing_module(self):
-        """Parse an existing generated module to extract class definitions."""
-        # Prevent circular import
-
-        from secop_ophyd.SECoPDevices import (
-            SECoPDevice,
-            SECoPNodeDevice,
-        )
-
-        if self.node_mod is None:
-            return
-
-        modules = inspect.getmembers(self.node_mod)
-        # Filter to only classes defined in this module, not imported ones
-        class_members = [
-            m
-            for m in modules
-            if inspect.isclass(m[1]) and m[1].__module__ == self.node_mod.__name__
-        ]
-
-        enum_classes = [m for m in class_members if issubclass(m[1], StrEnum)]
-        node_classes = [m for m in class_members if issubclass(m[1], SECoPNodeDevice)]
-        module_classes = [
-            m
-            for m in class_members
-            if issubclass(m[1], SECoPDevice) and not issubclass(m[1], SECoPNodeDevice)
-        ]
-
-        for class_symbol, class_obj in enum_classes:
-            self._parse_enum_class(class_symbol, class_obj)
-
-        for class_symbol, class_obj in node_classes:
-            self._parse_node_class(class_symbol, class_obj)
-
-        for class_symbol, class_obj in module_classes:
-            self._parse_module_class(class_symbol, class_obj)
-
-    def _parse_node_class(self, class_symbol: str, class_obj: type):
-        """Parse a node class from existing module.
-
-        Args:
-            class_symbol: Name of the class
-            class_obj: The class object
-        """
-        # attrs = self._extract_attrs_from_source(inspect.getsource(class_obj))
-
-        bases = [base.__name__ for base in class_obj.__bases__]
-
-        # Extract description from docstring
-        description = inspect.getdoc(class_obj) or ""
-
-        _, properties, modules, _ = self._get_attr_list(class_obj)
-
-        node_cls = NodeClass(
-            name=class_symbol,
-            bases=bases,
-            properties=properties,
-            modules=modules,
-            description=description,
-        )
-        self.node_classes.append(node_cls)
-
-    def _extract_descriptions_from_source(self, class_obj: type) -> dict[str, str]:
-        """Extract trailing comment descriptions from class source code.
-
-        Uses ``ast`` to find class-level annotated attributes and ``tokenize`` to
-        read actual Python comment tokens. This avoids false positives from ``#``
-        inside strings and ignores non-attribute annotations.
-
-        Args:
-            class_obj: The class object to extract descriptions from
-
-        Returns:
-            Dictionary mapping attribute names to their descriptions
-        """
-        descriptions: dict[str, str] = {}
-        try:
-            source = textwrap.dedent(inspect.getsource(class_obj))
-            source_lines = source.splitlines()
-            module_ast = ast.parse(source)
-
-            class_nodes = [
-                node for node in module_ast.body if isinstance(node, ast.ClassDef)
-            ]
-            if not class_nodes:
-                return descriptions
-
-            class_node = class_nodes[0]
-
-            comments_by_line: dict[int, list[str]] = {}
-            for token_info in tokenize.generate_tokens(io.StringIO(source).readline):
-                if token_info.type != tokenize.COMMENT:
-                    continue
-
-                comment_text = token_info.string[1:].lstrip().rstrip()
-                comments_by_line.setdefault(token_info.start[0], []).append(
-                    comment_text
-                )
-
-            for idx, node in enumerate(class_node.body):
-                if not isinstance(node, ast.AnnAssign):
-                    continue
-
-                if not isinstance(node.target, ast.Name):
-                    continue
-
-                attr_name = node.target.id
-                annotation_end_line = getattr(node, "end_lineno", node.lineno)
-                description_lines: list[str] = []
-
-                # Inline comment on the annotation line.
-                description_lines.extend(comments_by_line.get(annotation_end_line, []))
-
-                # Multiline trailing comment block directly below the annotation.
-                next_line_no = annotation_end_line + 1
-                while next_line_no <= len(source_lines):
-                    stripped_line = source_lines[next_line_no - 1].lstrip()
-                    if not stripped_line.startswith("#"):
-                        break
-
-                    description_lines.extend(comments_by_line.get(next_line_no, []))
-                    next_line_no += 1
-
-                description = "\n".join(description_lines).rstrip()
-
-                # Commands are documented with a trailing attribute docstring
-                # (not a comment) so the description and the unravelled call
-                # signature show up on IDE hover; extract the description
-                # portion back out of it (everything before the appended
-                # "Call as: ..." line) so it survives round-trip regeneration.
-                if not description and idx + 1 < len(class_node.body):
-                    next_node = class_node.body[idx + 1]
-                    if (
-                        isinstance(next_node, ast.Expr)
-                        and isinstance(next_node.value, ast.Constant)
-                        and isinstance(next_node.value.value, str)
-                    ):
-                        description = next_node.value.value.split("Call as:")[0].strip()
-
-                if description:
-                    descriptions[attr_name] = description
-        except Exception as e:
-            if self.log:
-                self.log.debug(f"Could not extract descriptions from source: {e}")
-
-        return descriptions
-
     def _normalize_description(self, description: str | None) -> str:
         """Normalize description text for generated comments.
 
@@ -464,212 +260,6 @@ class GenNodeCode:
 
         normalized = description.rstrip()
         return normalized if normalized else ""
-
-    def _get_attr_list(self, class_obj: type) -> tuple[
-        list[ParameterAttribute],
-        list[PropertyAttribute],
-        list[ModuleAttribute],
-        list[CommandAttribute],
-    ]:
-        hints = get_type_hints(class_obj)
-        # Get hints with Annotated for wrapping signals and backends
-        extra_hints = get_type_hints(class_obj, include_extras=True)
-
-        # Extract description comments from source code
-        descriptions = self._extract_descriptions_from_source(class_obj)
-
-        modules = []
-        properties = []
-        parameters = []
-        commands = []
-
-        for attr_name, annotation in hints.items():
-            extras = getattr(extra_hints[attr_name], "__metadata__", ())
-
-            origin = get_origin_class(annotation)
-
-            if issubclass(origin, Signal):
-
-                sig_type = annotation.__args__[0]
-                # Get the module name
-                module = sig_type.__module__
-
-                type_param = (
-                    sig_type.__name__ if module == "builtins" else sig_type.__name__
-                )
-
-                path_annotation = next(
-                    (e for e in extras if isinstance(e, (ParameterType, PropertyType))),
-                    None,
-                )
-                category = (
-                    "property"
-                    if isinstance(path_annotation, PropertyType)
-                    else "parameter"
-                )
-                format_annotation = next(
-                    (e for e in extras if isinstance(e, Format)), None
-                )
-                if format_annotation is not None:
-                    format_annotation = f"Format.{format_annotation.name}"
-
-                # Get description from comments
-                description = descriptions.get(attr_name)
-
-                match category:
-                    case "property":
-                        properties.append(
-                            PropertyAttribute(
-                                name=attr_name,
-                                type=origin.__name__,
-                                type_param=type_param,
-                                path_annotation=str(path_annotation),
-                            )
-                        )
-                    case "parameter":
-                        parameters.append(
-                            ParameterAttribute(
-                                name=attr_name,
-                                type=origin.__name__,
-                                type_param=type_param,
-                                description=description,
-                                path_annotation=str(path_annotation),
-                                format_annotation=format_annotation,
-                            )
-                        )
-
-            if issubclass(origin, Command):
-                cmd_name = attr_name
-                command_type = (
-                    "TriggerableCommand"
-                    if issubclass(origin, TriggerableCommand)
-                    else "Command"
-                )
-
-                arg_type = None
-                return_type = None
-                if command_type == "Command":
-                    args = get_args(annotation)
-                    if len(args) == 2:
-                        arg_types, return_annotation = args
-                        if arg_types:
-                            arg_type = python_type_to_str(arg_types[0])
-                        if return_annotation not in (None, type(None)):
-                            return_type = python_type_to_str(return_annotation)
-
-                commands.append(
-                    CommandAttribute(
-                        name=cmd_name,
-                        command_type=command_type,
-                        arg_type=arg_type,
-                        return_type=return_type,
-                        description=descriptions.get(attr_name),
-                    )
-                )
-
-            if issubclass(origin, StandardReadable):
-                modules.append(ModuleAttribute(name=attr_name, type=origin.__name__))
-
-        return parameters, properties, modules, commands
-
-    def _parse_enum_class(self, class_symbol: str, class_obj: type):
-        """Parse an enum class from existing module.
-
-        Args:
-            class_symbol: Name of the class
-            class_obj: The class object
-
-        """
-        # Extract description from docstring
-        description = inspect.getdoc(class_obj) or ""
-
-        # Extract enum members from class attributes
-        members = []
-
-        for attr_name, attr_value in class_obj.__dict__.items():
-            # Skip private/magic attributes and methods
-            if attr_name.startswith("_") or callable(attr_value):
-                continue
-
-            # Create an EnumMember for each enum value
-            # attr_name is the member name (e.g., "RAMP")
-            # attr_value is the member value (e.g., "ramp")
-            member = EnumMember(name=attr_name, value=attr_value, description=None)
-            members.append(member)
-
-        bases = [base.__name__ for base in class_obj.__bases__]
-
-        # Create and return the EnumClass
-        self.enum_classes.append(
-            EnumClass(
-                name=class_symbol,
-                members=members,
-                description=description,
-                base_enum_class=bases[0] if bases else "StrictEnum",
-            )
-        )
-
-    def _parse_module_class(self, class_symbol: str, class_obj: type):
-        """Parse a module class from existing module.
-
-        Args:
-            class_symbol: Name of the class
-            class_obj: The class object
-        """
-        # Extract attributes from source code to get proper type annotations
-
-        parameters, properties, _, commands = self._get_attr_list(class_obj)
-
-        methods = []
-        for method_name, method in class_obj.__dict__.items():
-            if not callable(method) or method_name.startswith("__"):
-                continue
-            method_source = inspect.getsource(method)
-            description = self._extract_method_description(method_source)
-            methods.append(Method(method_name, description, inspect.signature(method)))
-
-        bases = [base.__name__ for base in class_obj.__bases__]
-
-        # Extract description from docstring
-        description = inspect.getdoc(class_obj) or ""
-
-        mod_enums: list[EnumClass] = []
-        enums = {enum_class.name: enum_class for enum_class in self.enum_classes}
-
-        for param in parameters:
-            if param.type_param in enums:
-                enum_class = enums[param.type_param]
-                if enum_class not in mod_enums:
-                    mod_enums.append(enum_class)
-
-        mod_cls = ModuleClass(
-            name=class_symbol,
-            bases=bases,
-            parameters=parameters,
-            properties=properties,
-            methods=methods,
-            commands=commands,
-            description=description,
-            enums=mod_enums,
-        )
-        self.module_classes.append(mod_cls)
-
-    def _extract_method_description(self, method_source: str) -> str:
-        """Extract description from method docstring.
-
-        Args:
-            method_source: Source code of the method
-
-        Returns:
-            Description string
-        """
-        match = re.search(r"\s*def\s+\w+\s*\(.*\).*:\s*", method_source)
-        if match:
-            function_body = method_source[match.end() :]
-            description_list = function_body.split('"""', 2)
-            if len(description_list) > 1:
-                return description_list[1]
-        return ""
 
     def add_import(self, module: str, class_str: str | None = None):
         """Add an import to the import dictionary.
@@ -715,7 +305,8 @@ class GenNodeCode:
             description: Optional class description
             commands: List of command annotations (Command/TriggerableCommand)
         """
-        # Check if class already exists (loaded from file)
+        # Check if this module class was already added, e.g. two module
+        # instances within the same node share this implementation class
         existing_class = next(
             (cls for cls in self.module_classes if cls.name == module_cls), None
         )
@@ -760,16 +351,6 @@ class GenNodeCode:
                    - (name, type, type_param)
                    - (name, type, type_param, description, category)
         """
-        # Check if class already exists (loaded from file)
-        existing_class = next(
-            (cls for cls in self.node_classes if cls.name == node_cls), None
-        )
-        if existing_class:
-            # Class already exists, skip adding it
-            if self.log:
-                self.log.info(f"Node class {node_cls} already exists, skipping")
-            return
-
         node_class = NodeClass(
             name=node_cls,
             bases=bases,
@@ -1228,16 +809,19 @@ class GenNodeCode:
         return merged_enums
 
     def write_gen_node_class_file(self):
-        """Generate and write the class file to disk."""
+        """Generate and write one file for the generated SEC node, named after
+        its node class, overwriting any existing file of that name."""
+        if not self.node_classes:
+            raise ValueError(
+                "No node class has been added yet (call from_json_describe() "
+                "or add_node_class() first) -- cannot determine output filename."
+            )
+
         code = self.generate_code()
 
-        # Determine file path
-        if self.module_folder_path is None:
-            filep = Path(f"{self.ModName}.py")
-        else:
-            filep = self.module_folder_path / f"{self.ModName}.py"
+        self.module_folder_path.mkdir(parents=True, exist_ok=True)
+        filep = self.module_folder_path / f"{self.node_classes[0].name}.py"
 
-        # Write to file
         with open(filep, "w") as file:
             file.write(code)
 
@@ -1245,10 +829,6 @@ class GenNodeCode:
             self.log.info(f"Generated class file: {filep}")
         else:
             print(f"Generated class file: {filep}")
-
-        # Reload the module
-        if self.node_mod is not None:
-            reload(self.node_mod)
 
 
 def get_type_param(secop_dtype: DataType) -> str | None:
