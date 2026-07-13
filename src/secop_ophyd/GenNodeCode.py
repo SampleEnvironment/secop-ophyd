@@ -196,14 +196,14 @@ class GenNodeCode:
     The generated code uses Jinja2 templates and is formatted with Black.
     """
 
-    default_output_dir: str = ".secop_ophyd_devs"
+    default_output_dir: str = "secop_ophyd_devs"
 
     def __init__(self, path: str | None = None, log=None):
         """Initialize the code generator.
 
         Args:
             path: Optional path to the output folder. Defaults to
-                ``.secop_ophyd_devs`` relative to the current working
+                ``secop_ophyd_devs`` relative to the current working
                 directory when not given.
             log: Optional logger instance
         """
@@ -825,10 +825,27 @@ class GenNodeCode:
         with open(filep, "w") as file:
             file.write(code)
 
+        self._write_package_init()
+
         if self.log:
             self.log.info(f"Generated class file: {filep}")
         else:
             print(f"Generated class file: {filep}")
+
+    def _write_package_init(self):
+        """(Re)generate __init__.py so the output directory is an importable
+        package that re-exports every generated node class currently on disk,
+        e.g. ``from <output_dir> import <NodeClassName>``."""
+        node_names = sorted(
+            p.stem
+            for p in self.module_folder_path.glob("*.py")
+            if p.stem != "__init__" and p.stem.isidentifier()
+        )
+        lines = [f"from .{name} import {name}\n" for name in node_names]
+
+        init_file = self.module_folder_path / "__init__.py"
+        with open(init_file, "w") as file:
+            file.writelines(lines)
 
 
 def get_type_param(secop_dtype: DataType) -> str | None:

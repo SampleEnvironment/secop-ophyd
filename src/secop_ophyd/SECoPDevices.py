@@ -614,7 +614,7 @@ class SECoPNodeDevice(SECoPDevice):
     def class_from_instance(self, path_to_module: str | None = None):
         """Generate an annotated device class for this SEC node and write it
         to its own file, named after the generated node class, inside
-        ``path_to_module`` (default: ``./.secop_ophyd_devs/``). Any existing
+        ``path_to_module`` (default: ``./secop_ophyd_devs/``). Any existing
         file of that name is overwritten."""
         from secop_ophyd.GenNodeCode import GenNodeCode
 

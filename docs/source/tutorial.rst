@@ -96,10 +96,11 @@ Generate class files with:
     gas_dosing_introspected.class_from_instance()
     reactor_cell_introspected.class_from_instance()
 
-This writes one file per SEC node into ``.secop_ophyd_devs/`` in your current working
+This writes one file per SEC node into ``secop_ophyd_devs/`` in your current working
 directory, e.g. ``Gas_dosing.py`` and ``Reactor_cell.py``, named after the generated node
-class. Regenerating always fully overwrites that node's file. You can specify a custom
-output directory:
+class. An ``__init__.py`` is also (re)generated there, making the directory an importable
+package that re-exports every generated node class. Regenerating always fully overwrites
+that node's file. You can specify a custom output directory:
 
 .. code-block:: python
 
@@ -124,11 +125,7 @@ Import the generated classes and instantiate your devices from the generated cla
 
 .. code-block:: python
 
-    import sys
-    sys.path.insert(0, ".secop_ophyd_devs")
-
-    from Gas_dosing import Gas_dosing
-    from Reactor_cell import Reactor_cell
+    from secop_ophyd_devs import Gas_dosing, Reactor_cell
 
     # once the class files are generated, instantiate your devices using the generated classes
     with init_devices():

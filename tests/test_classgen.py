@@ -1,5 +1,6 @@
 """Simple test to verify GenNodeCode refactoring works."""
 
+import importlib
 import inspect
 import sys
 from pathlib import Path
@@ -716,6 +717,54 @@ def test_subsequent_node_generation(clean_generated_file):
     # Verify that descriptive comments are preserved in generated code
     assert "# this is a description" in code2
     assert "# this has to be in the final output" in code1
+
+
+def test_package_init_generated(tmp_path: Path):
+    """write_gen_node_class_file() should (re)generate an __init__.py in the
+    output directory that re-exports every generated node class currently on
+    disk, making the directory itself importable as a package."""
+
+    out_dir = tmp_path / "gen_pkg"
+
+    gen_code_a = GenNodeCode(path=str(out_dir), log=None)
+    gen_code_a.add_node_class(
+        node_cls="InitTestNodeA",
+        bases=["SECoPNodeDevice"],
+        properties=[],
+        modules=[],
+    )
+    gen_code_a.write_gen_node_class_file()
+
+    init_file = out_dir / "__init__.py"
+    assert init_file.exists()
+    assert init_file.read_text() == "from .InitTestNodeA import InitTestNodeA\n"
+
+    # Generating a second, independent node into the same directory should
+    # update __init__.py to re-export both, without losing NodeA's entry.
+    gen_code_b = GenNodeCode(path=str(out_dir), log=None)
+    gen_code_b.add_node_class(
+        node_cls="InitTestNodeB",
+        bases=["SECoPNodeDevice"],
+        properties=[],
+        modules=[],
+    )
+    gen_code_b.write_gen_node_class_file()
+
+    init_contents = init_file.read_text()
+    assert "from .InitTestNodeA import InitTestNodeA\n" in init_contents
+    assert "from .InitTestNodeB import InitTestNodeB\n" in init_contents
+
+    # The directory should actually import as a package re-exporting both.
+    sys.path.insert(0, str(tmp_path))
+    try:
+        package = importlib.import_module(out_dir.name)
+        assert hasattr(package, "InitTestNodeA")
+        assert hasattr(package, "InitTestNodeB")
+    finally:
+        sys.path.remove(str(tmp_path))
+        sys.modules.pop(out_dir.name, None)
+        sys.modules.pop(f"{out_dir.name}.InitTestNodeA", None)
+        sys.modules.pop(f"{out_dir.name}.InitTestNodeB", None)
 
 
 async def test_gen_cryo_node(
