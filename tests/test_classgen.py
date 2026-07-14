@@ -1,12 +1,15 @@
 """Simple test to verify GenNodeCode refactoring works."""
 
+import importlib
 import inspect
 import sys
 from pathlib import Path
 
+from frappy.datatypes import StructOf
 from ophyd_async.core import SignalR, init_devices
 
 from secop_ophyd.GenNodeCode import (
+    CommandAttribute,
     GenNodeCode,
     Method,
     ModuleAttribute,
@@ -19,25 +22,6 @@ from secop_ophyd.SECoPDevices import ParameterType, PropertyType, SECoPNodeDevic
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-
-
-class _DescriptionParseSample:
-    count: int  # count comment
-    label: str = "value # not a comment"
-    # label continuation
-
-    def helper(self):
-        local: int  # must not be parsed  # noqa: F842
-
-
-def test_extract_descriptions_from_source_is_token_safe():
-    """Ensure parser only reads real comments and ignores '#' inside strings."""
-    gen_code = GenNodeCode(log=None)
-    descriptions = gen_code._extract_descriptions_from_source(_DescriptionParseSample)
-
-    assert descriptions["count"] == "count comment"
-    assert descriptions["label"] == "label continuation"
-    assert "local" not in descriptions
 
 
 def test_generated_command_methods_are_concrete(tmp_path: Path):
@@ -67,6 +51,261 @@ def test_generated_command_methods_are_concrete(tmp_path: Path):
     assert "def factory_reset" in generated_code
     assert "@abstractmethod" not in generated_code
     assert "raise RuntimeError(" in generated_code
+
+
+def test_generated_command_annotations(tmp_path: Path):
+    """Commands should be rendered as Command/TriggerableCommand annotations
+    (no bound bluesky-plan-method stub is generated anymore)."""
+    gen_code = GenNodeCode(path=str(tmp_path), log=None)
+
+    gen_code.add_mod_class(
+        module_cls="CommandAnnotationTestModule",
+        bases=["SECoPReadableDevice"],
+        parameters=[],
+        properties=[],
+        cmd_plans=[],
+        description="test module",
+        commands=[
+            CommandAttribute(
+                name="test_cmd",
+                command_type="Command",
+                arg_type="dict[str, Any]",
+                return_type="int",
+            ),
+            CommandAttribute(name="go", command_type="TriggerableCommand"),
+        ],
+    )
+
+    generated_code = gen_code.generate_code()
+
+    assert "test_cmd: Command[[dict[str, Any]], int]" in generated_code
+    assert "go: TriggerableCommand" in generated_code
+    assert "@abstractmethod" not in generated_code
+
+
+def test_build_command_signature_unravels_struct_argument():
+    """A StructOf command argument should unravel into one KEYWORD_ONLY
+    parameter per member, used for the runtime backend signature. Required
+    members (not in `.optional`) have no default; optional members default
+    to None. A trailing 'wait_for_idle' keyword-only param is always added."""
+    from frappy.datatypes import BoolType, CommandType, IntRange
+
+    from secop_ophyd.util import build_command_signature
+
+    cmd_datatype = CommandType(
+        argument=StructOf(a=IntRange(), b=BoolType(), optional=["b"]), result=None
+    )
+
+    sig = build_command_signature(cmd_datatype)
+
+    assert (
+        str(sig) == "(*, a: int, b: bool = None, wait_for_idle: bool = False) -> None"
+    )
+
+
+def test_build_command_signature_enum_argument():
+    """A bare Enum command argument should be typed as a dynamically built
+    StrictEnum subclass carrying the real SECoP member names (frappy's own
+    tolerant EnumType.validate() still accepts ints or member names at call
+    time; this annotation only affects introspection/typing, not binding)."""
+    from frappy.datatypes import CommandType, EnumType
+    from ophyd_async.core import StrictEnum
+
+    from secop_ophyd.util import build_command_signature
+
+    cmd_datatype = CommandType(argument=EnumType(LOW=0, HIGH=1), result=None)
+    sig = build_command_signature(cmd_datatype)
+
+    annotation = sig.parameters["arg"].annotation
+    assert issubclass(annotation, StrictEnum)
+    assert annotation is not StrictEnum
+    assert {m.name for m in annotation} == {"LOW", "HIGH"}
+
+
+def test_build_command_signature_enum_result():
+    """A bare Enum command result should be typed as a dynamically built
+    StrictEnum subclass carrying the real SECoP member names."""
+    from frappy.datatypes import CommandType, EnumType
+    from ophyd_async.core import StrictEnum
+
+    from secop_ophyd.util import build_command_signature
+
+    cmd_datatype = CommandType(argument=None, result=EnumType(OFF=0, ON=1))
+    sig = build_command_signature(cmd_datatype)
+
+    annotation = sig.return_annotation
+    assert issubclass(annotation, StrictEnum)
+    assert {m.name for m in annotation} == {"OFF", "ON"}
+
+
+def test_build_command_signature_enum_struct_member():
+    """An Enum member nested in a StructOf command argument should also be
+    typed as a dynamically built StrictEnum subclass (mirrors the original
+    bug report: a 'preset' member inside a struct argument)."""
+    from frappy.datatypes import CommandType, EnumType, IntRange
+    from ophyd_async.core import StrictEnum
+
+    from secop_ophyd.util import build_command_signature
+
+    cmd_datatype = CommandType(
+        argument=StructOf(preset=EnumType(preset_01=1, preset_02=2), other=IntRange()),
+        result=None,
+    )
+    sig = build_command_signature(cmd_datatype)
+
+    preset_annotation = sig.parameters["preset"].annotation
+    assert issubclass(preset_annotation, StrictEnum)
+    assert {m.name for m in preset_annotation} == {"PRESET_01", "PRESET_02"}
+    assert sig.parameters["other"].annotation is int
+
+
+def test_build_command_signature_reuses_annotated_enum_argument():
+    """When a Command class annotation already carries a concrete generated
+    enum class (e.g. Cryostat_SetMode_Arg_Enum), build_command_signature()
+    should reuse that exact class instead of building a fresh, differently-
+    named one -- this is what makes the concrete generated class survive
+    connect()."""
+    import inspect
+
+    from frappy.datatypes import CommandType, EnumType
+    from ophyd_async.core import StrictEnum
+
+    from secop_ophyd.util import build_command_signature
+
+    class SomeGeneratedArgEnum(StrictEnum):
+        LOW = "low"
+        HIGH = "high"
+
+    annotated_signature = inspect.Signature(
+        [
+            inspect.Parameter(
+                "arg0",
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                annotation=SomeGeneratedArgEnum,
+            )
+        ]
+    )
+
+    cmd_datatype = CommandType(argument=EnumType(LOW=0, HIGH=1), result=None)
+    sig = build_command_signature(cmd_datatype, annotated_signature=annotated_signature)
+
+    assert sig.parameters["arg"].annotation is SomeGeneratedArgEnum
+
+
+def test_build_command_signature_reuses_annotated_enum_result():
+    """Same as above, for the return annotation."""
+    import inspect
+
+    from frappy.datatypes import CommandType, EnumType
+    from ophyd_async.core import StrictEnum
+
+    from secop_ophyd.util import build_command_signature
+
+    class SomeGeneratedResultEnum(StrictEnum):
+        OK = "ok"
+        FAIL = "fail"
+
+    annotated_signature = inspect.Signature(
+        [], return_annotation=SomeGeneratedResultEnum
+    )
+
+    cmd_datatype = CommandType(argument=None, result=EnumType(OK=0, FAIL=1))
+    sig = build_command_signature(cmd_datatype, annotated_signature=annotated_signature)
+
+    assert sig.return_annotation is SomeGeneratedResultEnum
+
+
+def test_build_command_signature_ignores_annotated_signature_for_struct():
+    """A StructOf argument's annotated_signature has a different shape (a
+    single flat arg0, not a per-member decomposition) and struct members
+    never get named enum classes at codegen time -- struct members must
+    always get a fresh _dynamic_enum_class, never attempt to reuse
+    annotated_signature."""
+    import inspect
+
+    from frappy.datatypes import CommandType, EnumType
+    from ophyd_async.core import StrictEnum
+
+    from secop_ophyd.util import build_command_signature
+
+    class SomeGeneratedArgEnum(StrictEnum):
+        LOW = "low"
+        HIGH = "high"
+
+    annotated_signature = inspect.Signature(
+        [
+            inspect.Parameter(
+                "arg0",
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                annotation=dict,
+            )
+        ]
+    )
+
+    cmd_datatype = CommandType(
+        argument=StructOf(preset=EnumType(LOW=0, HIGH=1)), result=None
+    )
+    sig = build_command_signature(cmd_datatype, annotated_signature=annotated_signature)
+
+    preset_annotation = sig.parameters["preset"].annotation
+    assert issubclass(preset_annotation, StrictEnum)
+    assert preset_annotation is not SomeGeneratedArgEnum
+
+
+def test_build_command_signature_no_reuse_when_no_annotation():
+    """With no annotated_signature (pure introspection instantiation, no
+    generated class involved), behavior must be identical to before this
+    fix: a fresh, dynamically built enum class."""
+    from frappy.datatypes import CommandType, EnumType
+    from ophyd_async.core import StrictEnum
+
+    from secop_ophyd.util import build_command_signature
+
+    cmd_datatype = CommandType(argument=EnumType(LOW=0, HIGH=1), result=None)
+    sig = build_command_signature(cmd_datatype)
+
+    annotation = sig.parameters["arg"].annotation
+    assert issubclass(annotation, StrictEnum)
+    assert annotation is not StrictEnum
+
+
+def test_command_backend_preserves_annotated_enum_end_to_end():
+    """SECoPCommandBackend, constructed with a signature carrying a concrete
+    generated enum class (as ophyd_async's DeviceFiller does from a real
+    `Command[[SomeEnum], ...]` class annotation), should still have that
+    exact class as its signature's annotation after
+    init_command_from_introspection() runs -- not a freshly, anonymously
+    built one."""
+    from frappy.datatypes import CommandType, EnumType
+    from ophyd_async.core import StrictEnum
+
+    from secop_ophyd.SECoPSignal import SECoPCommandBackend
+    from secop_ophyd.util import Path as SECoPPath
+
+    class SomeGeneratedArgEnum(StrictEnum):
+        LOW = "low"
+        HIGH = "high"
+
+    annotated_signature = inspect.Signature(
+        [
+            inspect.Parameter(
+                "arg0",
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                annotation=SomeGeneratedArgEnum,
+            )
+        ]
+    )
+
+    backend = SECoPCommandBackend(signature=annotated_signature)
+
+    cmd_datatype = CommandType(argument=EnumType(LOW=0, HIGH=1), result=None)
+    backend.init_command_from_introspection(
+        cmd_datatype,
+        SECoPPath(parameter_name="set_mode", module_name="cryo"),
+        secclient=object(),  # type: ignore[arg-type]
+    )
+
+    assert backend.signature.parameters["arg"].annotation is SomeGeneratedArgEnum
 
 
 def test_basic_functionality(clean_generated_file):
@@ -204,13 +443,15 @@ def test_dataclasses():
 
 
 def test_subsequent_node_generation(clean_generated_file):
-    """Test generating code for two nodes sequentially, appending to the same file.
+    """Test generating code for two different nodes into the same output
+    directory.
 
     Tests that:
-    - First: Generate NodeA with modules Type1 and Type2, write to file
-    - Second: Load existing file, add NodeB with Type1 (shared) and Type3 (new)
-    - Type1 should appear only once in the final file (not duplicated)
-    - All classes (Type1, Type2, Type3, NodeA, NodeB) are in the final file
+    - First: Generate NodeA with modules Type1 and Type2, written to NodeA.py
+    - Second: Generate NodeB with Type1 (same module class name) and Type3,
+      written to NodeB.py
+    - Each node gets its own file, with no cross-file merging or dedup: both
+      files independently contain their own "Type1" class definition
     """
 
     from inspect import signature
@@ -337,13 +578,9 @@ def test_subsequent_node_generation(clean_generated_file):
     assert "modA: Type1" in code1
     assert "modB: Type2" in code1
 
-    # ===== STEP 2: Load existing file and add second node (NodeB) =====
+    # ===== STEP 2: Generate second node (NodeB) into its own file =====
 
     gen_code2 = GenNodeCode(path=str(clean_generated_file), log=None)
-
-    # Add necessary imports again
-    gen_code2.add_import("secop_ophyd.SECoPDevices", "SECoPDevice")
-    gen_code2.add_import("secop_ophyd.SECoPDevices", "SECoPNodeDevice")
 
     # Create method for Type3
     def type3_command(self, count: int) -> int:
@@ -356,7 +593,8 @@ def test_subsequent_node_generation(clean_generated_file):
         cmd_sign=signature(type3_command),
     )
 
-    # Add Type1 again - GenNodeCode should detect it already exists
+    # Add a module class also named "Type1" -- a different GenNodeCode
+    # instance/node, so this must NOT be affected by gen_code1's Type1 at all
     gen_code2.add_mod_class(
         module_cls="Type1",
         bases=["SECoPDevice"],
@@ -442,39 +680,91 @@ def test_subsequent_node_generation(clean_generated_file):
         description="NodeB with Type1 and Type3 modules",
     )
 
-    # Generate and write second node (appends to the file)
+    # Generate and write second node to its own file
     code2 = gen_code2.generate_code()
     gen_code2.write_gen_node_class_file()
 
     # ===== VERIFICATION =====
-    # Verify that Type1 appears only once in the final code
-    type1_count = code2.count("class Type1(SECoPDevice):")
+    # Each node was written to its own file, named after the node class
+    node_a_file = clean_generated_file / "NodeA.py"
+    node_b_file = clean_generated_file / "NodeB.py"
+    assert node_a_file.exists()
+    assert node_b_file.exists()
 
-    assert (
-        type1_count == 1
-    ), f"Type1 should appear exactly once, but appears {type1_count} times"
+    # NodeA's file only has NodeA's classes -- unaffected by NodeB's generation
+    assert "class Type1(SECoPDevice):" in code1
+    assert "class Type2(SECoPDevice):" in code1
+    assert "class NodeA(SECoPNodeDevice):" in code1
+    assert "class Type3(SECoPDevice):" not in code1
+    assert "class NodeB(SECoPNodeDevice):" not in code1
+    assert "def type1_cmd" in code1
+    assert "def type2_cmd" in code1
 
-    # Verify all module classes are present
+    # NodeB's file only has NodeB's classes, including its own independent
+    # "Type1" class definition -- no cross-file merge/dedup
     assert "class Type1(SECoPDevice):" in code2
-    assert "class Type2(SECoPDevice):" in code2
     assert "class Type3(SECoPDevice):" in code2
-
-    # Verify both node classes are present
-    assert "class NodeA(SECoPNodeDevice):" in code2
     assert "class NodeB(SECoPNodeDevice):" in code2
-
-    # Verify all methods are present
+    assert "class Type2(SECoPDevice):" not in code2
+    assert "class NodeA(SECoPNodeDevice):" not in code2
     assert "def type1_cmd" in code2
-    assert "def type2_cmd" in code2
     assert "def type3_cmd" in code2
 
     # Verify section comments are present
     assert "# Module Properties" in code2
     assert "# Module Parameters" in code2
 
-    # Verify that descriptive  comments are preserved in generated code
+    # Verify that descriptive comments are preserved in generated code
     assert "# this is a description" in code2
-    assert "# this has to be in the final output" in code2
+    assert "# this has to be in the final output" in code1
+
+
+def test_package_init_generated(tmp_path: Path):
+    """write_gen_node_class_file() should (re)generate an __init__.py in the
+    output directory that re-exports every generated node class currently on
+    disk, making the directory itself importable as a package."""
+
+    out_dir = tmp_path / "gen_pkg"
+
+    gen_code_a = GenNodeCode(path=str(out_dir), log=None)
+    gen_code_a.add_node_class(
+        node_cls="InitTestNodeA",
+        bases=["SECoPNodeDevice"],
+        properties=[],
+        modules=[],
+    )
+    gen_code_a.write_gen_node_class_file()
+
+    init_file = out_dir / "__init__.py"
+    assert init_file.exists()
+    assert init_file.read_text() == "from .InitTestNodeA import InitTestNodeA\n"
+
+    # Generating a second, independent node into the same directory should
+    # update __init__.py to re-export both, without losing NodeA's entry.
+    gen_code_b = GenNodeCode(path=str(out_dir), log=None)
+    gen_code_b.add_node_class(
+        node_cls="InitTestNodeB",
+        bases=["SECoPNodeDevice"],
+        properties=[],
+        modules=[],
+    )
+    gen_code_b.write_gen_node_class_file()
+
+    init_contents = init_file.read_text()
+    assert "from .InitTestNodeA import InitTestNodeA\n" in init_contents
+    assert "from .InitTestNodeB import InitTestNodeB\n" in init_contents
+
+    # The directory should actually import as a package re-exporting both.
+    sys.path.insert(0, str(tmp_path))
+    try:
+        package = importlib.import_module(out_dir.name)
+        assert hasattr(package, "InitTestNodeA")
+        assert hasattr(package, "InitTestNodeB")
+    finally:
+        sys.path.remove(str(tmp_path))
+        sys.modules.pop(out_dir.name, None)
+        sys.modules.pop(f"{out_dir.name}.InitTestNodeA", None)
+        sys.modules.pop(f"{out_dir.name}.InitTestNodeB", None)
 
 
 async def test_gen_cryo_node(
@@ -484,7 +774,7 @@ async def test_gen_cryo_node(
 
     cryo_node_no_re.class_from_instance(clean_generated_file)
 
-    from tests.testgen.genNodeClass import Cryo_7_frappy_demo  # type: ignore
+    from tests.testgen.Cryo_7_frappy_demo import Cryo_7_frappy_demo  # type: ignore
 
     async with init_devices():
         cryo_gen_code = Cryo_7_frappy_demo(sec_node_uri="localhost:10769")
@@ -506,6 +796,27 @@ async def test_gen_cryo_node(
 
     assert read_target is not None
     assert read_target == 10
+
+
+async def test_generated_enum_parameter_datatype_is_preserved(
+    clean_generated_file, cryo_sim, cryo_node_no_re: SECoPNodeDevice
+):
+    """A Parameter declared with a concrete generated enum class annotation
+    (e.g. `mode: A[SignalRW[Cryostat_Mode_Enum], ParamT()]`) should keep that
+    exact class as its runtime datatype after connect() -- not be silently
+    replaced by the generic, member-less StrictEnum base class."""
+
+    cryo_node_no_re.class_from_instance(clean_generated_file)
+
+    from tests.testgen.Cryo_7_frappy_demo import (  # type: ignore
+        Cryo_7_frappy_demo,
+        Cryostat_Mode_Enum,
+    )
+
+    async with init_devices():
+        cryo_gen_code = Cryo_7_frappy_demo(sec_node_uri="localhost:10769")
+
+    assert cryo_gen_code.cryo.mode.datatype is Cryostat_Mode_Enum
 
 
 async def test_gen_cryo_status_not_in_cfg(
@@ -537,7 +848,7 @@ async def test_gen_cryo_status_not_in_cfg(
     assert status_reding.get(stat_name) is not None, "Status signal should be readable"
 
     # Import generated class
-    from tests.testgen.genNodeClass import Cryo_7_frappy_demo  # type: ignore
+    from tests.testgen.Cryo_7_frappy_demo import Cryo_7_frappy_demo  # type: ignore
 
     async with init_devices():
         cryo_gen_code = Cryo_7_frappy_demo(sec_node_uri="localhost:10769")
@@ -574,17 +885,23 @@ async def test_gen_real_node(
     nested_node_no_re.class_from_instance(clean_generated_file)
 
     # Read the generated file and verify its contents
-    gen_file = clean_generated_file / "genNodeClass.py"
+    gen_file = clean_generated_file / "Ophyd_secop_frappy_demo.py"
     assert gen_file.exists(), "Generated file should exist"
 
     generated_code = gen_file.read_text()
 
-    # ===== Assertions for generated command plans =====
-    # The ophy_struct module has a test_cmd command
-    assert "def test_cmd" in generated_code, "test_cmd plan should be generated"
+    # ===== Assertions for generated commands =====
+    assert (
+        "def test_cmd(" not in generated_code
+    ), "no bare test_cmd method should shadow the Command attribute"
     assert (
         "@abstractmethod" not in generated_code
     ), "Command methods should be concrete so generated classes are instantiable"
+
+    # test_cmd takes a struct argument and returns an int
+    assert (
+        "test_cmd: Command[[dict[str, Any]], int]" in generated_code
+    ), "test_cmd annotation should be generated"
 
     # ===== Assertions for generated enum classes =====
     # Enum classes should be generated for enum parameters
@@ -613,17 +930,20 @@ async def test_subsequent_real_nodes_with_enum(
     nested_struct_sim,
     nested_node_no_re: SECoPNodeDevice,
 ):
+    """Generating two different real nodes into the same output directory
+    must write two independent files -- each containing only its own node's
+    classes, with no cross-node merging."""
 
     nested_node_no_re.class_from_instance(clean_generated_file)
+    cryo_node_no_re.class_from_instance(clean_generated_file)
 
-    # Read the generated file and verify its contents
-    gen_file = clean_generated_file / "genNodeClass.py"
-    assert gen_file.exists(), "Generated file should exist"
+    # ===== nested node: its own file, only its own classes =====
+    nested_file = clean_generated_file / "Ophyd_secop_frappy_demo.py"
+    assert nested_file.exists(), "Generated file should exist"
 
-    generated_code = gen_file.read_text()
+    nested_code = nested_file.read_text()
 
-    # ===== Assertions for generated enum classes =====
-    cls = [
+    nested_cls = [
         "class TestEnum_GasType_Enum(SupersetEnum):",
         "class TestModStr(SECoPReadableDevice):",
         "class OphydTestPrimitiveArrays(SECoPReadableDevice):",
@@ -632,33 +952,28 @@ async def test_subsequent_real_nodes_with_enum(
         "class TestStructOfArrays(SECoPReadableDevice):",
         "class Ophyd_secop_frappy_demo(SECoPNodeDevice):",
     ]
-    for classs_str in cls:
-        assert classs_str in generated_code
+    for classs_str in nested_cls:
+        assert classs_str in nested_code
 
-    cryo_node_no_re.class_from_instance(clean_generated_file)
+    assert "class Cryo_7_frappy_demo(SECoPNodeDevice):" not in nested_code
+    assert "class Cryostat(SECoPMoveableDevice):" not in nested_code
 
-    # Read the generated file and verify its contents
-    gen_file = clean_generated_file / "genNodeClass.py"
-    assert gen_file.exists(), "Generated file should exist"
+    # ===== cryo node: its own file, only its own classes =====
+    cryo_file = clean_generated_file / "Cryo_7_frappy_demo.py"
+    assert cryo_file.exists(), "Generated file should exist"
 
-    generated_code = gen_file.read_text()
+    cryo_code = cryo_file.read_text()
 
-    # ===== Assertions for generated enum classes =====
-
-    cls = [
-        "class TestEnum_GasType_Enum(SupersetEnum):",
-        "class TestModStr(SECoPReadableDevice):",
-        "class OphydTestPrimitiveArrays(SECoPReadableDevice):",
-        "class TestEnum(SECoPReadableDevice):",
-        "class TestNdArrays(SECoPReadableDevice):",
-        "class TestStructOfArrays(SECoPReadableDevice):",
-        "class Ophyd_secop_frappy_demo(SECoPNodeDevice):",
+    cryo_cls = [
         "class Cryo_7_frappy_demo(SECoPNodeDevice):",
         "class Cryostat(SECoPMoveableDevice):",
         "class Cryostat_Mode_Enum(StrictEnum):",
     ]
-    for classs_str in cls:
-        assert classs_str in generated_code
+    for classs_str in cryo_cls:
+        assert classs_str in cryo_code
+
+    assert "class Ophyd_secop_frappy_demo(SECoPNodeDevice):" not in cryo_code
+    assert "class TestEnum_GasType_Enum(SupersetEnum):" not in cryo_code
 
 
 def test_gen_shall_mass_spec_node(
@@ -673,7 +988,7 @@ def test_gen_shall_mass_spec_node(
 
     gen_code.write_gen_node_class_file()
 
-    gen_file = clean_generated_file / "genNodeClass.py"
+    gen_file = clean_generated_file / "Hiden_ms.py"
     assert gen_file.exists(), "Generated file should exist"
 
     generated_code = gen_file.read_text()
@@ -700,14 +1015,11 @@ def test_gen_shall_mass_spec_node(
         in generated_code
     )
 
-    # Reparse generated code and verify multiline comments survive round-trip generation
-    roundtrip_gen = GenNodeCode(path=str(clean_generated_file))
-    roundtrip_code = roundtrip_gen.generate_code()
-
-    assert "mid_descriptor: A[SignalRW[ndarray], ParamT()]" in roundtrip_code
-    assert "Example:" in roundtrip_code
-    assert "\n# ; Unit: (V)" not in roundtrip_code
-    assert "resolution: A[SignalR[float], ParamT()]\n" in roundtrip_code
+    # Void "go" command should be annotated as TriggerableCommand; "stop" is
+    # skipped since SECoPMoveableDevice already implements Stoppable.stop()
+    # natively and a raw command device would shadow it.
+    assert "go: TriggerableCommand" in generated_code
+    assert "stop: TriggerableCommand" not in generated_code
 
 
 def test_gen_shall_mass_spec_node_no_impl(
@@ -721,3 +1033,59 @@ def test_gen_shall_mass_spec_node_no_impl(
     gen_code.from_json_describe(mass_spectrometer_description_no_impl)
 
     gen_code.write_gen_node_class_file()
+
+
+def test_gen_command_with_enum_argument_and_result(clean_generated_file):
+    """A command with a bare Enum argument and a bare Enum result should each
+    get their own concrete named StrictEnum class generated and substituted
+    into the Command[[...], ...] annotation."""
+
+    describe_data = {
+        "equipment_id": "enum_cmd.test.demo",
+        "description": "node for testing command enum codegen",
+        "modules": {
+            "enummod": {
+                "description": "module for testing command enum codegen",
+                "interface_classes": ["Readable"],
+                "accessibles": {
+                    "value": {
+                        "datainfo": {"type": "double"},
+                        "description": "the value",
+                        "readonly": True,
+                    },
+                    "set_mode": {
+                        "datainfo": {
+                            "type": "command",
+                            "argument": {
+                                "type": "enum",
+                                "members": {"ramp": 0, "pid": 1},
+                            },
+                            "result": {
+                                "type": "enum",
+                                "members": {"ok": 0, "fail": 1},
+                            },
+                        },
+                        "description": "set the mode",
+                    },
+                },
+            },
+        },
+    }
+
+    gen_code = GenNodeCode(path=str(clean_generated_file))
+    gen_code.from_json_describe(describe_data)
+
+    generated_code = gen_code.generate_code()
+
+    assert "class Enummod_SetMode_Arg_Enum(StrictEnum):" in generated_code
+    assert 'RAMP = "ramp"' in generated_code
+    assert 'PID = "pid"' in generated_code
+
+    assert "class Enummod_SetMode_Result_Enum(StrictEnum):" in generated_code
+    assert 'OK = "ok"' in generated_code
+    assert 'FAIL = "fail"' in generated_code
+
+    assert (
+        "set_mode: Command[[Enummod_SetMode_Arg_Enum], Enummod_SetMode_Result_Enum]"
+        in generated_code
+    )

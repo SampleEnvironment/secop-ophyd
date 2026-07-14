@@ -1,6 +1,7 @@
 # mypy: disable-error-code="attr-defined"
 import logging
 import os
+import shutil
 from pathlib import Path
 
 import pytest
@@ -58,20 +59,19 @@ def mass_spectrometer_description_no_impl():
 
 @pytest.fixture
 def clean_generated_file():
-    """Clean up generated genNodeClass.py file before test runs.
+    """Provide a clean per-node output directory for code generation tests.
 
-    This fixture ensures a fresh start for code generation tests while
-    allowing inspection of results after the test completes.
+    Wipes the whole testgen directory before the test runs, since generation
+    now writes one file per SEC node into it, while still allowing inspection
+    of results after the test completes.
 
     Returns:
         Path to the testgen directory where files should be generated
     """
     testgen_dir = Path(__file__).parent / "testgen"
-    testgen_dir.mkdir(exist_ok=True)
-
-    gen_file = testgen_dir / "genNodeClass.py"
-    if gen_file.exists():
-        gen_file.unlink()
+    if testgen_dir.exists():
+        shutil.rmtree(testgen_dir)
+    testgen_dir.mkdir(parents=True, exist_ok=True)
 
     return testgen_dir
 

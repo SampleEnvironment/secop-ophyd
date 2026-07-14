@@ -1,7 +1,9 @@
 import asyncio
+import inspect
 import warnings
+from collections.abc import Awaitable, Callable
 from functools import wraps
-from typing import Any, Callable
+from typing import Any, cast
 
 from bluesky.protocols import DataKey, Reading
 from frappy.client import CacheItem
@@ -9,6 +11,7 @@ from frappy.datatypes import (
     ArrayOf,
     BLOBType,
     BoolType,
+    CommandType,
     DataType,
     FloatRange,
     IntRange,
@@ -19,6 +22,7 @@ from frappy.datatypes import (
 )
 from ophyd_async.core import (
     Callback,
+    CommandBackend,
     SignalBackend,
     SignalDatatypeT,
     StandardReadableFormat,
@@ -26,7 +30,14 @@ from ophyd_async.core import (
 )
 
 from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient
-from secop_ophyd.util import Path, SECoPDataKey, SECoPdtype, SECoPReading, deep_get
+from secop_ophyd.util import (
+    Path,
+    SECoPDataKey,
+    SECoPdtype,
+    SECoPReading,
+    build_command_signature,
+    deep_get,
+)
 
 atomic_dtypes = (
     StringType,
@@ -48,182 +59,124 @@ class AttributeType(StrictEnum):
     PROPERTY = "property"
 
 
-class LocalBackend(SignalBackend):
-    """Class for the 'argument' and 'result' Signal backends of a SECoP_CMD_Device.
-    These Signals act as a local cache for storing the command argument and result.
+def _is_concrete_enum_class(datatype: Any) -> bool:
+    """True only for a genuine, member-carrying StrictEnum subclass produced
+    by codegen (e.g. Cryostat_Mode_Enum) -- as opposed to the generic,
+    member-less StrictEnum base class used when there is no class annotation
+    (pure introspection instantiation)."""
+    return (
+        isinstance(datatype, type)
+        and issubclass(datatype, StrictEnum)
+        and datatype is not StrictEnum
+    )
 
+
+class SECoPCommandBackend(CommandBackend[Any, Any]):
+    """Backend for a SECoP command.
+
+    Converts the argument/result between SECoP wire format and numpy/python
+    values and calls `AsyncFrappyClient.exec_command` to execute the command.
+
+    Supports deferred initialization (matching the `SECoPBackend` pattern used
+    for Parameters/Properties): constructed empty by the `DeviceFiller` when a
+    command is declared via a `Command`/`TriggerableCommand` class annotation,
+    then bound to a concrete SECoP command via `init_command_from_introspection`
+    once the SEC node has been introspected.
     """
 
-    def __init__(
-        self, path: Path, secop_dtype_obj: DataType, sig_datainfo: dict
-    ) -> None:
-        """Initialize SECoP_CMD_IO_Backend
+    def __init__(self, signature: inspect.Signature | None = None) -> None:
+        """Initialize SECoPCommandBackend (optionally with a signature derived
+        from a `Command[[ArgT], ResT]` class annotation)."""
+        resolved_signature = signature or inspect.Signature()
+        # Snapshot of the annotation-derived signature (e.g. carrying the
+        # concrete `Cryostat_SetMode_Arg_Enum` class from a generated
+        # `Command[[Cryostat_SetMode_Arg_Enum], ...]` annotation), captured
+        # before init_command_from_introspection() rebuilds self.signature
+        # from live introspection. Empty inspect.Signature() for pure
+        # introspection instantiation (no class annotation).
+        self._annotated_signature: inspect.Signature = resolved_signature
+        super().__init__(signature=resolved_signature)
 
-        :param path: Path to the command in the secclient module dict
-        :type path: Path
-        :param SECoPdtype_obj: detailed SECoP datatype object for bidirectional
-        conversion between JSON to and numpy arrays
-        :type SECoPdtype_obj: DataType
-        :param sig_datainfo: SECoP datainfo string of the value represented
-        by the signal
-        :type sig_datainfo: dict
-        """
-        self.SECoP_type_info: SECoPdtype = SECoPdtype(secop_dtype_obj)
-
-        self.reading: SECoPReading = SECoPReading(
-            secop_dt=self.SECoP_type_info, entry=None
-        )
-
-        # module:acessible Path for reading/writing (module,accessible)
-        self.path: Path = path
-
-        # Root datainfo or memberinfo for nested datatypes
-        # TODO check if this is really needed
-        self.datainfo: dict = sig_datainfo
-
-        self.callback: Callback | None = None
-
-        self.SECoPdtype_obj: DataType = secop_dtype_obj
-
-        self.describe_dict: dict
-
-        self.source_name = self.path._module_name + ":" + self.path._accessible_name
-
-        self.describe_dict = {}
-
-        self.describe_dict["source"] = self.source("", True)
-
-        self.describe_dict.update(self.SECoP_type_info.get_datakey())
-
-        for property_name, prop_val in self.datainfo.items():
-            if property_name == "type":
-                property_name = "SECoP_dtype"
-            self.describe_dict[property_name] = prop_val
-
-        super().__init__(datatype=self.SECoP_type_info.np_datatype)
-
-    def source(self, name: str, read: bool) -> str:
-        return self.source_name
-
-    async def connect(self, timeout: float):
-        pass
-
-    async def put(self, value: Any | None):
-        self.reading.set_reading(self.SECoP_type_info.val2secop(value))
-
-        if self.callback is not None:
-            self.callback(self.reading.get_reading())
-
-    async def get_datakey(self, source: str) -> DataKey:
-        """Metadata like source, dtype, shape, precision, units"""
-        return describedict_to_datakey(self.describe_dict)
-
-    async def get_reading(self) -> Reading[SignalDatatypeT]:
-        return self.reading.get_reading()
-
-    async def get_value(self) -> SignalDatatypeT:
-        return self.reading.get_value()
-
-    async def get_setpoint(self) -> SignalDatatypeT:
-        return await self.get_value()
-
-    def set_callback(self, callback: Callback[Reading[SignalDatatypeT]] | None) -> None:
-        self.callback = callback  # type: ignore[assignment]
-
-
-class SECoPXBackend(SignalBackend):
-    """
-    Signal backend for SignalX of a SECoP_CMD_Device, that handles command execution
-
-    """
-
-    def __init__(
+    def init_command_from_introspection(
         self,
+        cmd_datatype: CommandType,
         path: Path,
         secclient: AsyncFrappyClient,
-        argument: LocalBackend | None,
-        result: LocalBackend | None,
+        wait_for_idle_fn: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
-        """Initializes SECoP_CMD_X_Backend
+        """Bind this backend to a concrete SECoP command.
 
+        :param cmd_datatype: SECoP command datatype, holding the argument and
+        result datatypes (either of which may be None)
+        :type cmd_datatype: CommandType
         :param path: Path to the command in the secclient module dict
         :type path: Path
         :param secclient: SECoP client providing communication to the SEC Node
         :type secclient: AsyncFrappyClient
-        :param argument: Refence to Argument Signal
-        :type argument: SECoP_CMD_IO_Backend | None
-        :param result: Reference to Result Signal
-        :type result: SECoP_CMD_IO_Backend | None
+        :param wait_for_idle_fn: Owning module's `wait_for_idle` coroutine
+        (bound method), if it has one (i.e. it has a status signal); used to
+        support the `wait_for_idle` kwarg on `execute()`.
+        :type wait_for_idle_fn: Callable[[], Awaitable[None]] | None
         """
-
         self._secclient: AsyncFrappyClient = secclient
 
         # module:acessible Path for reading/writing (module,accessible)
         self.path: Path = path
 
-        self.callback: Callable
-        self.argument: LocalBackend | None = argument
-        self.result: LocalBackend | None = result
+        self.raw_argument: DataType | None = cmd_datatype.argument
+        self.raw_result: DataType | None = cmd_datatype.result
+
+        self._arg_type: SECoPdtype | None = (
+            SECoPdtype(self.raw_argument) if self.raw_argument is not None else None
+        )
+        self._res_type: SECoPdtype | None = (
+            SECoPdtype(self.raw_result) if self.raw_result is not None else None
+        )
+
+        self._wait_for_idle_fn = wait_for_idle_fn
 
         self.source_name = self.path._module_name + ":" + self.path._accessible_name
-        super().__init__(datatype=None)
 
-    def source(self, name: str, read: bool) -> str:
+        self.signature = build_command_signature(
+            cmd_datatype, annotated_signature=self._annotated_signature
+        )
+
+    def source(self, name: str) -> str:
         return self.source_name
 
-    async def connect(self, timeout: float):
+    async def connect(self, timeout: float) -> None:
         pass
 
-    async def put(self, value: Any | None):
+    async def execute(self, *args: Any, **kwargs: Any) -> Any:
+        bound = self.signature.bind(*args, **kwargs)
+        bound.apply_defaults()
 
-        if self.argument is None:
-            argument = None
-        else:
-            argument = await self.argument.get_value()
+        wait_for_idle = bound.arguments.pop("wait_for_idle")
 
-        res, qualifiers = await asyncio.wait_for(
-            fut=self._secclient.exec_command(
-                module=self.path._module_name,
-                command=self.path._accessible_name,
-                argument=argument,
-            ),
-            timeout=None,
+        argument = None
+        if self._arg_type is not None:
+            if isinstance(self.raw_argument, StructOf):
+                argument = self._arg_type.val2secop(dict(bound.arguments))
+            else:
+                argument = self._arg_type.val2secop(bound.arguments["arg"])
+
+        res, _qualifiers = await self._secclient.exec_command(
+            module=self.path._module_name,
+            command=self.path._accessible_name,
+            argument=argument,
         )
 
-        # write return Value to corresponding Backend
+        result = None if self._res_type is None else self._res_type.secop2val(res)
 
-        if self.result is None:
-            return
-        else:
-            val = self.result.SECoP_type_info.secop2val(res)
+        if wait_for_idle:
+            if self._wait_for_idle_fn is None:
+                raise RuntimeError(
+                    f"wait_for_idle is not supported for command "
+                    f"'{self.source_name}': module has no status signal"
+                )
+            await self._wait_for_idle_fn()
 
-            await self.result.put(val)
-
-    async def get_datakey(self, source: str) -> DataKey:
-        """Metadata like source, dtype, shape, precision, units"""
-
-        return DataKey(shape=[], dtype="string", source=self.source("", True))
-
-    async def get_reading(self) -> Reading[SignalDatatypeT]:
-        raise Exception(
-            "Cannot read _x Signal, it has no value and is only"
-            + " used to trigger Command execution"
-        )
-
-    async def get_value(self) -> SignalDatatypeT:
-        raise Exception(
-            "Cannot read _x Signal, it has no value and is only"
-            + " used to trigger Command execution"
-        )
-
-    def set_callback(self, callback: Callback[Reading[SignalDatatypeT]] | None) -> None:
-        pass
-
-    async def get_setpoint(self) -> SignalDatatypeT:
-        raise Exception(
-            "Cannot read _x Signal, it has no value and is only"
-            + " used to trigger Command execution"
-        )
+        return result
 
 
 class SECoPBackend(SignalBackend[SignalDatatypeT]):
@@ -275,6 +228,13 @@ class SECoPBackend(SignalBackend[SignalDatatypeT]):
                 self._attribute_name = path
             else:
                 self._module_name, self._attribute_name = path.split(":", maxsplit=1)
+
+        # Snapshot of whatever datatype the class annotation provided (e.g.
+        # `Cryostat_Mode_Enum` from `SignalRW[Cryostat_Mode_Enum]`), captured
+        # before init_parameter_from_introspection()/init_property_from_introspection()
+        # overwrite self.datatype with a throwaway string. None for pure
+        # introspection instantiation (no class annotation).
+        self._annotated_datatype: type | None = datatype
 
         super().__init__(datatype)
 
@@ -410,7 +370,10 @@ class SECoPBackend(SignalBackend[SignalDatatypeT]):
                 property_name = "units"
             self.describe_dict[property_name] = prop_val
 
-        self.datatype = self.SECoP_type_info.np_datatype
+        if _is_concrete_enum_class(self._annotated_datatype):
+            self.datatype = cast(type, self._annotated_datatype)
+        else:
+            self.datatype = self.SECoP_type_info.np_datatype
 
     async def _init_property(self):
         """Initialize as a property signal."""
@@ -440,7 +403,10 @@ class SECoPBackend(SignalBackend[SignalDatatypeT]):
         # Properties are always readonly
         self.format = StandardReadableFormat.CONFIG_SIGNAL
         self.readonly = True
-        self.datatype = self.SECoP_type_info.np_datatype
+        if _is_concrete_enum_class(self._annotated_datatype):
+            self.datatype = cast(type, self._annotated_datatype)
+        else:
+            self.datatype = self.SECoP_type_info.np_datatype
 
     async def put(self, value: Any | None):
         """Put a value to the parameter. Properties are readonly."""

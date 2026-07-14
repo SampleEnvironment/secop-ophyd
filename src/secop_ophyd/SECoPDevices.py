@@ -1,61 +1,51 @@
-import asyncio
 import logging
 import re
 import time as ttime
 import warnings
 from abc import abstractmethod
+from dataclasses import dataclass
+from functools import cached_property
 from logging import Logger
-from types import MethodType
-from typing import Any, Dict, Iterator, Optional, Type
+from typing import Any, Dict
 
 import bluesky.plan_stubs as bps
 from bluesky.protocols import (
-    Flyable,
-    Locatable,
-    Location,
-    PartialEvent,
     Reading,
     Stoppable,
     Subscribable,
     Triggerable,
 )
-from frappy.datatypes import (
-    ArrayOf,
-    BLOBType,
-    BoolType,
-    CommandType,
-    FloatRange,
-    IntRange,
-    ScaledInteger,
-    StringType,
-    StructOf,
-    TupleOf,
-)
+from frappy.datatypes import CommandType
 from ophyd_async.core import (
     DEFAULT_TIMEOUT,
     AsyncStatus,
+    Command,
     Device,
     DeviceConnector,
     DeviceFiller,
+    DeviceMock,
     LazyMock,
+    MovableLogic,
     Signal,
     SignalR,
     SignalRW,
-    SignalX,
+    StandardMovable,
     StandardReadable,
     StandardReadableFormat,
+    TimeoutCalculator,
+    TriggerableCommand,
     observe_value,
+    wait_for_value,
 )
 from ophyd_async.core._utils import Callback
 
 from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient
 from secop_ophyd.logs import setup_logging
-from secop_ophyd.propertykeys import DATAINFO, EQUIPMENT_ID, INTERFACE_CLASSES
+from secop_ophyd.propertykeys import EQUIPMENT_ID, INTERFACE_CLASSES
 from secop_ophyd.SECoPSignal import (
     AttributeType,
-    LocalBackend,
     SECoPBackend,
-    SECoPXBackend,
+    SECoPCommandBackend,
 )
 from secop_ophyd.util import Path
 
@@ -87,28 +77,6 @@ IGNORED_PROPS = ["meaning", "_plotly"]
 
 def clean_identifier(anystring):
     return str(re.sub(r"\W+|^(?=\d)", "_", anystring))
-
-
-def secop_enum_name_to_python(member_name: str) -> str:
-    """Convert SECoP enum member name to Python identifier.
-
-    Examples:
-        'Low Energy' -> 'LOW_ENERGY'
-        'high-power' -> 'HIGH_POWER'
-        'Mode 1' -> 'MODE_1'
-
-    :param member_name: Original SECoP enum member name
-    :return: Python-compatible identifier in UPPER_CASE
-    """
-    # Replace spaces and hyphens with underscores, remove other special chars
-    cleaned = re.sub(r"[\s-]+", "_", member_name)
-    cleaned = re.sub(r"[^a-zA-Z0-9_]", "", cleaned)
-    # Convert to uppercase
-    cleaned = cleaned.upper()
-    # Ensure it doesn't start with a digit
-    if cleaned and cleaned[0].isdigit():
-        cleaned = "_" + cleaned
-    return cleaned
 
 
 def format_assigned(device: StandardReadable, signal: SignalR) -> bool:
@@ -226,10 +194,12 @@ class SECoPDeviceConnector(DeviceConnector):
                 device_connector_factory=lambda: SECoPDeviceConnector(
                     self.sri, self._auto_fill_signals, self.loglevel, self.logdir
                 ),
+                command_backend_factory=SECoPCommandBackend,
             )
 
         list(self.filler.create_signals_from_annotations())
         list(self.filler.create_devices_from_annotations(filled=False))
+        list(self.filler.create_commands_from_annotations(filled=False))
 
         self.filler.check_created()
 
@@ -321,6 +291,39 @@ class SECoPDeviceConnector(DeviceConnector):
                         secclient=self.client,
                     )
 
+            # Fill Commands
+            command_dict = self.client.modules[self.module]["commands"]
+
+            # "stop" is skipped: SECoPMoveableDevice already implements
+            # Stoppable.stop() (a real bound method) via StandardMovable, so
+            # exposing a raw command device at the same bare name would
+            # silently shadow it.
+            commands = [
+                c
+                for c in command_dict.keys()
+                if c not in self.filler.ignored_signals and c != "stop"
+            ]
+
+            wait_for_idle_fn = getattr(device, "wait_for_idle", None)
+
+            for command_name in commands:
+                if self._auto_fill_signals or command_name in not_filled:
+                    cmd_datatype: CommandType = command_dict[command_name]["datatype"]
+                    command_type = (
+                        TriggerableCommand
+                        if cmd_datatype.argument is None and cmd_datatype.result is None
+                        else Command
+                    )
+
+                    backend = self.filler.fill_child_command(command_name, command_type)
+
+                    cmd_path = Path(
+                        parameter_name=command_name, module_name=self.module
+                    )
+                    backend.init_command_from_introspection(
+                        cmd_datatype, cmd_path, self.client, wait_for_idle_fn
+                    )
+
         # Node Device: fill child devices (modules)
         else:
 
@@ -399,136 +402,6 @@ class SECoPDeviceConnector(DeviceConnector):
 
         # 3. & 4. Definition in Parameter property "_signal_format" + Defaults
         await device._assign_default_formats()
-
-
-class SECoPCMDDevice(StandardReadable, Flyable, Triggerable):
-    """
-    Command devices that have Signals for command args, return values and a signal
-    for triggering command execution (SignalX). They themselves are triggerable.
-
-    Once the CMD Device is triggered, the command args are retrieved from the 'argument'
-    Signal. The command message is sent to the SEC Node and the return value is written
-    to 'result' signal.
-
-    """
-
-    def __init__(self, path: Path, secclient: AsyncFrappyClient):
-        """Initialize the CMD Device
-
-        :param path: Path to the command in the secclient module dict
-        :type path: Path
-        :param secclient: SECoP client providing communication to the SEC Node
-        :type secclient: AsyncFrappyClient
-        """
-        dev_name: str = path.get_signal_name() + "_CMD"
-
-        self._secclient: AsyncFrappyClient = secclient
-
-        cmd_props = secclient.modules[path._module_name]["commands"][
-            path._accessible_name
-        ]  # noqa: E501
-        cmd_datatype: CommandType = cmd_props["datatype"]
-        datainfo = cmd_props[DATAINFO]
-
-        self.description: str = cmd_props["description"]
-        self.arg_dtype = cmd_datatype.argument
-        self.res_dtype = cmd_datatype.result
-
-        self.argument: SignalRW | None
-        self.result: SignalR | None
-
-        # result signals
-        read = []
-        # argument signals
-        config = []
-
-        self._start_time: float
-        self.commandx: SignalX
-
-        self.wait_idle: bool = False
-
-        with self.add_children_as_readables(
-            format=StandardReadableFormat.CONFIG_SIGNAL
-        ):
-            # Argument Signals (config Signals, can also be read)
-            arg_path = path.append("argument")
-            if self.arg_dtype is None:
-                self.argument = None
-            else:
-                arg_backend = LocalBackend(
-                    path=arg_path,
-                    secop_dtype_obj=self.arg_dtype,
-                    sig_datainfo=datainfo["argument"],
-                )
-                self.argument = SignalRW(arg_backend)
-                config.append(self.argument)
-
-            # Result Signals  (read Signals)
-            res_path = path.append("result")
-
-            if self.res_dtype is None:
-                self.result = None
-            else:
-                res_backend = LocalBackend(
-                    path=res_path,
-                    secop_dtype_obj=self.res_dtype,
-                    sig_datainfo=datainfo["result"],
-                )
-                self.result = SignalRW(res_backend)
-                read.append(self.argument)
-
-            argument = None
-            result = None
-            if isinstance(self.argument, SignalR):
-                argument = self.argument._connector.backend
-
-            if isinstance(self.result, SignalR):
-                result = self.result._connector.backend
-
-            # SignalX (signal that triggers execution of the Command)
-            exec_backend = SECoPXBackend(
-                path=path,
-                secclient=secclient,
-                argument=argument,  # type: ignore
-                result=result,  # type: ignore
-            )
-
-        self.commandx = SignalX(exec_backend)
-
-        super().__init__(name=dev_name)
-
-    def trigger(self) -> AsyncStatus:
-        """Triggers the SECoPCMDDevice and sends command message to SEC Node.
-        Command argument is taken form 'argument' Signal, and return value is
-        written in the 'return' Signal
-
-        :return: A Status object, that is marked Done once the answer from the
-        SEC Node is received
-        :rtype: AsyncStatus
-        """
-        coro = asyncio.wait_for(fut=self._exec_cmd(), timeout=None)
-        return AsyncStatus(awaitable=coro)
-
-    def kickoff(self) -> AsyncStatus:
-        # trigger execution of secop command, wait until Device is Busy
-
-        self._start_time = ttime.time()
-        coro = asyncio.wait_for(fut=asyncio.sleep(1), timeout=None)
-        return AsyncStatus(coro)
-
-    async def _exec_cmd(self):
-        stat = self.commandx.trigger()
-
-        await stat
-
-    def complete(self) -> AsyncStatus:
-        coro = asyncio.wait_for(fut=self._exec_cmd(), timeout=None)
-        return AsyncStatus(awaitable=coro)
-
-    def collect(self) -> Iterator[PartialEvent]:
-        yield dict(
-            time=self._start_time, timestamps={self.name: []}, data={self.name: []}
-        )
 
 
 class SECoPDevice(StandardReadable):
@@ -610,33 +483,6 @@ class SECoPDevice(StandardReadable):
             # Establish connection to SEC Node
             await self._client.connect(3)
 
-        if self._module:
-            module_desc = self._client.modules[self._module]
-
-            # Initialize Command Devices
-            for command, _ in module_desc["commands"].items():
-                # generate new root path
-                cmd_path = Path(parameter_name=command, module_name=self._module)
-                cmd_dev_name = command + "_CMD"
-                setattr(
-                    self,
-                    cmd_dev_name,
-                    SECoPCMDDevice(path=cmd_path, secclient=self._client),
-                )
-
-                cmd_dev: SECoPCMDDevice = getattr(self, cmd_dev_name)
-                # Add Bluesky Plan Methods
-
-                # Stop is already an ophyd native operation
-                if command == "stop":
-                    continue
-
-                cmd_plan = self.generate_cmd_plan(
-                    cmd_dev, cmd_dev.arg_dtype, cmd_dev.res_dtype
-                )
-
-                setattr(self, command, MethodType(cmd_plan, self))
-
         await super().connect(mock, timeout, force_reconnect)
 
         if self._module is None:
@@ -644,81 +490,6 @@ class SECoPDevice(StandardReadable):
             self.set_name(self._client.properties[EQUIPMENT_ID].replace(".", "-"))
         else:
             self.set_name(self._module)
-
-    def generate_cmd_plan(
-        self,
-        cmd_dev: SECoPCMDDevice,
-        argument_type: Type | None = None,
-        return_type: Type | None = None,
-    ):
-
-        def command_plan_no_arg(self, wait_for_idle: bool = False):
-            # Trigger the Command device, meaning that the command gets sent to the
-            # SEC Node
-            yield from bps.trigger(cmd_dev, wait=True)
-
-            if wait_for_idle:
-
-                def wait_for_idle_factory():
-                    return self.wait_for_idle()
-
-                yield from bps.wait_for([wait_for_idle_factory])
-
-            if (
-                return_type is not None
-                and isinstance(cmd_dev.result, SignalR)
-                and isinstance(cmd_dev.result._connector.backend, LocalBackend)
-            ):
-
-                return cmd_dev.result._connector.backend.reading.get_value()
-
-        def command_plan(self, arg, wait_for_idle: bool = False):
-            # TODO  Type checking
-
-            if arg is not None:
-                yield from bps.abs_set(cmd_dev.argument, arg)
-
-            # Trigger the Command device, meaning that the command gets sent to the
-            # SEC Node
-            yield from bps.trigger(cmd_dev, wait=True)
-
-            if wait_for_idle:
-
-                def wait_for_idle_factory():
-                    return self.wait_for_idle()
-
-                yield from bps.wait_for([wait_for_idle_factory])
-
-            if (
-                return_type is not None
-                and isinstance(cmd_dev.result, SignalR)
-                and isinstance(cmd_dev.result._connector.backend, LocalBackend)
-            ):
-
-                return cmd_dev.result._connector.backend.reading.get_value()
-
-        cmd_meth = command_plan_no_arg if argument_type is None else command_plan
-
-        anno_dict = cmd_meth.__annotations__
-
-        dtype_mapping = {
-            StructOf: dict[str, Any],
-            ArrayOf: list[Any],
-            TupleOf: tuple[Any],
-            BLOBType: str,
-            BoolType: bool,
-            FloatRange: float,
-            IntRange: int,
-            ScaledInteger: int,
-            StringType: str,
-        }
-
-        if return_type is not None:
-            anno_dict["return"] = dtype_mapping[return_type.__class__]
-        if argument_type is not None:
-            anno_dict["arg"] = dtype_mapping[argument_type.__class__]
-
-        return cmd_meth
 
     @abstractmethod
     async def _assign_interface_formats(self):
@@ -841,11 +612,14 @@ class SECoPNodeDevice(SECoPDevice):
         pass
 
     def class_from_instance(self, path_to_module: str | None = None):
+        """Generate an annotated device class for this SEC node and write it
+        to its own file, named after the generated node class, inside
+        ``path_to_module`` (default: ``./secop_ophyd_devs/``). Any existing
+        file of that name is overwritten."""
         from secop_ophyd.GenNodeCode import GenNodeCode
 
         description = self._client.client.request("describe")[2]
 
-        # parse genClass file if already present
         genCode = GenNodeCode(path=path_to_module, log=self._logger)
 
         genCode.from_json_describe(description)
@@ -1012,6 +786,8 @@ class SECoPTriggerableDevice(SECoPReadableDevice, Stoppable):
 
     hinted_signals: list[str] = ["value"]
 
+    go: TriggerableCommand
+
     def __init__(
         self,
         sri: str = "",  # SECoP resource identifier host:port:optional[module]
@@ -1029,8 +805,6 @@ class SECoPTriggerableDevice(SECoPReadableDevice, Stoppable):
         :type module_name: str
         """
 
-        self.go_CMD: SECoPCMDDevice
-
         self._success = True
         self._stopped = False
 
@@ -1045,13 +819,66 @@ class SECoPWritableDevice(SECoPReadableDevice):
     pass
 
 
-class SECoPMoveableDevice(SECoPReadableDevice, Locatable, Stoppable):
+@dataclass
+class SECoPMovableLogic(MovableLogic[Any]):
+    """Move logic for a SECoP "Drivable" module.
+
+    A move is considered complete once the module's status parameter
+    leaves BUSY and enters the IDLE range, rather than when readback
+    equals setpoint.
+    """
+
+    status: SignalR
+    secclient: AsyncFrappyClient
+    module: str
+    logger: Logger
+
+    async def stop(self) -> None:
+        self.logger.info(f"Stopping {self.module}")
+        await self.secclient.exec_command(self.module, "stop")
+
+    async def move(self, new_position: Any, timeout: TimeoutCalculator) -> None:
+        # status has type Tuple, transported as a structured numpy array
+        # ('f0': statuscode, 'f1': status message)
+        def _left_busy(current_stat) -> bool:
+            stat_code = current_stat["f0"]
+            return not (BUSY <= stat_code < ERROR)
+
+        self.logger.info(f"Moving {self.module} to {new_position}")
+
+        # set 'target' first, *then* start watching 'status' -- the resting
+        # (pre-move) state is already "not busy", so watching from before the
+        # set would match immediately instead of waiting for a real move
+        await self.setpoint.set(new_position)
+
+        # force a fresh read so we don't wait on a stale, pre-move cached value
+        await self.status.read(False)
+
+        await wait_for_value(self.status, _left_busy, timeout=timeout())
+
+        stat_code = (await self.status.get_value())["f0"]
+        if stat_code >= ERROR or stat_code < IDLE:
+            self.logger.error(f"Module {self.module} --> ERROR/DISABLED")
+            raise RuntimeError(
+                f"Move of {self.module} to {new_position} failed: module "
+                "entered ERROR/DISABLED state"
+            )
+
+        self.logger.info(f"Reached target, module {self.module} --> IDLE")
+
+
+class SECoPMoveableDevice(SECoPReadableDevice, StandardMovable[Any]):
     """
     Standard movable SECoP device, corresponding to a SECoP module with the
     interface class "Drivable"
     """
 
     hinted_signals: list[str] = ["target", "value"]
+
+    # StandardMovable is @default_mock_class(InstantMovableMock), which would
+    # otherwise also install a mock put-callback on 'target' on top of this
+    # project's own SECoPBackend mock machinery when connecting with mock=True.
+    _mock_class = DeviceMock
 
     def __init__(
         self,
@@ -1076,9 +903,6 @@ class SECoPMoveableDevice(SECoPReadableDevice, Locatable, Stoppable):
             sri=sri, name=name, connector=connector, loglevel=loglevel, logdir=logdir
         )
 
-        self._success = True
-        self._stopped = False
-
     async def connect(self, mock=False, timeout=DEFAULT_TIMEOUT, force_reconnect=False):
 
         await super().connect(mock, timeout, force_reconnect)
@@ -1089,84 +913,35 @@ class SECoPMoveableDevice(SECoPReadableDevice, Locatable, Stoppable):
                 + "but is needed for 'Drivable' interface class!"
             )
 
-    def set(self, new_target, timeout: Optional[float] = None) -> AsyncStatus:
-        """Sends new target to SEC Nonde and waits until module is IDLE again
+    @cached_property
+    def movable_logic(self) -> MovableLogic:
+        if self._module is None:
+            raise RuntimeError
 
-        :param new_target: new taget/setpoint for module
-        :type new_target: _type_
-        :param timeout: timeout for set operation, defaults to None
-        :type timeout: Optional[float], optional
-        :return: Asyncstatus that gets set to Done once module is IDLE again
-        :rtype: AsyncStatus
-        """
-        coro = asyncio.wait_for(self._move(new_target), timeout=timeout)
-        return AsyncStatus(coro)
+        return SECoPMovableLogic(
+            setpoint=self.target,
+            readback=self.value,
+            status=self.status,
+            secclient=self._client,
+            module=self._module,
+            logger=self._logger,
+        )
 
-    async def _move(self, new_target):
-        self._success = True
-        self._stopped = False
-
-        await self.target.set(new_target)
-        self._logger.info(f"Moving {self.name} to {new_target}")
-
-        # force reading of status from device
-        await self.status.read(False)
-
-        # observe status and wait until dvice is IDLE again
-        async for current_stat in observe_value(self.status):
-            stat_code = current_stat["f0"]
-
-            if self._stopped is True:
-                self._logger.info(
-                    f"Move of {self.name} to {new_target} was stopped STOPPED"
-                )
-                break
-
-            # Error State or DISABLED
-            if stat_code >= ERROR or stat_code < IDLE:
-                self._logger.error(f"Module {self.name} --> ERROR/DISABLED")
-                self._success = False
-                break
-
-            # Module is in IDLE/WARN state
-            if IDLE <= stat_code < BUSY:
-                self._logger.info(f"Reached Target Module {self.name} --> IDLE")
-                break
-
-            # TODO other status transitions
-
-        if not self._success:
-            self._logger.error(
-                f"Move of {self.name} to {new_target} was not successful"
-            )
-
-    async def stop(self, success=True):
-        """Calls stop command on the SEC Node module
-
-        :param success:
-            True: device is stopped as planned
-            False: something has gone wrong
-            (defaults to True)
-        :type success: bool, optional
-        """
-        self._success = success
-
-        if not success:
-            self._logger.info(f"Stopping {self.name} success={success}")
-            await self._client.exec_command(self._module, "stop")
-            self._stopped = True
-
-    async def locate(self) -> Location:
-        # return current location of the device (setpoint and readback).
-        # Only locally cached values are returned
-        setpoint = await self._client.get_parameter(self._module, "target", True)
-        readback = await self._client.get_parameter(self._module, "value", True)
-
-        location: Location = {
-            "setpoint": setpoint.value,
-            "readback": readback.value,
-        }
-        return location
+    def set_name(self, name: str, *, child_name_separator: str | None = None) -> None:
+        # set_name() can run several times before movable_logic is actually
+        # resolvable: once before connect() (e.g. init_devices() naming devices
+        # up front), and again mid-connect whenever a sibling/parent signal is
+        # filled in (DeviceFiller.fill_child_signal() -> _set_device_child()
+        # triggers a renaming cascade down the whole tree). StandardMovable's
+        # set_name() needs both '_module' (set by set_module(), early in the
+        # parent node's connect_real()) and 'target' (only created once this
+        # device's own connect_real() fills its signals) to resolve
+        # movable_logic, so skip it and fall back to plain Device.set_name()
+        # until both are present; the later call does the real renaming.
+        if self._module is None or not hasattr(self, "target"):
+            Device.set_name(self, name, child_name_separator=child_name_separator)
+            return
+        super().set_name(name, child_name_separator=child_name_separator)
 
     async def _assign_interface_formats(self):
         await super()._assign_interface_formats()
