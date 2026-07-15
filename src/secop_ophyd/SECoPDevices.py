@@ -1,8 +1,10 @@
+import asyncio
 import logging
 import re
 import time as ttime
 import warnings
 from abc import abstractmethod
+from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import cached_property
 from logging import Logger
@@ -10,6 +12,7 @@ from typing import Any, Dict
 
 import bluesky.plan_stubs as bps
 from bluesky.protocols import (
+    Location,
     Reading,
     Stoppable,
     Subscribable,
@@ -29,6 +32,7 @@ from ophyd_async.core import (
     Signal,
     SignalR,
     SignalRW,
+    SignalW,
     StandardMovable,
     StandardReadable,
     StandardReadableFormat,
@@ -47,7 +51,15 @@ from secop_ophyd.SECoPSignal import (
     SECoPBackend,
     SECoPCommandBackend,
 )
-from secop_ophyd.util import Path
+from secop_ophyd.util import (
+    MAX_DEPTH,
+    CompositeKind,
+    IncompatibleSECoPDatatype,
+    Path,
+    SECoPdtype,
+    classify_datatype,
+    get_composite_members,
+)
 
 # Predefined Status Codes
 DISABLED = 0
@@ -122,6 +134,31 @@ class ParameterType:
             return
 
         backend.attribute_type = AttributeType.PARAMETER
+        backend._secclient = parent._client
+
+
+class ParameterMemberType:
+    """Annotation for a split struct/tuple member Signal (one field/index of
+    a decomposed composite parameter). Distinct from `ParameterType` so
+    annotation-scanning doesn't mark it AttributeType.PARAMETER -- it must
+    stay unset until SECoPDeviceConnector.connect_real() calls
+    init_member_from_introspection(), which needs to see it as MEMBER (or
+    unset), not PARAMETER."""
+
+    def __repr__(self) -> str:
+        """Return repr suitable for code generation in annotations."""
+        return "ParamMemberT()"
+
+    def __call__(self, parent: Device, child: Device):
+        if not isinstance(child, Signal):
+            return
+
+        backend = child._connector.backend
+
+        if not isinstance(backend, SECoPBackend):
+            return
+
+        backend.attribute_type = AttributeType.MEMBER
         backend._secclient = parent._client
 
 
@@ -231,12 +268,50 @@ class SECoPDeviceConnector(DeviceConnector):
         # Establish connection to SEC Node
         await self.client.connect(3)
 
+        # deferred import to avoid a circular import (GenNodeCode imports
+        # from this module); imported once here rather than repeated inline
+        # in each branch below to avoid shadowing across loop iterations
+        from secop_ophyd.GenNodeCode import get_type_param
+
         # Module Device: fill Parameters & Pproperties
         # (commands are done via annotated plans)
         if self.module:
 
             # Fill Parmeters
             parameter_dict = self.client.modules[self.module]["parameters"]
+
+            # StandardMovable's readback machinery (set_name/subscribe_reading/
+            # locate) unconditionally requires movable_logic.readback to be a
+            # working SignalR -- including right now, before any other child
+            # of this module has been filled below (assigning any child
+            # triggers a set_name() cascade that resolves movable_logic
+            # immediately). When 'value' is composite it is fully decomposed
+            # into split value_* signals below (for a tiled-safe
+            # read()/describe() stream), with no bare 'value' attribute -- so
+            # for a Movable module we additionally build+connect a private,
+            # undecomposed 'value' SignalR purely to satisfy that internal
+            # plumbing. `object.__setattr__` is used to store it without
+            # going through Device's own __setattr__, which would otherwise
+            # treat any Signal-valued attribute as a tracked child (making it
+            # show up in device.children()/read()/describe() -- exactly what
+            # decomposing 'value' is meant to avoid).
+            if (
+                isinstance(device, SECoPMoveableDevice)
+                and "value" in parameter_dict
+                and classify_datatype(parameter_dict["value"]["datatype"])
+                is CompositeKind.DECOMPOSABLE
+            ):
+                value_datatype = get_type_param(parameter_dict["value"]["datatype"])
+                value_backend = SECoPBackend(None)  # type: SECoPBackend
+                value_backend.init_parameter_from_introspection(
+                    datatype=value_datatype,  # type: ignore[arg-type]
+                    path=self.module + ":value",
+                    secclient=self.client,
+                )
+                value_readback = SignalR(value_backend)
+                await value_readback.connect(timeout=timeout)
+                object.__setattr__(device, "_composite_value_readback", value_readback)
+
             # remove ignored signals
             parameters = [
                 child
@@ -247,22 +322,81 @@ class SECoPDeviceConnector(DeviceConnector):
             # Dertermine children that are declared but not yet filled
             not_filled = {unfilled for unfilled, _ in device.children()}
 
+            mandatory_parameters = getattr(device, "mandatory_parameters", [])
+
             for param_name in parameters:
-                if self._auto_fill_signals or param_name in not_filled:
-                    signal_type = (
-                        SignalR if parameter_dict[param_name]["readonly"] else SignalRW
+                raw_datatype = parameter_dict[param_name]["datatype"]
+                readonly = parameter_dict[param_name]["readonly"]
+                kind = classify_datatype(raw_datatype)
+
+                if kind is CompositeKind.DECOMPOSABLE:
+                    members = get_composite_members(raw_datatype)
+                    declared = param_name in not_filled or any(
+                        f"{param_name}_{member_key}" in not_filled
+                        for member_key, _ in members
                     )
+                else:
+                    declared = param_name in not_filled
 
-                    backend = self.filler.fill_child_signal(param_name, signal_type)
+                if not (self._auto_fill_signals or declared):
+                    continue
 
-                    from secop_ophyd.GenNodeCode import get_type_param
-
-                    datatype = get_type_param(parameter_dict[param_name]["datatype"])
-                    backend.init_parameter_from_introspection(
-                        datatype=datatype,
-                        path=self.module + ":" + param_name,
-                        secclient=self.client,
+                if kind is CompositeKind.UNSUPPORTED:
+                    msg = (
+                        f"Parameter '{param_name}' of module '{self.module}' has a "
+                        f"datatype nesting depth of "
+                        f"{SECoPdtype(raw_datatype).max_depth} (struct/tuple nested "
+                        f"inside a struct/tuple/array). Tiled & Databroker only "
+                        f"support flat struct/tuple parameters (depth <= "
+                        f"{MAX_DEPTH}); no signal will be created for '{param_name}'."
                     )
+                    if param_name in mandatory_parameters:
+                        raise IncompatibleSECoPDatatype(msg)
+                    warnings.warn(msg)
+                    continue
+
+                if kind is CompositeKind.DECOMPOSABLE:
+                    for member_key, member_dtype in members:
+                        member_backend = self.filler.fill_child_signal(
+                            f"{param_name}_{member_key}", SignalR
+                        )
+                        member_backend.init_member_from_introspection(
+                            module_name=self.module,
+                            parent_param=param_name,
+                            member_key=member_key,
+                            member_datatype=member_dtype,
+                            secclient=self.client,
+                        )
+
+                    if not readonly:
+                        write_backend = self.filler.fill_child_signal(
+                            param_name, SignalW
+                        )
+
+                        write_datatype = get_type_param(raw_datatype)
+                        write_backend.init_parameter_from_introspection(
+                            datatype=write_datatype,
+                            path=self.module + ":" + param_name,
+                            secclient=self.client,
+                        )
+
+                    if hasattr(device, "_resolved_parameters"):
+                        device._resolved_parameters.add(param_name)
+                    continue
+
+                # ATOMIC: single signal, unchanged from previous behaviour
+                signal_type = SignalR if readonly else SignalRW
+
+                backend = self.filler.fill_child_signal(param_name, signal_type)
+
+                datatype = get_type_param(raw_datatype)
+                backend.init_parameter_from_introspection(
+                    datatype=datatype,
+                    path=self.module + ":" + param_name,
+                    secclient=self.client,
+                )
+                if hasattr(device, "_resolved_parameters"):
+                    device._resolved_parameters.add(param_name)
 
             # Fill Properties
             module_property_dict = self.client.modules[self.module]["properties"]
@@ -342,7 +476,7 @@ class SECoPDeviceConnector(DeviceConnector):
                     mod_dev: SECoPDevice = getattr(device, module_name)
                     mod_dev.set_module(module_name)
 
-            # Fill Node properties
+            # Fill Node propertiesdevice_filler
             node_property_dict = self.client.properties
 
             # remove ignored signals
@@ -418,6 +552,7 @@ class SECoPDevice(StandardReadable):
     _logger: Logger
 
     hinted_signals: list[str] = []
+    mandatory_parameters: list[str] = []
 
     def __init__(
         self,
@@ -442,6 +577,14 @@ class SECoPDevice(StandardReadable):
         self._mod_prop_devices = {}
         self._param_devices = {}
         self._node_id = sri.split(":")[0] + ":" + sri.split(":")[1]
+
+        # raw SECoP parameter names that got at least one Signal built for
+        # them (split members and/or a monolithic signal); used to tell
+        # "parameter missing from the SEC node entirely" apart from
+        # "parameter present but incompatible datatype" (the latter raises
+        # eagerly in SECoPDeviceConnector.connect_real() for mandatory
+        # parameters instead)
+        self._resolved_parameters: set[str] = set()
 
         self._logger = setup_logging(
             name=f"frappy:{self._host}:{self._port}",
@@ -517,14 +660,13 @@ class SECoPDevice(StandardReadable):
             if not isinstance(backend, SECoPBackend):
                 continue
 
-            param_name = backend.path_str.split(":")[-1]
-            if param_name == "status":
-                # status signals should not be assigned a format,
-                # but a SignalR children (this can be removed once tiled can
-                # hanlde composite dtypes)
+            if not isinstance(child, SignalR):
+                # write-only whole-struct/tuple SignalW: cannot be given a
+                # read/config format, only its split SignalR members can
                 continue
 
-            # child is a Signal with SECoPParamBackend
+            # child is a Signal with a SECoPBackend (parameter, property, or
+            # struct/tuple member)
 
             # check if signal already has a format assigned
             signalr_device = assert_device_is_signalr(child)
@@ -555,6 +697,45 @@ class SECoPDevice(StandardReadable):
         self.add_readables(
             hinted_uncached_signals, StandardReadableFormat.HINTED_UNCACHED_SIGNAL
         )
+
+    def _split_signals(self, parent_param: str) -> list[SignalR]:
+        """Return the split member Signals for a decomposed composite
+        parameter (empty list if `parent_param` is atomic, i.e. was not
+        decomposed)."""
+        result: list[SignalR] = []
+        for _, child in self.children():
+            if not isinstance(child, SignalR):
+                continue
+            backend = child._connector.backend
+            if (
+                isinstance(backend, SECoPBackend)
+                and backend.attribute_type == AttributeType.MEMBER
+                and backend._parent_param == parent_param
+            ):
+                result.append(child)
+        return result
+
+    def _assign_hinted_format(
+        self, param_name: str, signals: Sequence[SignalR]
+    ) -> None:
+        """Assign HINTED_SIGNAL to whichever of `signals` (either `[self.value]`/
+        `[self.target]` for an atomic parameter, or its `_split_signals(...)`
+        for a decomposed one) don't already have a format assigned; warn about
+        any that do but aren't a read format."""
+        unassigned = []
+        for signal in signals:
+            if format_assigned(self, signal):
+                if not is_read_signal(self, signal):
+                    warnings.warn(
+                        f"Signal '{signal.name}' of device {self.name} has format "
+                        f"assigned that is not compatible with {param_name}'s "
+                        "interface class role"
+                    )
+            else:
+                unassigned.append(signal)
+
+        if unassigned:
+            self.add_readables(unassigned, StandardReadableFormat.HINTED_SIGNAL)
 
 
 class SECoPNodeDevice(SECoPDevice):
@@ -655,6 +836,7 @@ class SECoPReadableDevice(SECoPDevice, Triggerable, Subscribable):
     """
 
     hinted_signals: list[str] = ["value"]
+    mandatory_parameters: list[str] = ["value", "status"]
 
     def __init__(
         self,
@@ -674,7 +856,9 @@ class SECoPReadableDevice(SECoPDevice, Triggerable, Subscribable):
         """
 
         self.value: SignalR
-        self.status: SignalR
+        # status is SECoP's StatusType == TupleOf(EnumType, StringType), always
+        # decomposed: status_0 is the status code, status_1 the status text
+        self.status_0: SignalR
 
         super().__init__(
             sri=sri, name=name, connector=connector, loglevel=loglevel, logdir=logdir
@@ -683,30 +867,25 @@ class SECoPReadableDevice(SECoPDevice, Triggerable, Subscribable):
     async def connect(self, mock=False, timeout=DEFAULT_TIMEOUT, force_reconnect=False):
         await super().connect(mock, timeout, force_reconnect)
 
-        if not hasattr(self, "value"):
+        if "value" not in self._resolved_parameters:
             raise AttributeError(
-                "Attribute 'value' has not been assigned,"
+                "Parameter 'value' has not been assigned,"
                 + "but is needed for Readable interface class"
             )
 
-        if not hasattr(self, "status"):
+        if "status" not in self._resolved_parameters:
             raise AttributeError(
-                "Attribute 'status' has not been assigned,"
+                "Parameter 'status' has not been assigned,"
                 + "but is needed for Readable interface class"
             )
 
     async def _assign_interface_formats(self):
+        value_signals = (
+            [self.value] if hasattr(self, "value") else self._split_signals("value")
+        )
+        self._assign_hinted_format("value", value_signals)
 
-        if format_assigned(self, self.value):
-            if not is_read_signal(self, self.value):
-                warnings.warn(
-                    f"Signal 'value' of device {self.name} has format assigned "
-                    + "that is not compatible with Readable interface class"
-                )
-        else:
-            self.add_readables([self.value], StandardReadableFormat.HINTED_SIGNAL)
-
-        # TODO ensure status signal must be neither config nor read format
+        # TODO ensure status signals must be neither config nor read format
 
     async def wait_for_idle(self):
         """asynchronously waits until module is IDLE again. this is helpful,
@@ -715,19 +894,14 @@ class SECoPReadableDevice(SECoPDevice, Triggerable, Subscribable):
 
         self._logger.info(f"Waiting for {self.name} to be IDLE")
 
-        if self.status is None:
+        if self.status_0 is None:
             self._logger.error("Status Signal not initialized")
             raise Exception("status Signal not initialized")
 
         # force reading of fresh status from device
-        await self.status.read(False)
+        await self.status_0.read(False)
 
-        async for current_stat in observe_value(self.status):
-            # status is has type Tuple and is therefore transported as
-            # structured Numpy array ('f0':statuscode;'f1':status Message)
-
-            stat_code = current_stat["f0"]
-
+        async for stat_code in observe_value(self.status_0):
             # Module is in IDLE/WARN state
             if IDLE <= stat_code < BUSY:
                 self._logger.info(f"Module {self.name} --> IDLE")
@@ -748,12 +922,7 @@ class SECoPReadableDevice(SECoPDevice, Triggerable, Subscribable):
     # TODO add timeout
     def observe_status_change(self, monitored_status_code: int):
         async def switch_from_status_inner():
-            async for current_stat in observe_value(self.status):
-                # status is has type Tuple and is therefore transported as
-                # structured Numpy array ('f0':statuscode;'f1':status Message)
-
-                stat_code = current_stat["f0"]
-
+            async for stat_code in observe_value(self.status_0):
                 if monitored_status_code != stat_code:
                     break
 
@@ -770,7 +939,8 @@ class SECoPReadableDevice(SECoPDevice, Triggerable, Subscribable):
         )
 
     def subscribe(self, function: Callback[dict[str, Reading]]) -> None:
-        """Subscribe to updates in the reading"""
+        """Subscribe to updates in the reading. Only supported for an atomic
+        (non-composite) 'value' parameter."""
         self.value.subscribe(function=function)
 
     def clear_sub(self, function: Callback) -> None:
@@ -828,6 +998,8 @@ class SECoPMovableLogic(MovableLogic[Any]):
     equals setpoint.
     """
 
+    # bound to status_0 (the status code Signal, an int) -- status is SECoP's
+    # StatusType == TupleOf(EnumType, StringType), always decomposed
     status: SignalR
     secclient: AsyncFrappyClient
     module: str
@@ -838,10 +1010,7 @@ class SECoPMovableLogic(MovableLogic[Any]):
         await self.secclient.exec_command(self.module, "stop")
 
     async def move(self, new_position: Any, timeout: TimeoutCalculator) -> None:
-        # status has type Tuple, transported as a structured numpy array
-        # ('f0': statuscode, 'f1': status message)
-        def _left_busy(current_stat) -> bool:
-            stat_code = current_stat["f0"]
+        def _left_busy(stat_code) -> bool:
             return not (BUSY <= stat_code < ERROR)
 
         self.logger.info(f"Moving {self.module} to {new_position}")
@@ -856,7 +1025,7 @@ class SECoPMovableLogic(MovableLogic[Any]):
 
         await wait_for_value(self.status, _left_busy, timeout=timeout())
 
-        stat_code = (await self.status.get_value())["f0"]
+        stat_code = await self.status.get_value()
         if stat_code >= ERROR or stat_code < IDLE:
             self.logger.error(f"Module {self.module} --> ERROR/DISABLED")
             raise RuntimeError(
@@ -874,6 +1043,14 @@ class SECoPMoveableDevice(SECoPReadableDevice, StandardMovable[Any]):
     """
 
     hinted_signals: list[str] = ["target", "value"]
+    mandatory_parameters: list[str] = SECoPReadableDevice.mandatory_parameters + [
+        "target"
+    ]
+
+    # set (via object.__setattr__, bypassing Device's child-tracking) in
+    # SECoPDeviceConnector.connect_real() when 'value' is composite; None
+    # (the atomic-value case, where movable_logic.readback is self.value)
+    _composite_value_readback: SignalR | None = None
 
     # StandardMovable is @default_mock_class(InstantMovableMock), which would
     # otherwise also install a mock put-callback on 'target' on top of this
@@ -907,24 +1084,62 @@ class SECoPMoveableDevice(SECoPReadableDevice, StandardMovable[Any]):
 
         await super().connect(mock, timeout, force_reconnect)
 
-        if not hasattr(self, "target"):
+        if "target" not in self._resolved_parameters:
             raise AttributeError(
-                "Attribute 'target' has not been assigned, "
+                "Parameter 'target' has not been assigned, "
                 + "but is needed for 'Drivable' interface class!"
             )
+
+    def _has_atomic_setpoint_readback(self) -> bool:
+        """True if both 'target' and 'value' are plain (non-composite)
+        parameters, i.e. self.target is a real SignalRW and self.value
+        exists -- the case StandardMovable's default locate()/movable_logic
+        usage was designed for. False if either was decomposed into split
+        member signals (self.target is then a write-only SignalW, and/or
+        self.value doesn't exist as a bare attribute)."""
+        return isinstance(self.target, SignalR) and hasattr(self, "value")
 
     @cached_property
     def movable_logic(self) -> MovableLogic:
         if self._module is None:
             raise RuntimeError
 
+        # atomic 'value': the real signal. composite 'value': the private,
+        # undecomposed readback SignalR pre-connected in connect_real() --
+        # StandardMovable itself (set_name/subscribe_reading/locate) requires
+        # movable_logic.readback to always be a working SignalR; see the
+        # comment at its construction site for why it isn't just self.value.
+        readback = (
+            self.value if hasattr(self, "value") else self._composite_value_readback
+        )
+
         return SECoPMovableLogic(
             setpoint=self.target,
-            readback=self.value,
-            status=self.status,
+            readback=readback,  # type: ignore[arg-type]
+            status=self.status_0,
             secclient=self._client,
             module=self._module,
             logger=self._logger,
+        )
+
+    async def locate(self) -> Location[Any]:
+        if self._has_atomic_setpoint_readback():
+            return await super().locate()
+
+        if self._module is None:
+            raise RuntimeError
+
+        # 'target'/'value' were decomposed into split member signals (no
+        # single Signal to .get_value() on) -- bypass Signals entirely and
+        # read the whole structured parameter straight from the SEC node,
+        # mirroring the direct-client-access pattern already used by
+        # trigger()/SECoPMovableLogic.stop()
+        setpoint_reading, readback_reading = await asyncio.gather(
+            self._client.get_parameter(self._module, "target", trycache=True),
+            self._client.get_parameter(self._module, "value", trycache=True),
+        )
+        return Location(
+            setpoint=setpoint_reading.value, readback=readback_reading.value
         )
 
     def set_name(self, name: str, *, child_name_separator: str | None = None) -> None:
@@ -946,14 +1161,12 @@ class SECoPMoveableDevice(SECoPReadableDevice, StandardMovable[Any]):
     async def _assign_interface_formats(self):
         await super()._assign_interface_formats()
 
-        if format_assigned(self, self.target):
-            if not is_read_signal(self, self.target):
-                warnings.warn(
-                    f"Signal 'target' of device {self.name} has format assigned "
-                    + "that is not compatible with Movable interface class"
-                )
-        else:
-            self.add_readables([self.target], StandardReadableFormat.HINTED_SIGNAL)
+        target_signals = (
+            [self.target]
+            if isinstance(self.target, SignalR)
+            else self._split_signals("target")
+        )
+        self._assign_hinted_format("target", target_signals)
 
 
 def class_from_interface(mod_properties: dict):

@@ -10,12 +10,11 @@ async def test_subset_signals_annotation(cryo_sim):
 
     from typing import Annotated as A
 
-    from numpy import ndarray
     from ophyd_async.core import SignalRW
     from ophyd_async.core import StandardReadableFormat as Format
     from ophyd_async.core import StrictEnum
 
-    from secop_ophyd.SECoPDevices import ParameterType
+    from secop_ophyd.SECoPDevices import ParameterMemberType, ParameterType
 
     class Cryostat_Mode_Enum(StrictEnum):
         """mode enum for `Cryostat`."""
@@ -32,7 +31,9 @@ async def test_subset_signals_annotation(cryo_sim):
         value: A[
             SignalR[float], ParameterType(), Format.HINTED_SIGNAL
         ]  # regulation temperature; Unit: (K)
-        status: A[SignalR[ndarray], ParameterType()]  # current status of the module
+        # status is StatusType == TupleOf(EnumType, StringType), always split
+        status_0: A[SignalR[int], ParameterMemberType()]  # status code
+        status_1: A[SignalR[str], ParameterMemberType()]  # status message
         target: A[
             SignalRW[float], ParameterType(), Format.HINTED_SIGNAL
         ]  # target temperature; Unit: (K)
@@ -61,11 +62,12 @@ async def test_enum_annotation(cryo_sim):
     from typing import Annotated as A
 
     from numpy import ndarray
-    from ophyd_async.core import SignalR, SignalRW
+    from ophyd_async.core import SignalR, SignalRW, SignalW
     from ophyd_async.core import StandardReadableFormat as Format
     from ophyd_async.core import StrictEnum
 
     from secop_ophyd.SECoPDevices import (
+        ParameterMemberType,
         ParameterType,
         PropertyType,
         SECoPMoveableDevice,
@@ -94,7 +96,9 @@ async def test_enum_annotation(cryo_sim):
         value: A[
             SignalR[float], ParameterType(), Format.HINTED_SIGNAL
         ]  # regulation temperature; Unit: (K)
-        status: A[SignalR[ndarray], ParameterType()]  # current status of the module
+        # status is StatusType == TupleOf(EnumType, StringType), always split
+        status_0: A[SignalR[int], ParameterMemberType()]  # status code
+        status_1: A[SignalR[str], ParameterMemberType()]  # status message
         target: A[
             SignalRW[float], ParameterType(), Format.HINTED_SIGNAL
         ]  # target temperature; Unit: (K)
@@ -110,7 +114,12 @@ async def test_enum_annotation(cryo_sim):
         heaterpower: A[
             SignalR[float], ParameterType()
         ]  # current heater power; Unit: (W)
-        pid: A[SignalRW[ndarray], ParameterType()]  # regulation coefficients
+        # pid is TupleOf(FloatRange, FloatRange, FloatRange), writable and
+        # depth 1 -> split read-only members plus a write-only SignalW
+        pid_0: A[SignalR[float], ParameterMemberType()]  # regulation coefficient 'p'
+        pid_1: A[SignalR[float], ParameterMemberType()]  # regulation coefficient 'i'
+        pid_2: A[SignalR[float], ParameterMemberType()]  # regulation coefficient 'd'
+        pid: A[SignalW[ndarray], ParameterType()]  # regulation coefficients
         p: A[
             SignalRW[float], ParameterType()
         ]  # regulation coefficient 'p'; Unit: (%/K)
