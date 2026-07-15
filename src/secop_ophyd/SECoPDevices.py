@@ -1147,13 +1147,23 @@ class SECoPMoveableDevice(SECoPReadableDevice, StandardMovable[Any]):
         # resolvable: once before connect() (e.g. init_devices() naming devices
         # up front), and again mid-connect whenever a sibling/parent signal is
         # filled in (DeviceFiller.fill_child_signal() -> _set_device_child()
-        # triggers a renaming cascade down the whole tree). StandardMovable's
-        # set_name() needs both '_module' (set by set_module(), early in the
-        # parent node's connect_real()) and 'target' (only created once this
-        # device's own connect_real() fills its signals) to resolve
-        # movable_logic, so skip it and fall back to plain Device.set_name()
-        # until both are present; the later call does the real renaming.
-        if self._module is None or not hasattr(self, "target"):
+        # triggers a renaming cascade down the whole tree) -- including a
+        # rename of *this* device as a not-yet-connected child, triggered by
+        # a *sibling* module being filled into the parent node, well before
+        # this device's own connect_real() has run at all. StandardMovable's
+        # set_name() needs '_module' (set by set_module(), early in the
+        # parent node's connect_real()), 'target' (only created once this
+        # device's own connect_real() fills its signals), and a resolvable
+        # readback (either the atomic 'value' signal, or -- for composite
+        # 'value' -- the private _composite_value_readback connected at the
+        # very start of this device's own connect_real(), see there) to
+        # resolve movable_logic, so skip it and fall back to plain
+        # Device.set_name() until all three are present; a later call does
+        # the real renaming.
+        readback_ready = (
+            hasattr(self, "value") or self._composite_value_readback is not None
+        )
+        if self._module is None or not hasattr(self, "target") or not readback_ready:
             Device.set_name(self, name, child_name_separator=child_name_separator)
             return
         super().set_name(name, child_name_separator=child_name_separator)

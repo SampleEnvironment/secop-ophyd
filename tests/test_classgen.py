@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 from frappy.datatypes import StructOf
-from ophyd_async.core import SignalR, init_devices
+from ophyd_async.core import SignalR, SignalW, init_devices
 
 from secop_ophyd.GenNodeCode import (
     CommandAttribute,
@@ -918,6 +918,45 @@ async def test_gen_real_node(
     assert (
         "from enum import Enum" in generated_code or "SupersetEnum" in generated_code
     ), "Enum import should be present"
+
+
+async def test_gen_real_node_composite_movable_sibling_connects(
+    clean_generated_file,
+    nested_struct_sim,
+    nested_node_no_re: SECoPNodeDevice,
+):
+    """Regression test: a Drivable module with a composite 'value' (no bare
+    'value' attribute, only split value_* signals) that is a sibling of
+    other modules in a fully class-annotated *generated* node must connect
+    without crashing.
+
+    create_children_from_annotations() pre-creates every declared child
+    device/signal -- including 'target' -- at construction time, before any
+    connect() call runs, purely from the generated class's annotations. So
+    by the time init_devices() does its first naming pass (also before
+    connect()), a sibling module being named can trigger this Drivable's
+    set_name() while 'target' already structurally exists but movable_logic
+    isn't actually resolvable yet (nothing has been connected). Regression
+    for a crash where SECoPMoveableDevice.set_name() only guarded on
+    hasattr(self, 'target'), not on whether the (possibly composite) readback
+    was ready too: AttributeError: 'NoneType' object has no attribute
+    'set_name' from StandardMovable.set_name() -> movable_logic.readback.
+    """
+    nested_node_no_re.class_from_instance(clean_generated_file)
+
+    from tests.testgen.Ophyd_secop_frappy_demo import (  # type: ignore
+        Ophyd_secop_frappy_demo,
+    )
+
+    async with init_devices():
+        gen_node = Ophyd_secop_frappy_demo(sec_node_uri="localhost:10771")
+
+    struct_mod = gen_node.ophy_struct
+    assert not hasattr(struct_mod, "value")
+    assert isinstance(struct_mod.target, SignalW)
+
+    reading = await struct_mod.value_x.read()
+    assert isinstance(reading[struct_mod.value_x.name]["value"], float)
 
 
 async def test_subsequent_real_nodes_with_enum(
