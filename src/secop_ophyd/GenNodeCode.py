@@ -615,16 +615,20 @@ class GenNodeCode:
 
                 if kind is CompositeKind.DECOMPOSABLE:
                     for member_key, member_dt in get_composite_members(raw_datatype):
-                        member_type_param: str | None
+                        member_type_param = get_type_param(member_dt)
                         if isinstance(member_dt, EnumType):
                             # an EnumType member embedded in a struct/tuple
-                            # stays as its raw numeric code at runtime (see
-                            # SECoPBackend.init_member_from_introspection's
-                            # _is_enum_member handling), not a resolved enum
-                            # class -- so no enum class is generated here
-                            member_type_param = "int"
-                        else:
-                            member_type_param = get_type_param(member_dt)
+                            # resolves to its member name string at runtime,
+                            # just like a standalone top-level enum parameter
+                            # -- so it gets its own generated enum class too
+                            member_type_param = _enum_type_param(
+                                member_type_param,
+                                f"{module_class}_{_camel(param_name)}_"
+                                f"{_camel(member_key)}_Enum",
+                                member_dt.export_datatype().get("members", {}),
+                                f"{param_name}.{member_key} enum for "
+                                f"`{module_class}`.",
+                            )
 
                         mod_parameters.append(
                             ParameterAttribute(

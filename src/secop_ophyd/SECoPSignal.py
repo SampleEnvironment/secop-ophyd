@@ -13,7 +13,6 @@ from frappy.datatypes import (
     BoolType,
     CommandType,
     DataType,
-    EnumType,
     FloatRange,
     IntRange,
     ScaledInteger,
@@ -209,7 +208,6 @@ class SECoPBackend(SignalBackend[SignalDatatypeT]):
     _parent_param: str
     _member_key: str
     _is_tuple_member: bool
-    _is_enum_member: bool
 
     def __init__(
         self,
@@ -354,15 +352,6 @@ class SECoPBackend(SignalBackend[SignalDatatypeT]):
         self.SECoPdtype_obj = member_datatype
         self.SECoP_type_info = SECoPdtype(member_datatype)
 
-        # an EnumType member embedded in a struct/tuple stays as its raw
-        # numeric code -- matching the numpy structured-dtype convention
-        # already used for composites ("<i8", see EnumNP.make_numpy_dtype())
-        # -- rather than being resolved to its member name string the way a
-        # standalone top-level enum parameter is. This also preserves the
-        # numeric ordering (IDLE <= code < BUSY, etc.) that status code
-        # handling (wait_for_idle, SECoPMovableLogic.move, ...) relies on.
-        self._is_enum_member = isinstance(member_datatype, EnumType)
-
         # split member signals mirror the format of the parent (whole)
         # parameter they were split from, e.g. a struct declared
         # _signal_format="HINTED_SIGNAL" makes every one of its member
@@ -386,12 +375,8 @@ class SECoPBackend(SignalBackend[SignalDatatypeT]):
         self.describe_dict = {}
         self.describe_dict["source"] = self.source_name
         self.describe_dict.update(self.SECoP_type_info.get_datakey())
-        if self._is_enum_member:
-            self.describe_dict["dtype"] = "integer"
 
-        if self._is_enum_member:
-            self.datatype = cast(type, int)
-        elif _is_concrete_enum_class(self._annotated_datatype):
+        if _is_concrete_enum_class(self._annotated_datatype):
             self.datatype = cast(type, self._annotated_datatype)
         else:
             self.datatype = self.SECoP_type_info.np_datatype
@@ -531,8 +516,6 @@ class SECoPBackend(SignalBackend[SignalDatatypeT]):
         return raw_value[self._member_key]
 
     def _convert_member(self, raw_member_val: Any) -> Any:
-        if self._is_enum_member:
-            return int(raw_member_val)
         self.SECoP_type_info.update_dtype(raw_member_val)
         return self.SECoP_type_info.secop2val(raw_member_val)
 

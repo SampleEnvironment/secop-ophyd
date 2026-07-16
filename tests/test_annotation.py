@@ -32,7 +32,7 @@ async def test_subset_signals_annotation(cryo_sim):
             SignalR[float], ParameterType(), Format.HINTED_SIGNAL
         ]  # regulation temperature; Unit: (K)
         # status is StatusType == TupleOf(EnumType, StringType), always split
-        status_0: A[SignalR[int], ParameterMemberType()]  # status code
+        status_0: A[SignalR[StrictEnum], ParameterMemberType()]  # status code
         status_1: A[SignalR[str], ParameterMemberType()]  # status message
         target: A[
             SignalRW[float], ParameterType(), Format.HINTED_SIGNAL
@@ -97,7 +97,7 @@ async def test_enum_annotation(cryo_sim):
             SignalR[float], ParameterType(), Format.HINTED_SIGNAL
         ]  # regulation temperature; Unit: (K)
         # status is StatusType == TupleOf(EnumType, StringType), always split
-        status_0: A[SignalR[int], ParameterMemberType()]  # status code
+        status_0: A[SignalR[StrictEnum], ParameterMemberType()]  # status code
         status_1: A[SignalR[str], ParameterMemberType()]  # status message
         target: A[
             SignalRW[float], ParameterType(), Format.HINTED_SIGNAL

@@ -10,7 +10,6 @@ from functools import cached_property
 from logging import Logger
 from typing import Any, Dict
 
-import bluesky.plan_stubs as bps
 from bluesky.protocols import (
     Location,
     Reading,
@@ -100,7 +99,7 @@ def warn_on_long_device_names(devices: Dict[str, Device]) -> None:
         if len(dev.name) > TILED_MAX_NAME_LENGTH:
             warnings.warn(
                 f"Device name: '{dev.name}' is too long for tiled storage "
-                f"(>{TILED_MAX_NAME_LENGTH} chars)"
+                f"({len(dev.name)}>{TILED_MAX_NAME_LENGTH} chars)"
             )
 
 
@@ -916,7 +915,8 @@ class SECoPReadableDevice(SECoPDevice, Triggerable, Subscribable):
         # force reading of fresh status from device
         await self.status_0.read(False)
 
-        async for stat_code in observe_value(self.status_0):
+        async for stat_name in observe_value(self.status_0):
+            stat_code = _status_code(self.status_0, stat_name)
             # Module is in IDLE/WARN state
             if IDLE <= stat_code < BUSY:
                 self._logger.info(f"Module {self.name} --> IDLE")
@@ -933,18 +933,6 @@ class SECoPReadableDevice(SECoPDevice, Triggerable, Subscribable):
                     self._logger.error(f"Module {self.name} --> ERROR/DISABLED")
                     self._success = False
                     break
-
-    # TODO add timeout
-    def observe_status_change(self, monitored_status_code: int):
-        async def switch_from_status_inner():
-            async for stat_code in observe_value(self.status_0):
-                if monitored_status_code != stat_code:
-                    break
-
-        def switch_from_status_factory():
-            return switch_from_status_inner()
-
-        yield from bps.wait_for([switch_from_status_factory])
 
     def trigger(self) -> AsyncStatus:
         self._logger.info(f"Triggering {self.name}: read fresh data from device")
@@ -1013,8 +1001,9 @@ class SECoPMovableLogic(MovableLogic[Any]):
     equals setpoint.
     """
 
-    # bound to status_0 (the status code Signal, an int) -- status is SECoP's
-    # StatusType == TupleOf(EnumType, StringType), always decomposed
+    # bound to status_0 (the status code Signal, resolved to its enum member
+    # name, e.g. "RAMPING") -- status is SECoP's StatusType ==
+    # TupleOf(EnumType, StringType), always decomposed
     status: SignalR
     secclient: AsyncFrappyClient
     module: str
@@ -1025,7 +1014,8 @@ class SECoPMovableLogic(MovableLogic[Any]):
         await self.secclient.exec_command(self.module, "stop")
 
     async def move(self, new_position: Any, timeout: TimeoutCalculator) -> None:
-        def _left_busy(stat_code) -> bool:
+        def _left_busy(stat_name) -> bool:
+            stat_code = _status_code(self.status, stat_name)
             return not (BUSY <= stat_code < ERROR)
 
         self.logger.info(f"Moving {self.module} to {new_position}")
@@ -1040,7 +1030,7 @@ class SECoPMovableLogic(MovableLogic[Any]):
 
         await wait_for_value(self.status, _left_busy, timeout=timeout())
 
-        stat_code = await self.status.get_value()
+        stat_code = _status_code(self.status, await self.status.get_value())
         if stat_code >= ERROR or stat_code < IDLE:
             self.logger.error(f"Module {self.module} --> ERROR/DISABLED")
             raise RuntimeError(
@@ -1210,6 +1200,10 @@ def class_from_interface(mod_properties: dict):
         ophyd_class = SECoPDevice  # type: ignore
 
     return ophyd_class
+
+
+def _status_code(status_sig: SignalR, status: str) -> int:
+    return status_sig._connector.backend.SECoPdtype_obj.export_value(status)
 
 
 IF_CLASSES = {

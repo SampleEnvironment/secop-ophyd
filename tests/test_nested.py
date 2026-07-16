@@ -18,7 +18,8 @@ async def test_tuple_dev(nested_struct_sim):
     await ophy_struct.connect()
 
     # status is StatusType == TupleOf(EnumType, StringType), always split
-    # into a status_0 (code, raw int) / status_1 (message, str) pair
+    # into a status_0 (code, resolved to its enum member name) / status_1
+    # (message, str) pair
     status_code_sig: SignalR = ophy_struct.status_0
     status_text_sig: SignalR = ophy_struct.status_1
 
@@ -30,7 +31,7 @@ async def test_tuple_dev(nested_struct_sim):
 
     await status_code_sig.describe()
 
-    assert isinstance(stat_code, int)
+    assert isinstance(stat_code, str)
     assert isinstance(stat_text, str)
 
 

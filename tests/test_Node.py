@@ -115,10 +115,10 @@ async def test_status(cryo_sim, cryo_node_no_re: SECoPNodeDevice):
     cryo_dev: SECoPMoveableDevice = cryo_node_no_re.cryo
     status_code: SignalR = cryo_dev.status_0
 
-    async for stat_code in observe_value(status_code):
-        assert stat_code == 100
+    async for stat_name in observe_value(status_code):
+        assert stat_name == "IDLE"
 
-        if stat_code == 100:
+        if stat_name == "IDLE":
             break
 
 
