@@ -40,6 +40,7 @@ from ophyd_async.core import (
     TriggerableCommand,
     observe_value,
     wait_for_value,
+    walk_devices,
 )
 from ophyd_async.core._utils import Callback
 
@@ -86,9 +87,21 @@ UNKNOWN = 401  # not in SECoP standard (yet)
 
 IGNORED_PROPS = ["meaning", "_plotly"]
 
+TILED_MAX_NAME_LENGTH = 63
+
 
 def clean_identifier(anystring):
     return str(re.sub(r"\W+|^(?=\d)", "_", anystring))
+
+
+def warn_on_long_device_names(devices: Dict[str, Device]) -> None:
+    """Warn for every device whose name exceeds the tiled storage limit."""
+    for dev in devices.values():
+        if len(dev.name) > TILED_MAX_NAME_LENGTH:
+            warnings.warn(
+                f"Device name: '{dev.name}' is too long for tiled storage "
+                f"(>{TILED_MAX_NAME_LENGTH} chars)"
+            )
 
 
 def format_assigned(device: StandardReadable, signal: SignalR) -> bool:
@@ -633,6 +646,8 @@ class SECoPDevice(StandardReadable):
             self.set_name(self._client.properties[EQUIPMENT_ID].replace(".", "-"))
         else:
             self.set_name(self._module)
+
+        warn_on_long_device_names(walk_devices(self))
 
     @abstractmethod
     async def _assign_interface_formats(self):
