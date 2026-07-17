@@ -31,6 +31,7 @@ from ophyd_async.core import (
 
 from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient
 from secop_ophyd.util import (
+    MAX_DEPTH,
     Path,
     SECoPDataKey,
     SECoPdtype,
@@ -50,13 +51,10 @@ atomic_dtypes = (
 )
 
 
-# max depth for datatypes supported by tiled/databroker
-MAX_DEPTH = 1
-
-
 class AttributeType(StrictEnum):
     PARAMETER = "parameter"
     PROPERTY = "property"
+    MEMBER = "member"
 
 
 def _is_concrete_enum_class(datatype: Any) -> bool:
@@ -180,11 +178,21 @@ class SECoPCommandBackend(CommandBackend[Any, Any]):
 
 
 class SECoPBackend(SignalBackend[SignalDatatypeT]):
-    """Unified backend for SECoP Parameters and Properties.
+    """Unified backend for SECoP Parameters, Properties, and split composite
+    Members (one struct field / tuple index of a decomposed "depth <=
+    MAX_DEPTH" StructOf/TupleOf parameter).
 
+    This allows a single backend type to be used in signal_backend_factory
+    (`DeviceFiller` always constructs the same backend class for every child
+    Signal, regardless of what `Signal` subclass -- SignalR/SignalW/SignalRW
+    -- it ends up wrapped in), with deferred initialization based on
+    annotation metadata.
 
-    This allows a single backend type to be used in signal_backend_factory,
-    with deferred initialization based on annotation metadata.
+    Several MEMBER backends typically share the same underlying (module,
+    parent_param) SECoP parameter -- one per member. Each fetches the
+    parent's raw wire reading and extracts its own field; no extra network
+    round-trips are incurred since `AsyncFrappyClient.get_parameter(...,
+    trycache=True)` is backed by frappy's own per-(module, parameter) cache.
     """
 
     format: StandardReadableFormat
@@ -196,6 +204,10 @@ class SECoPBackend(SignalBackend[SignalDatatypeT]):
     SECoPdtype_obj: DataType
     SECoP_type_info: SECoPdtype
     describe_dict: dict
+    # MEMBER only
+    _parent_param: str
+    _member_key: str
+    _is_tuple_member: bool
 
     def __init__(
         self,
@@ -302,11 +314,80 @@ class SECoPBackend(SignalBackend[SignalDatatypeT]):
 
         self.path_str = path
 
+    def init_member_from_introspection(
+        self,
+        module_name: str,
+        parent_param: str,
+        member_key: str,
+        member_datatype: DataType,
+        secclient: AsyncFrappyClient,
+    ) -> None:
+        """Bind this backend to one member (struct field / tuple index) of a
+        decomposed composite parameter. Fully initialized eagerly here
+        (rather than deferred to connect(), like _init_parameter/_init_property)
+        since a member's own datatype is fully known once the parent
+        parameter has been introspected -- mirrors SECoPCommandBackend's
+        single-phase init."""
+        if self.attribute_type is not None:
+
+            if secclient != self._secclient:
+                raise RuntimeError(
+                    "Backend already initialized with a different SECoP client, cannot "
+                    "re-initialize"
+                )
+
+            if self.attribute_type != AttributeType.MEMBER:
+                raise RuntimeError(
+                    f"Backend already initialized as {self.attribute_type}, "
+                    f"cannot re-initialize as MEMBER"
+                )
+
+        self.attribute_type = AttributeType.MEMBER
+        self._module_name = module_name
+        self._parent_param = parent_param
+        self._member_key = member_key
+        self._is_tuple_member = member_key.isdigit()
+        self._secclient = secclient
+
+        self.SECoPdtype_obj = member_datatype
+        self.SECoP_type_info = SECoPdtype(member_datatype)
+
+        # split member signals mirror the format of the parent (whole)
+        # parameter they were split from, e.g. a struct declared
+        # _signal_format="HINTED_SIGNAL" makes every one of its member
+        # signals HINTED_SIGNAL too
+        parent_description = secclient.modules[module_name]["parameters"][parent_param]
+        match parent_description.get("_signal_format", None):
+            case "HINTED_SIGNAL":
+                self.format = StandardReadableFormat.HINTED_SIGNAL
+            case "HINTED_UNCACHED_SIGNAL":
+                self.format = StandardReadableFormat.HINTED_UNCACHED_SIGNAL
+            case "UNCACHED_SIGNAL":
+                self.format = StandardReadableFormat.UNCACHED_SIGNAL
+            case _:
+                self.format = StandardReadableFormat.CONFIG_SIGNAL
+
+        self.path_str = f"{module_name}:{parent_param}.{member_key}"
+        self.source_name = (
+            self._secclient.uri + ":" + self._secclient.nodename + ":" + self.path_str
+        )
+
+        self.describe_dict = {}
+        self.describe_dict["source"] = self.source_name
+        self.describe_dict.update(self.SECoP_type_info.get_datakey())
+
+        if _is_concrete_enum_class(self._annotated_datatype):
+            self.datatype = cast(type, self._annotated_datatype)
+        else:
+            self.datatype = self.SECoP_type_info.np_datatype
+
     def source(self, name: str, read: bool) -> str:
         return self._secclient.host + ":" + self._secclient.port + ":" + self.path_str
 
     async def connect(self, timeout: float):
-        """Connect and initialize backend (handles both parameters and properties)."""
+        """Connect and initialize backend (parameters/properties are
+        deferred-initialized here; members are already fully initialized by
+        init_member_from_introspection)."""
         await self._secclient.connect()
 
         match self.attribute_type:
@@ -409,12 +490,19 @@ class SECoPBackend(SignalBackend[SignalDatatypeT]):
             self.datatype = self.SECoP_type_info.np_datatype
 
     async def put(self, value: Any | None):
-        """Put a value to the parameter. Properties are readonly."""
+        """Put a value to the parameter. Properties and struct/tuple members
+        are read-only."""
 
         if self.attribute_type == AttributeType.PROPERTY:
-            # Properties are readonly
             raise RuntimeError(
                 f"Cannot set property '{self._attribute_name}', properties are readonly"
+            )
+
+        if self.attribute_type == AttributeType.MEMBER:
+            raise RuntimeError(
+                f"Cannot set '{self._parent_param}.{self._member_key}': struct/tuple "
+                f"member signals are read-only. Set the whole parameter "
+                f"'{self._parent_param}' instead."
             )
 
         # convert to frappy compatible Format
@@ -422,10 +510,29 @@ class SECoPBackend(SignalBackend[SignalDatatypeT]):
 
         await self._secclient.set_parameter(**self.get_param_path(), value=secop_val)
 
+    def _extract_member(self, raw_value: Any) -> Any:
+        if self._is_tuple_member:
+            return raw_value[int(self._member_key)]
+        return raw_value[self._member_key]
+
+    def _convert_member(self, raw_member_val: Any) -> Any:
+        self.SECoP_type_info.update_dtype(raw_member_val)
+        return self.SECoP_type_info.secop2val(raw_member_val)
+
     async def get_datakey(self, source: str) -> DataKey:
         """Metadata like source, dtype, shape, precision, units"""
         if self.attribute_type == AttributeType.PROPERTY:
             # Properties have static metadata
+            return describedict_to_datakey(self.describe_dict)
+
+        if self.attribute_type == AttributeType.MEMBER:
+            if isinstance(self.SECoPdtype_obj, ArrayOf):
+                entry = await self._secclient.get_parameter(
+                    self._module_name, self._parent_param, trycache=True
+                )
+                self.SECoP_type_info.update_dtype(self._extract_member(entry.value))
+                self.describe_dict.update(self.SECoP_type_info.get_datakey())
+
             return describedict_to_datakey(self.describe_dict)
 
         if self.SECoP_type_info._is_composite or isinstance(
@@ -443,7 +550,7 @@ class SECoPBackend(SignalBackend[SignalDatatypeT]):
         return describedict_to_datakey(self.describe_dict)
 
     async def get_reading(self) -> Reading[SignalDatatypeT]:
-        """Get reading, handling both parameters and properties."""
+        """Get reading, handling parameters, properties, and members."""
         if self.attribute_type == AttributeType.PROPERTY:
             # Properties have static values
             dataset = CacheItem(
@@ -451,6 +558,19 @@ class SECoPBackend(SignalBackend[SignalDatatypeT]):
             )
             sec_reading = SECoPReading(entry=dataset, secop_dt=self.SECoP_type_info)
             return sec_reading.get_reading()
+
+        if self.attribute_type == AttributeType.MEMBER:
+            entry = await self._secclient.get_parameter(
+                self._module_name, self._parent_param, trycache=True
+            )
+            if entry.readerror is not None:
+                raise entry.readerror
+
+            member_val = self._extract_member(entry.value)
+            return {
+                "value": self._convert_member(member_val),
+                "timestamp": entry.timestamp,
+            }
 
         else:
             # Parameters are fetched from SECoP
@@ -481,7 +601,38 @@ class SECoPBackend(SignalBackend[SignalDatatypeT]):
 
             return async_func
 
-        def updateItem(module, parameter, entry: CacheItem):  # noqa: N802
+        if self.attribute_type == AttributeType.MEMBER:
+
+            # must be named exactly 'updateItem': frappy's
+            # ProxyClient.register_callback() derives the callback kind from
+            # cbfunc.__name__ and validates it against a fixed whitelist
+            # (CALLBACK_NAMES) -- any other name is rejected with a TypeError
+            def updateItem(module, parameter, entry: CacheItem):  # noqa: N802
+                member_val = self._extract_member(entry.value)
+                reading: Reading = {
+                    "value": self._convert_member(member_val),
+                    "timestamp": entry.timestamp,
+                }
+                async_callback = awaitify(callback)
+
+                asyncio.run_coroutine_threadsafe(
+                    async_callback(reading=reading),
+                    self._secclient.loop,
+                )
+
+            if callback is not None:
+                self._secclient.register_callback(
+                    (self._module_name, self._parent_param), updateItem
+                )
+            else:
+                self._secclient.unregister_callback(
+                    (self._module_name, self._parent_param), updateItem
+                )
+            return
+
+        def updateItem(  # type: ignore[no-redef]
+            module, parameter, entry: CacheItem  # noqa: N802
+        ):
             data = SECoPReading(secop_dt=self.SECoP_type_info, entry=entry)
             async_callback = awaitify(callback)
 
