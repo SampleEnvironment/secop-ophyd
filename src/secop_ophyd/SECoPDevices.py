@@ -29,6 +29,7 @@ from ophyd_async.core import (
     LazyMock,
     MovableLogic,
     Signal,
+    SignalDatatypeT,
     SignalR,
     SignalRW,
     SignalW,
@@ -1041,7 +1042,7 @@ class SECoPMovableLogic(MovableLogic[Any]):
         self.logger.info(f"Reached target, module {self.module} --> IDLE")
 
 
-class SECoPMoveableDevice(SECoPReadableDevice, StandardMovable[Any]):
+class SECoPMoveableDevice(SECoPReadableDevice, StandardMovable[SignalDatatypeT]):
     """
     Standard movable SECoP device, corresponding to a SECoP module with the
     interface class "Drivable"

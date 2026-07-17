@@ -992,7 +992,7 @@ async def test_subsequent_real_nodes_with_enum(
         assert classs_str in nested_code
 
     assert "class Cryo_7_frappy_demo(SECoPNodeDevice):" not in nested_code
-    assert "class Cryostat(SECoPMoveableDevice):" not in nested_code
+    assert "class Cryostat(SECoPMoveableDevice[float]):" not in nested_code
 
     # ===== cryo node: its own file, only its own classes =====
     cryo_file = clean_generated_file / "Cryo_7_frappy_demo.py"
@@ -1002,7 +1002,7 @@ async def test_subsequent_real_nodes_with_enum(
 
     cryo_cls = [
         "class Cryo_7_frappy_demo(SECoPNodeDevice):",
-        "class Cryostat(SECoPMoveableDevice):",
+        "class Cryostat(SECoPMoveableDevice[float]):",
         "class Cryostat_Mode_Enum(StrictEnum):",
     ]
     for classs_str in cryo_cls:

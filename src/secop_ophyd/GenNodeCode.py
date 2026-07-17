@@ -19,6 +19,7 @@ from secop_ophyd.SECoPDevices import (
     ParameterMemberType,
     ParameterType,
     PropertyType,
+    SECoPMoveableDevice,
     class_from_interface,
 )
 from secop_ophyd.SECoPSignal import secop_dtype_obj_from_json
@@ -433,6 +434,13 @@ class GenNodeCode:
             secop_ophyd_modclass = class_from_interface(properties)
             module_bases = [secop_ophyd_modclass.__name__]
 
+            # SECoPMoveableDevice is generic over the datatype of 'target'
+            # (see SECoPDevices.py) -- captured below, from whichever branch
+            # of the parameter loop resolves 'target', so the generated base
+            # can be parametrized as e.g. SECoPMoveableDevice[ndarray] instead
+            # of falling back to the unparametrized (implicitly Any) form.
+            movable_target_type_param: str | None = None
+
             # Add the module class, use self reported "implementation" module property,
             # if not present use the module name
             module_class = modname
@@ -642,11 +650,12 @@ class GenNodeCode:
                         )
 
                     if not param_data["readonly"]:
+                        target_type_param = get_type_param(raw_datatype)
                         mod_parameters.append(
                             ParameterAttribute(
                                 name=param_name,
                                 type=SignalW.__name__,
-                                type_param=get_type_param(raw_datatype),
+                                type_param=target_type_param,
                                 description=param_descr,
                                 path_annotation=str(ParameterType()),
                                 # a write-only SignalW can't carry a
@@ -654,6 +663,8 @@ class GenNodeCode:
                                 format_annotation=None,
                             )
                         )
+                        if param_name == "target":
+                            movable_target_type_param = target_type_param
                     continue
 
                 # ATOMIC: single signal, unchanged from previous behaviour
@@ -668,6 +679,9 @@ class GenNodeCode:
                     datainfo.get("members", {}),
                     f"{param_name} enum for `{module_class}`.",
                 )
+
+                if param_name == "target":
+                    movable_target_type_param = type_param
 
                 # Default format for parameters is CONFIG_SIGNAL
 
@@ -701,6 +715,19 @@ class GenNodeCode:
                         path_annotation=str(PropertyType()),
                     )
                 )
+
+            if (
+                secop_ophyd_modclass is SECoPMoveableDevice
+                and movable_target_type_param
+            ):
+                module_bases = [
+                    (
+                        f"{base}[{movable_target_type_param}]"
+                        if base == SECoPMoveableDevice.__name__
+                        else base
+                    )
+                    for base in module_bases
+                ]
 
             self.add_mod_class(
                 module_cls=module_class,
