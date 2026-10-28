@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 from frappy.datatypes import StructOf
-from ophyd_async.core import SignalR, init_devices
+from ophyd_async.core import SignalR, SignalW, init_devices
 
 from secop_ophyd.GenNodeCode import (
     CommandAttribute,
@@ -819,11 +819,16 @@ async def test_generated_enum_parameter_datatype_is_preserved(
     assert cryo_gen_code.cryo.mode.datatype is Cryostat_Mode_Enum
 
 
-async def test_gen_cryo_status_not_in_cfg(
+async def test_gen_cryo_status_in_cfg(
     clean_generated_file, cryo_sim, cryo_node_no_re: SECoPNodeDevice
 ):
-    """Test that Status signal is not marked as configuration signal but is still
-    instantiated."""
+    """status is StatusType == TupleOf(EnumType, StringType), always split
+    into status_0 (code)/status_1 (message). Unlike the old monolithic
+    structured-array 'status' signal (which was excluded from both read()
+    and read_configuration() since tiled/databroker couldn't handle its
+    dtype), status_0/status_1 are plain atomic signals with no such
+    restriction, so they get the same default CONFIG_SIGNAL format as any
+    other un-hinted parameter."""
 
     cryo_node_no_re.class_from_instance(clean_generated_file)
 
@@ -832,20 +837,17 @@ async def test_gen_cryo_status_not_in_cfg(
 
     print(cryo_reading)
 
-    assert hasattr(cryo_node_no_re.cryo, "status")
-    assert isinstance(cryo_node_no_re.cryo.status, SignalR)
+    assert hasattr(cryo_node_no_re.cryo, "status_0")
+    assert isinstance(cryo_node_no_re.cryo.status_0, SignalR)
 
-    stat_name = cryo_node_no_re.cryo.status.name
+    stat_name = cryo_node_no_re.cryo.status_0.name
 
     assert (
-        cryo_cfg.get(stat_name) is None
-    ), "Status signal should not be in configuration"
-    assert cryo_reading.get(stat_name) is None, "Status signal should be readable"
-
-    # check if status signal is working
-    status_reding = await cryo_node_no_re.cryo.status.read()
-
-    assert status_reding.get(stat_name) is not None, "Status signal should be readable"
+        cryo_cfg.get(stat_name) is not None
+    ), "Status signal should be in configuration"
+    assert (
+        cryo_reading.get(stat_name) is None
+    ), "Status signal should not be a read signal"
 
     # Import generated class
     from tests.testgen.Cryo_7_frappy_demo import Cryo_7_frappy_demo  # type: ignore
@@ -853,27 +855,22 @@ async def test_gen_cryo_status_not_in_cfg(
     async with init_devices():
         cryo_gen_code = Cryo_7_frappy_demo(sec_node_uri="localhost:10769")
 
-    # Status signal should still be present and functional in the generated code, even
-    # though it's not in the configuration
-    assert hasattr(cryo_gen_code.cryo, "status")
-    assert isinstance(cryo_gen_code.cryo.status, SignalR)
+    assert hasattr(cryo_gen_code.cryo, "status_0")
+    assert isinstance(cryo_gen_code.cryo.status_0, SignalR)
 
     cryo_cfg = await cryo_gen_code.read_configuration()
     cryo_reading = await cryo_gen_code.read()
 
     print(cryo_reading)
 
-    stat_name = cryo_gen_code.cryo.status.name
+    stat_name = cryo_gen_code.cryo.status_0.name
 
     assert (
-        cryo_cfg.get(stat_name) is None
-    ), "Status signal should not be in configuration"
-    assert cryo_reading.get(stat_name) is None, "Status signal should be readable"
-
-    # check if status signal is working
-    status_reding = await cryo_gen_code.cryo.status.read()
-
-    assert status_reding.get(stat_name) is not None, "Status signal should be readable"
+        cryo_cfg.get(stat_name) is not None
+    ), "Status signal should be in configuration"
+    assert (
+        cryo_reading.get(stat_name) is None
+    ), "Status signal should not be a read signal"
 
 
 async def test_gen_real_node(
@@ -923,6 +920,45 @@ async def test_gen_real_node(
     ), "Enum import should be present"
 
 
+async def test_gen_real_node_composite_movable_sibling_connects(
+    clean_generated_file,
+    nested_struct_sim,
+    nested_node_no_re: SECoPNodeDevice,
+):
+    """Regression test: a Drivable module with a composite 'value' (no bare
+    'value' attribute, only split value_* signals) that is a sibling of
+    other modules in a fully class-annotated *generated* node must connect
+    without crashing.
+
+    create_children_from_annotations() pre-creates every declared child
+    device/signal -- including 'target' -- at construction time, before any
+    connect() call runs, purely from the generated class's annotations. So
+    by the time init_devices() does its first naming pass (also before
+    connect()), a sibling module being named can trigger this Drivable's
+    set_name() while 'target' already structurally exists but movable_logic
+    isn't actually resolvable yet (nothing has been connected). Regression
+    for a crash where SECoPMoveableDevice.set_name() only guarded on
+    hasattr(self, 'target'), not on whether the (possibly composite) readback
+    was ready too: AttributeError: 'NoneType' object has no attribute
+    'set_name' from StandardMovable.set_name() -> movable_logic.readback.
+    """
+    nested_node_no_re.class_from_instance(clean_generated_file)
+
+    from tests.testgen.Ophyd_secop_frappy_demo import (  # type: ignore
+        Ophyd_secop_frappy_demo,
+    )
+
+    async with init_devices():
+        gen_node = Ophyd_secop_frappy_demo(sec_node_uri="localhost:10771")
+
+    struct_mod = gen_node.ophy_struct
+    assert not hasattr(struct_mod, "value")
+    assert isinstance(struct_mod.target, SignalW)
+
+    reading = await struct_mod.value_x.read()
+    assert isinstance(reading[struct_mod.value_x.name]["value"], float)
+
+
 async def test_subsequent_real_nodes_with_enum(
     clean_generated_file,
     cryo_sim,
@@ -956,7 +992,7 @@ async def test_subsequent_real_nodes_with_enum(
         assert classs_str in nested_code
 
     assert "class Cryo_7_frappy_demo(SECoPNodeDevice):" not in nested_code
-    assert "class Cryostat(SECoPMoveableDevice):" not in nested_code
+    assert "class Cryostat(SECoPMoveableDevice[float]):" not in nested_code
 
     # ===== cryo node: its own file, only its own classes =====
     cryo_file = clean_generated_file / "Cryo_7_frappy_demo.py"
@@ -966,7 +1002,7 @@ async def test_subsequent_real_nodes_with_enum(
 
     cryo_cls = [
         "class Cryo_7_frappy_demo(SECoPNodeDevice):",
-        "class Cryostat(SECoPMoveableDevice):",
+        "class Cryostat(SECoPMoveableDevice[float]):",
         "class Cryostat_Mode_Enum(StrictEnum):",
     ]
     for classs_str in cryo_cls:
@@ -997,8 +1033,17 @@ def test_gen_shall_mass_spec_node(
     assert "\n# ; Unit: (V)" not in generated_code
     assert "\n#  ; Unit: (%)" not in generated_code
 
+    # mid_descriptor is a writable StructOf(device=Array, mass=Array) --
+    # depth 1, so it's split into one read-only member Signal per struct
+    # field, plus a write-only SignalW at the base name for setting the
+    # whole struct (accepting a plain dict, see SECoPBackend.put/val2secop)
+    assert (
+        "mid_descriptor_device: A[SignalR[ndarray], ParamMemberT()]" in generated_code
+    )
+    assert "mid_descriptor_mass: A[SignalR[ndarray], ParamMemberT()]" in generated_code
+    assert "mid_descriptor: A[SignalW[ndarray], ParamT()]" in generated_code
+
     # Intentionally multiline descriptions should be rendered as multiline comments
-    assert "mid_descriptor: A[SignalRW[ndarray], ParamT()]" in generated_code
     assert "#           Example:" in generated_code
     assert "#             {" in generated_code
     assert "#               mass:    [12,15,28,75]," in generated_code

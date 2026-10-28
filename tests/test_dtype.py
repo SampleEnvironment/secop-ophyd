@@ -14,7 +14,13 @@ from frappy.datatypes import (
 )
 from frappy.lib.enum import EnumMember
 
-from secop_ophyd.util import SECoPdtype, SECoPReading
+from secop_ophyd.util import (
+    CompositeKind,
+    SECoPdtype,
+    SECoPReading,
+    classify_datatype,
+    get_composite_members,
+)
 
 RAGGED = True
 REGULAR = False
@@ -328,3 +334,95 @@ def test_val2secop(start_dtype, np_input, expected_output, type_checks, ophy_val
     assert (
         back_to_ophyd == ophy_val
     ), f"Back to ophyd conversion failed for {back_to_ophyd}"
+
+
+@pytest.mark.parametrize(
+    "datatype,expected_kind",
+    [
+        pytest.param(FloatRange(), CompositeKind.ATOMIC, id="atomic float"),
+        pytest.param(StringType(), CompositeKind.ATOMIC, id="atomic string"),
+        pytest.param(
+            ArrayOf(FloatRange(), minlen=0, maxlen=5),
+            CompositeKind.ATOMIC,
+            id="array of atomic",
+        ),
+        pytest.param(
+            ArrayOf(ArrayOf(FloatRange(), minlen=0, maxlen=5), minlen=0, maxlen=5),
+            CompositeKind.ATOMIC,
+            id="array of array of atomic",
+        ),
+        pytest.param(
+            StructOf(x=FloatRange(), y=FloatRange()),
+            CompositeKind.DECOMPOSABLE,
+            id="flat struct",
+        ),
+        pytest.param(
+            TupleOf(FloatRange(), StringType()),
+            CompositeKind.DECOMPOSABLE,
+            id="flat tuple",
+        ),
+        pytest.param(
+            StructOf(
+                ints=ArrayOf(IntRange(), minlen=0, maxlen=5),
+                label=StringType(),
+            ),
+            CompositeKind.DECOMPOSABLE,
+            id="struct of arrays-of-atomic is still depth 1",
+        ),
+        pytest.param(
+            StructOf(inner=StructOf(a=FloatRange())),
+            CompositeKind.UNSUPPORTED,
+            id="struct containing a struct",
+        ),
+        pytest.param(
+            StructOf(inner=TupleOf(FloatRange(), FloatRange())),
+            CompositeKind.UNSUPPORTED,
+            id="struct containing a tuple",
+        ),
+        pytest.param(
+            TupleOf(TupleOf(FloatRange(), FloatRange()), StringType()),
+            CompositeKind.UNSUPPORTED,
+            id="tuple containing a tuple",
+        ),
+        pytest.param(
+            ArrayOf(StructOf(x=FloatRange(), y=FloatRange())),
+            CompositeKind.UNSUPPORTED,
+            id="array of struct",
+        ),
+        pytest.param(
+            ArrayOf(TupleOf(FloatRange(), FloatRange())),
+            CompositeKind.UNSUPPORTED,
+            id="array of tuple",
+        ),
+    ],
+)
+def test_classify_datatype(datatype, expected_kind):
+    assert classify_datatype(datatype) is expected_kind
+
+
+def test_get_composite_members_struct():
+    dt = StructOf(x=FloatRange(), y=FloatRange(), color=StringType())
+
+    members = get_composite_members(dt)
+
+    assert [key for key, _ in members] == ["x", "y", "color"]
+    assert [member_dt for _, member_dt in members] == [
+        dt.members["x"],
+        dt.members["y"],
+        dt.members["color"],
+    ]
+
+
+def test_get_composite_members_tuple():
+    float_dt, str_dt = FloatRange(), StringType()
+    dt = TupleOf(float_dt, str_dt)
+
+    members = get_composite_members(dt)
+
+    assert [key for key, _ in members] == ["0", "1"]
+    assert [member_dt for _, member_dt in members] == [float_dt, str_dt]
+
+
+def test_get_composite_members_rejects_non_composite():
+    with pytest.raises(TypeError):
+        get_composite_members(FloatRange())

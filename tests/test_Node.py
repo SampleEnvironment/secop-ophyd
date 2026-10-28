@@ -113,12 +113,12 @@ async def test_signal_stage_unstage_read_cached(
 async def test_status(cryo_sim, cryo_node_no_re: SECoPNodeDevice):
 
     cryo_dev: SECoPMoveableDevice = cryo_node_no_re.cryo
-    status: SignalR = cryo_dev.status
+    status_code: SignalR = cryo_dev.status_0
 
-    async for current_stat in observe_value(status):
-        assert current_stat["f0"] == 100
+    async for stat_name in observe_value(status_code):
+        assert stat_name == "IDLE"
 
-        if current_stat["f0"] == 100:
+        if stat_name == "IDLE":
             break
 
 
