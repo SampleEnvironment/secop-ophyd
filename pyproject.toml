@@ -10,7 +10,7 @@ dynamic = ["version"]
 description = "An Interface between bluesky and SECoP, using ophyd and frappy-client"
 
 dependencies = [
-    'ophyd-async (>0.18,<=0.19.3)',
+    'ophyd-async (>=0.21.4,<0.22)',
     'frappy-core >= 0.20.8',
     'black',
     'Jinja2',
@@ -34,8 +34,9 @@ dev = [
     'mlzlog',
     'matplotlib',
     'pytest-asyncio',
-    'pytest-xprocess',
     'pytest-cov',
+    'pytest-timeout',
+    'pytest-xdist',
     'pre-commit',
     'ipykernel',
     'ophyd',
@@ -50,7 +51,6 @@ dev = [
     "sphinx-autodoc2",
     "myst-parser",
     "numpydoc",
-
 ]
 
 
@@ -60,9 +60,13 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 minversion = "6.0"
-addopts = "-v"
+# tests run in parallel, each xdist worker starts its own SEC nodes on free
+# ports; pass "-n 0" to run serially (e.g. for debugging with --pdb)
+addopts = "-v -n auto"
 asyncio_mode="auto"
+asyncio_default_fixture_loop_scope = "function"
 filterwarnings = "ignore::PendingDeprecationWarning"
+timeout = 240
 
 
 [tool.isort]

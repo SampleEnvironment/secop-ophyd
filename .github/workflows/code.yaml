@@ -46,10 +46,6 @@ jobs:
     - name: Install dependencies
       run: uv sync --all-extras
 
-    - name: Add PATH envirnoment variable for xprocess
-      run: |
-        echo "PATH_VAR=$PATH" >> "$GITHUB_ENV"
-
     - name: Run Tests
       run: |
         uv run pytest tests/ -v

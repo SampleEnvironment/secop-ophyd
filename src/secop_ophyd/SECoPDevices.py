@@ -10,6 +10,7 @@ from functools import cached_property
 from logging import Logger
 from typing import Any, Dict
 
+import bluesky.plan_stubs as bps
 from bluesky.protocols import (
     Location,
     Reading,
@@ -44,7 +45,7 @@ from ophyd_async.core import (
 )
 from ophyd_async.core._utils import Callback
 
-from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient
+from secop_ophyd.AsyncFrappyClient import AsyncSecopClient
 from secop_ophyd.logs import setup_logging
 from secop_ophyd.propertykeys import EQUIPMENT_ID, INTERFACE_CLASSES
 from secop_ophyd.SECoPSignal import (
@@ -224,9 +225,9 @@ class SECoPDeviceConnector(DeviceConnector):
             raise RuntimeError(f"Invalid SECoP resource identifier: {sri}")
 
         if SECoPDevice._clients.get(self.node_id) is None:
-            raise RuntimeError(f"No AsyncFrappyClient for URI {sri} exists")
+            raise RuntimeError(f"No AsyncSecopClient for URI {sri} exists")
 
-        self.client: AsyncFrappyClient = SECoPDevice._clients[self.node_id]
+        self.client: AsyncSecopClient = SECoPDevice._clients[self.node_id]
 
     def set_module(self, module_name: str):
         if self.sri.count(":") != 1:
@@ -553,7 +554,7 @@ class SECoPDeviceConnector(DeviceConnector):
 
 class SECoPDevice(StandardReadable):
 
-    _clients: Dict[str, AsyncFrappyClient] = {}
+    _clients: Dict[str, AsyncSecopClient] = {}
 
     _node_id: str
     _sri: str
@@ -610,13 +611,13 @@ class SECoPDevice(StandardReadable):
             self._module = sri.split(":")[2]
 
         if SECoPDevice._clients.get(self._node_id) is None:
-            SECoPDevice._clients[self._node_id] = AsyncFrappyClient(
+            SECoPDevice._clients[self._node_id] = AsyncSecopClient(
                 host=self._host, port=self._port, log=self._logger
             )
 
         connector = connector or SECoPDeviceConnector(sri=sri)
 
-        self._client: AsyncFrappyClient = SECoPDevice._clients[self._node_id]
+        self._client: AsyncSecopClient = SECoPDevice._clients[self._node_id]
 
         super().__init__(name=name, connector=connector)
 
@@ -807,14 +808,14 @@ class SECoPNodeDevice(SECoPDevice):
         # Node device has no specific interface class formats
         pass
 
-    def class_from_instance(self, path_to_module: str | None = None):
+    async def class_from_instance(self, path_to_module: str | None = None):
         """Generate an annotated device class for this SEC node and write it
         to its own file, named after the generated node class, inside
         ``path_to_module`` (default: ``./secop_ophyd_devs/``). Any existing
         file of that name is overwritten."""
         from secop_ophyd.GenNodeCode import GenNodeCode
 
-        description = self._client.client.request("describe")[2]
+        description = (await self._client.request("describe"))[2]
 
         genCode = GenNodeCode(path=path_to_module, log=self._logger)
 
@@ -864,7 +865,7 @@ class SECoPReadableDevice(SECoPDevice, Triggerable, Subscribable):
         """Initializes the SECoPReadableDevice
 
         :param secclient: SECoP client providing communication to the SEC Node
-        :type secclient: AsyncFrappyClient
+        :type secclient: AsyncSecopClient
         :param module_name: Name of the SEC Node module that is represented by
             this device
         :type module_name: str
@@ -935,6 +936,21 @@ class SECoPReadableDevice(SECoPDevice, Triggerable, Subscribable):
                     self._success = False
                     break
 
+    # TODO add timeout
+    def observe_status_change(self, monitored_status_code: int):
+        """Plan stub: block until the module's status code differs from
+        ``monitored_status_code``."""
+
+        async def switch_from_status_inner():
+            async for stat_name in observe_value(self.status_0):
+                if monitored_status_code != _status_code(self.status_0, stat_name):
+                    break
+
+        def switch_from_status_factory():
+            return switch_from_status_inner()
+
+        yield from bps.wait_for([switch_from_status_factory])
+
     def trigger(self) -> AsyncStatus:
         self._logger.info(f"Triggering {self.name}: read fresh data from device")
         # get fresh reading of the value Parameter from the SEC Node
@@ -942,10 +958,13 @@ class SECoPReadableDevice(SECoPDevice, Triggerable, Subscribable):
             awaitable=self._client.get_parameter(self._module, "value", trycache=False)
         )
 
-    def subscribe(self, function: Callback[dict[str, Reading]]) -> None:
+    def subscribe_reading(self, function: Callback[dict[str, Reading]]) -> None:
         """Subscribe to updates in the reading. Only supported for an atomic
         (non-composite) 'value' parameter."""
-        self.value.subscribe(function=function)
+        self.value.subscribe_reading(function)
+
+    # Backwards-compatible alias (bluesky < 1.16 named this ``subscribe``)
+    subscribe = subscribe_reading
 
     def clear_sub(self, function: Callback) -> None:
         """Remove a subscription."""
@@ -973,7 +992,7 @@ class SECoPTriggerableDevice(SECoPReadableDevice, Stoppable):
         """Initialize SECoPTriggerableDevice
 
         :param secclient: SECoP client providing communication to the SEC Node
-        :type secclient: AsyncFrappyClient
+        :type secclient: AsyncSecopClient
         :param module_name: ame of the SEC Node module that is represented by
             this device
         :type module_name: str
@@ -985,6 +1004,11 @@ class SECoPTriggerableDevice(SECoPReadableDevice, Stoppable):
         super().__init__(
             sri=sri, name=name, connector=connector, loglevel=loglevel, logdir=logdir
         )
+
+    async def stop(self, *, success: bool = False) -> None:
+        """Abort a running measurement via the module's ``stop`` command."""
+        self._logger.info(f"Stopping {self.name}")
+        await self._client.exec_command(self._module, "stop")
 
 
 class SECoPWritableDevice(SECoPReadableDevice):
@@ -1006,7 +1030,7 @@ class SECoPMovableLogic(MovableLogic[Any]):
     # name, e.g. "RAMPING") -- status is SECoP's StatusType ==
     # TupleOf(EnumType, StringType), always decomposed
     status: SignalR
-    secclient: AsyncFrappyClient
+    secclient: AsyncSecopClient
     module: str
     logger: Logger
 
@@ -1074,7 +1098,7 @@ class SECoPMoveableDevice(SECoPReadableDevice, StandardMovable[SignalDatatypeT])
         """Initialize SECoPMovableDevice
 
         :param secclient: SECoP client providing communication to the SEC Node
-        :type secclient: AsyncFrappyClient
+        :type secclient: AsyncSecopClient
         :param module_name: ame of the SEC Node module that is represented by
             this device
         :type module_name: str

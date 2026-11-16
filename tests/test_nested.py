@@ -1,7 +1,7 @@
 # mypy: disable-error-code="attr-defined"
 import numpy as np
 import pytest
-from ophyd_async.core import SignalR, SignalW
+from ophyd_async.core import SignalR, SignalW, init_devices
 
 from secop_ophyd.SECoPDevices import SECoPNodeDevice, SECoPReadableDevice
 from secop_ophyd.util import IncompatibleSECoPDatatype
@@ -13,7 +13,7 @@ async def test_nested_connect(nested_struct_sim, nested_node_no_re: SECoPNodeDev
 
 async def test_tuple_dev(nested_struct_sim):
 
-    ophy_struct = SECoPReadableDevice("localhost:10771:ophy_struct")
+    ophy_struct = SECoPReadableDevice(f"{nested_struct_sim.uri}:ophy_struct")
 
     await ophy_struct.connect()
 
@@ -36,7 +36,7 @@ async def test_tuple_dev(nested_struct_sim):
 
 
 async def test_struct_dev(nested_struct_sim):
-    ophy_struct = SECoPReadableDevice("localhost:10771:ophy_struct")
+    ophy_struct = SECoPReadableDevice(f"{nested_struct_sim.uri}:ophy_struct")
     await ophy_struct.connect()
 
     # value is StructOf(x, y, z, color), depth 1 -> split into one
@@ -59,7 +59,7 @@ async def test_unsupported_nested_struct_warns(nested_struct_sim):
     # the Readable interface class, so it should only warn and be skipped,
     # not raise.
     with pytest.warns(UserWarning, match="nested_struct"):
-        ophy_struct = SECoPReadableDevice("localhost:10771:ophy_struct")
+        ophy_struct = SECoPReadableDevice(f"{nested_struct_sim.uri}:ophy_struct")
         await ophy_struct.connect()
 
     assert not hasattr(ophy_struct, "nested_struct")
@@ -92,10 +92,13 @@ async def test_nested_dtype_str_signal_generation(
     assert isinstance(color_reading.get(target_color.name)["value"], str)
 
 
-async def test_nested_dtype_set_str_struct(
-    nested_struct_sim, nested_node_no_re: SECoPNodeDevice
-):
-    struct_mod = nested_node_no_re.ophy_struct
+async def test_nested_dtype_set_str_struct(fresh_nested_struct_sim):
+    # moving the target keeps the module BUSY for a long time, so use a
+    # private node instead of the shared one
+    async with init_devices():
+        node = SECoPNodeDevice(sec_node_uri=fresh_nested_struct_sim.uri)
+
+    struct_mod = node.ophy_struct
 
     target: SignalW = struct_mod.target
 
@@ -124,10 +127,14 @@ async def test_nested_dtype_set_str_tuple(
     # SignalW.put() also accepts a plain tuple for a TupleOf parameter
     await tuple_param.set((50, 20, 30, "blue"))
 
-    assert (await struct_mod.tuple_param_0.get_value()) == 50
-    assert (await struct_mod.tuple_param_1.get_value()) == 20
-    assert (await struct_mod.tuple_param_2.get_value()) == 30
-    assert (await struct_mod.tuple_param_3.get_value()) == "blue"
+    try:
+        assert (await struct_mod.tuple_param_0.get_value()) == 50
+        assert (await struct_mod.tuple_param_1.get_value()) == 20
+        assert (await struct_mod.tuple_param_2.get_value()) == 30
+        assert (await struct_mod.tuple_param_3.get_value()) == "blue"
+    finally:
+        # restore the default on the shared node
+        await tuple_param.set((5, 5, 5, "green"))
 
 
 async def test_nested_struct_of_arrays(
@@ -191,7 +198,7 @@ async def test_mandatory_composite_incompatible_raises(nested_struct_sim):
     # ophy_struct is a Drivable whose 'value'/'target'/'status' are all
     # depth-1 (compatible); nested_struct (depth 2, unsupported) is not
     # mandatory there, so connecting normally must succeed.
-    moveable = SECoPMoveableDevice("localhost:10771:ophy_struct")
+    moveable = SECoPMoveableDevice(f"{nested_struct_sim.uri}:ophy_struct")
     with pytest.warns(UserWarning, match="nested_struct"):
         await moveable.connect()
 
@@ -214,6 +221,6 @@ async def test_mandatory_incompatible_datatype_raises_exception(
         ["value", "status", "nested_struct"],
     )
 
-    ophy_struct = SECoPReadableDevice("localhost:10771:ophy_struct")
+    ophy_struct = SECoPReadableDevice(f"{nested_struct_sim.uri}:ophy_struct")
     with pytest.raises(IncompatibleSECoPDatatype, match="nested_struct"):
         await ophy_struct.connect()

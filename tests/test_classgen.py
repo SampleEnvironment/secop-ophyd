@@ -19,6 +19,7 @@ from secop_ophyd.GenNodeCode import (
     PropertyAttribute,
 )
 from secop_ophyd.SECoPDevices import ParameterType, PropertyType, SECoPNodeDevice
+from tests.util import import_generated
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
@@ -772,12 +773,14 @@ async def test_gen_cryo_node(
 ):
     """Test generating code for a real SECoP node."""
 
-    cryo_node_no_re.class_from_instance(clean_generated_file)
+    await cryo_node_no_re.class_from_instance(clean_generated_file)
 
-    from tests.testgen.Cryo_7_frappy_demo import Cryo_7_frappy_demo  # type: ignore
+    Cryo_7_frappy_demo = import_generated(
+        clean_generated_file, "Cryo_7_frappy_demo"
+    ).Cryo_7_frappy_demo
 
     async with init_devices():
-        cryo_gen_code = Cryo_7_frappy_demo(sec_node_uri="localhost:10769")
+        cryo_gen_code = Cryo_7_frappy_demo(sec_node_uri=cryo_sim.uri)
 
     cryo_val = await cryo_gen_code.read()
 
@@ -806,15 +809,14 @@ async def test_generated_enum_parameter_datatype_is_preserved(
     exact class as its runtime datatype after connect() -- not be silently
     replaced by the generic, member-less StrictEnum base class."""
 
-    cryo_node_no_re.class_from_instance(clean_generated_file)
+    await cryo_node_no_re.class_from_instance(clean_generated_file)
 
-    from tests.testgen.Cryo_7_frappy_demo import (  # type: ignore
-        Cryo_7_frappy_demo,
-        Cryostat_Mode_Enum,
-    )
+    generated = import_generated(clean_generated_file, "Cryo_7_frappy_demo")
+    Cryo_7_frappy_demo = generated.Cryo_7_frappy_demo
+    Cryostat_Mode_Enum = generated.Cryostat_Mode_Enum
 
     async with init_devices():
-        cryo_gen_code = Cryo_7_frappy_demo(sec_node_uri="localhost:10769")
+        cryo_gen_code = Cryo_7_frappy_demo(sec_node_uri=cryo_sim.uri)
 
     assert cryo_gen_code.cryo.mode.datatype is Cryostat_Mode_Enum
 
@@ -830,7 +832,7 @@ async def test_gen_cryo_status_in_cfg(
     restriction, so they get the same default CONFIG_SIGNAL format as any
     other un-hinted parameter."""
 
-    cryo_node_no_re.class_from_instance(clean_generated_file)
+    await cryo_node_no_re.class_from_instance(clean_generated_file)
 
     cryo_cfg = await cryo_node_no_re.read_configuration()
     cryo_reading = await cryo_node_no_re.read()
@@ -850,10 +852,12 @@ async def test_gen_cryo_status_in_cfg(
     ), "Status signal should not be a read signal"
 
     # Import generated class
-    from tests.testgen.Cryo_7_frappy_demo import Cryo_7_frappy_demo  # type: ignore
+    Cryo_7_frappy_demo = import_generated(
+        clean_generated_file, "Cryo_7_frappy_demo"
+    ).Cryo_7_frappy_demo
 
     async with init_devices():
-        cryo_gen_code = Cryo_7_frappy_demo(sec_node_uri="localhost:10769")
+        cryo_gen_code = Cryo_7_frappy_demo(sec_node_uri=cryo_sim.uri)
 
     assert hasattr(cryo_gen_code.cryo, "status_0")
     assert isinstance(cryo_gen_code.cryo.status_0, SignalR)
@@ -879,7 +883,7 @@ async def test_gen_real_node(
     nested_node_no_re: SECoPNodeDevice,  # noqa: N803
 ):
 
-    nested_node_no_re.class_from_instance(clean_generated_file)
+    await nested_node_no_re.class_from_instance(clean_generated_file)
 
     # Read the generated file and verify its contents
     gen_file = clean_generated_file / "Ophyd_secop_frappy_demo.py"
@@ -942,14 +946,14 @@ async def test_gen_real_node_composite_movable_sibling_connects(
     was ready too: AttributeError: 'NoneType' object has no attribute
     'set_name' from StandardMovable.set_name() -> movable_logic.readback.
     """
-    nested_node_no_re.class_from_instance(clean_generated_file)
+    await nested_node_no_re.class_from_instance(clean_generated_file)
 
-    from tests.testgen.Ophyd_secop_frappy_demo import (  # type: ignore
-        Ophyd_secop_frappy_demo,
-    )
+    Ophyd_secop_frappy_demo = import_generated(
+        clean_generated_file, "Ophyd_secop_frappy_demo"
+    ).Ophyd_secop_frappy_demo
 
     async with init_devices():
-        gen_node = Ophyd_secop_frappy_demo(sec_node_uri="localhost:10771")
+        gen_node = Ophyd_secop_frappy_demo(sec_node_uri=nested_struct_sim.uri)
 
     struct_mod = gen_node.ophy_struct
     assert not hasattr(struct_mod, "value")
@@ -959,19 +963,11 @@ async def test_gen_real_node_composite_movable_sibling_connects(
     assert isinstance(reading[struct_mod.value_x.name]["value"], float)
 
 
-async def test_subsequent_real_nodes_with_enum(
-    clean_generated_file,
-    cryo_sim,
-    cryo_node_no_re: SECoPNodeDevice,
-    nested_struct_sim,
-    nested_node_no_re: SECoPNodeDevice,
+async def _check_subsequent_real_nodes_with_enum(
+    clean_generated_file, cryo_node: SECoPNodeDevice, nested_node: SECoPNodeDevice
 ):
-    """Generating two different real nodes into the same output directory
-    must write two independent files -- each containing only its own node's
-    classes, with no cross-node merging."""
-
-    nested_node_no_re.class_from_instance(clean_generated_file)
-    cryo_node_no_re.class_from_instance(clean_generated_file)
+    await nested_node.class_from_instance(clean_generated_file)
+    await cryo_node.class_from_instance(clean_generated_file)
 
     # ===== nested node: its own file, only its own classes =====
     nested_file = clean_generated_file / "Ophyd_secop_frappy_demo.py"
@@ -1010,6 +1006,34 @@ async def test_subsequent_real_nodes_with_enum(
 
     assert "class Ophyd_secop_frappy_demo(SECoPNodeDevice):" not in cryo_code
     assert "class TestEnum_GasType_Enum(SupersetEnum):" not in cryo_code
+
+
+async def test_subsequent_real_nodes_with_enum(
+    clean_generated_file,
+    cryo_sim,
+    cryo_node_no_re: SECoPNodeDevice,
+    nested_struct_sim,
+    nested_node_no_re: SECoPNodeDevice,
+):
+    """Generating two different real nodes into the same output directory
+    must write two independent files -- each containing only its own node's
+    classes, with no cross-node merging."""
+    await _check_subsequent_real_nodes_with_enum(
+        clean_generated_file, cryo_node_no_re, nested_node_no_re
+    )
+
+
+async def test_subsequent_real_nodes_with_enum_RE(
+    clean_generated_file,
+    cryo_sim,
+    cryo_node: SECoPNodeDevice,
+    nested_struct_sim,
+    nested_node: SECoPNodeDevice,
+):
+    """Same as above, but with nodes instantiated on the RunEngine loop."""
+    await _check_subsequent_real_nodes_with_enum(
+        clean_generated_file, cryo_node, nested_node
+    )
 
 
 def test_gen_shall_mass_spec_node(

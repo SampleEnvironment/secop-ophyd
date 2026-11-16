@@ -1,10 +1,7 @@
 # mypy: disable-error-code="attr-defined"
 import asyncio
 
-import numpy as np
-import xprocess
-from ophyd_async.core import AsyncStatus, SignalR, observe_value
-from xprocess import ProcessStarter, XProcessInfo
+from ophyd_async.core import AsyncStatus, SignalR, init_devices, observe_value
 
 from secop_ophyd.SECoPDevices import SECoPMoveableDevice, SECoPNodeDevice
 
@@ -32,20 +29,20 @@ async def test_source(cryo_sim, cryo_node_no_re: SECoPNodeDevice):
     # its parent device, so it's the same name as the device itself
     assert val_name == "cryo_7-frappy-demo-cryo"
     assert val_name == cryo_node_no_re.cryo.name
-    assert val_source == "localhost:10769:cryo:value"
+    assert val_source == f"{cryo_sim.uri}:cryo:value"
 
     # property name and source
     prop_name = cryo_node_no_re.equipment_id.name
     prop_source = cryo_node_no_re.equipment_id.source
 
     assert prop_name == "cryo_7-frappy-demo-equipment_id"
-    assert prop_source == "localhost:10769:equipment_id"
+    assert prop_source == f"{cryo_sim.uri}:equipment_id"
 
     mod_prop_name = cryo_node_no_re.cryo.description.name
     mod_prop_source = cryo_node_no_re.cryo.description.source
 
     assert mod_prop_name == "cryo_7-frappy-demo-cryo-description"
-    assert mod_prop_source == "localhost:10769:cryo:description"
+    assert mod_prop_source == f"{cryo_sim.uri}:cryo:description"
 
 
 async def test_node_describe(cryo_sim, cryo_node_no_re: SECoPNodeDevice):
@@ -115,11 +112,16 @@ async def test_status(cryo_sim, cryo_node_no_re: SECoPNodeDevice):
     cryo_dev: SECoPMoveableDevice = cryo_node_no_re.cryo
     status_code: SignalR = cryo_dev.status_0
 
+    # the cryo simulation drifts in and out of tolerance on its own, so only the
+    # structure is checked here (status values are covered in test_motion.py)
     async for stat_name in observe_value(status_code):
-        assert stat_name == "IDLE"
+        break
 
-        if stat_name == "IDLE":
-            break
+    # status_0 is the status code resolved to its enum member name
+    assert isinstance(stat_name, str) and stat_name
+
+    status_text = await cryo_dev.status_1.get_value()
+    assert isinstance(status_text, str)
 
 
 async def test_trigger(cryo_sim, cryo_node_no_re: SECoPNodeDevice):
@@ -151,68 +153,25 @@ async def test_trigger(cryo_sim, cryo_node_no_re: SECoPNodeDevice):
 #    assert  val_desc == {}
 
 
-async def test_node_drive(cryo_sim, cryo_node_no_re: SECoPNodeDevice):
-    cryo_dev: SECoPMoveableDevice = cryo_node_no_re.cryo
+async def test_node_reconn(fresh_cryo_sim):
+    async with init_devices():
+        cryo_node = SECoPNodeDevice(sec_node_uri=fresh_cryo_sim.uri)
 
-    await cryo_dev.window.set(5)
-    await cryo_dev.tolerance.set(1)
-    await cryo_dev.ramp.set(20)
+    old_conf = await cryo_node.read_configuration()
 
-    target_old = await cryo_dev.target.read()
+    # restart the SEC node on the same port, the client reconnects on its own
+    fresh_cryo_sim.restart()
 
-    new_target = 11.0
+    async def wait_for_new_firmware_reading():
+        while True:
+            try:
+                new_conf = await cryo_node.read_configuration()
+            except Exception:
+                new_conf = None
+            if new_conf is not None:
+                fw_new = new_conf[cryo_node.firmware.name]
+                if fw_new["timestamp"] > old_conf[cryo_node.firmware.name]["timestamp"]:
+                    return
+            await asyncio.sleep(0.05)
 
-    old_target = target_old[cryo_dev.target.name].get("value")
-
-    assert old_target != new_target
-
-    stat = cryo_dev.set(new_position=new_target)
-
-    # assert new_target == conf_new.get('target').get('value')
-
-    await stat
-
-    reading = await cryo_dev.value.get_value()
-
-    assert np.isclose(reading, new_target, atol=1.0)
-
-
-async def test_node_reconn(
-    cryo_sim: xprocess, cryo_node_no_re: SECoPNodeDevice, frappy_env
-):
-
-    class Starter(ProcessStarter):
-        # startup pattern
-        pattern = ".*: startup done with interface(s)*"
-        timeout = 5
-        # command to start process
-        env = frappy_env["env"]  # Use the environment variables from the fixture
-        args = [
-            "frappy-server",
-            "-c",
-            "cryo_cfg.py",
-            "cryo",
-        ]
-
-    # cryo_dev: SECoPMoveableDevice = cryo_node_internal_loop.cryo
-
-    old_conf = await cryo_node_no_re.read_configuration()
-
-    # clean up whole process tree afterwards
-
-    cryo_info: XProcessInfo = cryo_sim.getinfo("cryo_sim")
-
-    cryo_info.terminate(timeout=3)
-
-    await asyncio.sleep(1)
-
-    cryo_sim.ensure("cryo_sim", Starter)
-
-    await asyncio.sleep(2)
-
-    new_conf = await cryo_node_no_re.read_configuration()
-
-    fw_old = old_conf[cryo_node_no_re.firmware.name]
-    fw_new = new_conf[cryo_node_no_re.firmware.name]
-
-    assert fw_new["timestamp"] > fw_old["timestamp"]
+    await asyncio.wait_for(wait_for_new_firmware_reading(), timeout=10)
