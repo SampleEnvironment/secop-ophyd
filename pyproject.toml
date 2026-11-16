@@ -36,6 +36,7 @@ dev = [
     'pytest-asyncio',
     'pytest-xprocess',
     'pytest-cov',
+    'pytest-timeout',
     'pre-commit',
     'ipykernel',
     'ophyd',
@@ -62,7 +63,9 @@ where = ["src"]
 minversion = "6.0"
 addopts = "-v"
 asyncio_mode="auto"
+asyncio_default_fixture_loop_scope = "function"
 filterwarnings = "ignore::PendingDeprecationWarning"
+timeout = 240
 
 
 [tool.isort]

@@ -39,7 +39,7 @@ from ophyd_async.core import (
 )
 from ophyd_async.core._utils import Callback
 
-from secop_ophyd.AsyncFrappyClient import AsyncFrappyClient
+from secop_ophyd.AsyncFrappyClient import AsyncSecopClient
 from secop_ophyd.logs import setup_logging
 from secop_ophyd.propertykeys import EQUIPMENT_ID, INTERFACE_CLASSES
 from secop_ophyd.SECoPSignal import (
@@ -174,9 +174,9 @@ class SECoPDeviceConnector(DeviceConnector):
             raise RuntimeError(f"Invalid SECoP resource identifier: {sri}")
 
         if SECoPDevice._clients.get(self.node_id) is None:
-            raise RuntimeError(f"No AsyncFrappyClient for URI {sri} exists")
+            raise RuntimeError(f"No AsyncSecopClient for URI {sri} exists")
 
-        self.client: AsyncFrappyClient = SECoPDevice._clients[self.node_id]
+        self.client: AsyncSecopClient = SECoPDevice._clients[self.node_id]
 
     def set_module(self, module_name: str):
         if self.sri.count(":") != 1:
@@ -406,7 +406,7 @@ class SECoPDeviceConnector(DeviceConnector):
 
 class SECoPDevice(StandardReadable):
 
-    _clients: Dict[str, AsyncFrappyClient] = {}
+    _clients: Dict[str, AsyncSecopClient] = {}
 
     _node_id: str
     _sri: str
@@ -454,13 +454,13 @@ class SECoPDevice(StandardReadable):
             self._module = sri.split(":")[2]
 
         if SECoPDevice._clients.get(self._node_id) is None:
-            SECoPDevice._clients[self._node_id] = AsyncFrappyClient(
+            SECoPDevice._clients[self._node_id] = AsyncSecopClient(
                 host=self._host, port=self._port, log=self._logger
             )
 
         connector = connector or SECoPDeviceConnector(sri=sri)
 
-        self._client: AsyncFrappyClient = SECoPDevice._clients[self._node_id]
+        self._client: AsyncSecopClient = SECoPDevice._clients[self._node_id]
 
         super().__init__(name=name, connector=connector)
 
@@ -611,14 +611,14 @@ class SECoPNodeDevice(SECoPDevice):
         # Node device has no specific interface class formats
         pass
 
-    def class_from_instance(self, path_to_module: str | None = None):
+    async def class_from_instance(self, path_to_module: str | None = None):
         """Generate an annotated device class for this SEC node and write it
         to its own file, named after the generated node class, inside
         ``path_to_module`` (default: ``./secop_ophyd_devs/``). Any existing
         file of that name is overwritten."""
         from secop_ophyd.GenNodeCode import GenNodeCode
 
-        description = self._client.client.request("describe")[2]
+        description = (await self._client.request("describe"))[2]
 
         genCode = GenNodeCode(path=path_to_module, log=self._logger)
 
@@ -667,7 +667,7 @@ class SECoPReadableDevice(SECoPDevice, Triggerable, Subscribable):
         """Initializes the SECoPReadableDevice
 
         :param secclient: SECoP client providing communication to the SEC Node
-        :type secclient: AsyncFrappyClient
+        :type secclient: AsyncSecopClient
         :param module_name: Name of the SEC Node module that is represented by
             this device
         :type module_name: str
@@ -802,7 +802,7 @@ class SECoPTriggerableDevice(SECoPReadableDevice, Stoppable):
         """Initialize SECoPTriggerableDevice
 
         :param secclient: SECoP client providing communication to the SEC Node
-        :type secclient: AsyncFrappyClient
+        :type secclient: AsyncSecopClient
         :param module_name: ame of the SEC Node module that is represented by
             this device
         :type module_name: str
@@ -832,7 +832,7 @@ class SECoPMovableLogic(MovableLogic[Any]):
     """
 
     status: SignalR
-    secclient: AsyncFrappyClient
+    secclient: AsyncSecopClient
     module: str
     logger: Logger
 
@@ -894,7 +894,7 @@ class SECoPMoveableDevice(SECoPReadableDevice, StandardMovable[Any]):
         """Initialize SECoPMovableDevice
 
         :param secclient: SECoP client providing communication to the SEC Node
-        :type secclient: AsyncFrappyClient
+        :type secclient: AsyncSecopClient
         :param module_name: ame of the SEC Node module that is represented by
             this device
         :type module_name: str

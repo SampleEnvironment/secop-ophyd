@@ -11,3 +11,6 @@ logs
 .secop-ophyd
 tests/testgen/*
 _api
+
+# Claude Code
+CLAUDE.md

@@ -89,12 +89,17 @@ While SECoP-Ophyd devices work immediately after connection, generating class fi
 - **Documentation** of device structure
 - **Better development experience** when writing plans
 
-Generate class files with:
+``class_from_instance()`` is a coroutine. From synchronous code (e.g. a script or
+IPython session using the RunEngine), run it on the bluesky event loop:
 
 .. code-block:: python
 
-    gas_dosing_introspected.class_from_instance()
-    reactor_cell_introspected.class_from_instance()
+    from bluesky.run_engine import call_in_bluesky_event_loop
+
+    call_in_bluesky_event_loop(gas_dosing_introspected.class_from_instance())
+    call_in_bluesky_event_loop(reactor_cell_introspected.class_from_instance())
+
+Inside async code, simply ``await gas_dosing_introspected.class_from_instance()``.
 
 This writes one file per SEC node into ``secop_ophyd_devs/`` in your current working
 directory, e.g. ``Gas_dosing.py`` and ``Reactor_cell.py``, named after the generated node
@@ -104,7 +109,9 @@ that node's file. You can specify a custom output directory:
 
 .. code-block:: python
 
-    gas_dosing_introspected.class_from_instance('/path/to/output/directory')
+    call_in_bluesky_event_loop(
+        gas_dosing_introspected.class_from_instance('/path/to/output/directory')
+    )
 
 
 Each generated class file contains declarative device definitions that match the

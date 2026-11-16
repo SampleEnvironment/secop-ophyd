@@ -35,19 +35,31 @@ async def test_abs_set_wait_behaviour(
 ):
 
     def wait_on_abs_set():
+        print("Setting window=10")
         yield from bps.abs_set(cryo_node.cryo.window, 10, wait=True)
+        print("Setting ramp=20")
         yield from bps.abs_set(cryo_node.cryo.ramp, 20, wait=True)
+        print("Setting tolerance=2")
         yield from bps.abs_set(cryo_node.cryo.tolerance, 2, wait=True)
         before = time.time()
+        print("abs_set cryo=20 (wait=True) starting")
         yield from bps.abs_set(cryo_node.cryo, 20, wait=True)
         after = time.time()
+        print(f"abs_set cryo=20 (wait=True) took {after - before:.2f}s")
 
         assert after - before >= 10
 
         before = time.time()
-        yield from bps.abs_set(cryo_node.cryo, 10, wait=False)
+        print("abs_set cryo=10 (wait=False) starting")
+        yield from bps.abs_set(cryo_node.cryo, 15, wait=False, group="cryo")
+
         after = time.time()
+        print(f"abs_set cryo=10 (wait=False) returned in {after - before:.2f}s")
 
         assert after - before < 5
+
+        print("Waiting on group='cryo'")
+        yield from bps.wait(group="cryo")
+        print("Group 'cryo' done")
 
     RE(wait_on_abs_set())

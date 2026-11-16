@@ -302,17 +302,22 @@ While SECoP-Ophyd works without them, class files provide:
 Generating Class Files
 ~~~~~~~~~~~~~~~~~~~~~~~
 
+``class_from_instance()`` is a coroutine. From synchronous code, run it on the
+bluesky event loop (inside async code, ``await`` it instead):
+
 .. code-block:: python
+
+    from bluesky.run_engine import call_in_bluesky_event_loop
 
     # Connect to device
     with init_devices():
         device = SECoPNodeDevice('localhost:10800')
 
     # Generate class file in current directory
-    device.class_from_instance()
+    call_in_bluesky_event_loop(device.class_from_instance())
 
     # Or specify output directory
-    device.class_from_instance('/path/to/output')
+    call_in_bluesky_event_loop(device.class_from_instance('/path/to/output'))
 
 
 The generated code will look similar to the example below, with signals annotated with
