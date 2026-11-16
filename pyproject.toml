@@ -51,6 +51,8 @@ dev = [
     "sphinx-autodoc2",
     "myst-parser",
     "numpydoc",
+    "tiled[server]>=0.2.21",
+    "bluesky-tiled-plugins>=2.0.13",
 ]
 
 
