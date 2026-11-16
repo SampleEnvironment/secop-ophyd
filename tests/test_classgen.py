@@ -19,6 +19,7 @@ from secop_ophyd.GenNodeCode import (
     PropertyAttribute,
 )
 from secop_ophyd.SECoPDevices import ParameterType, PropertyType, SECoPNodeDevice
+from tests.util import import_generated
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
@@ -774,10 +775,12 @@ async def test_gen_cryo_node(
 
     await cryo_node_no_re.class_from_instance(clean_generated_file)
 
-    from tests.testgen.Cryo_7_frappy_demo import Cryo_7_frappy_demo  # type: ignore
+    Cryo_7_frappy_demo = import_generated(
+        clean_generated_file, "Cryo_7_frappy_demo"
+    ).Cryo_7_frappy_demo
 
     async with init_devices():
-        cryo_gen_code = Cryo_7_frappy_demo(sec_node_uri="localhost:10769")
+        cryo_gen_code = Cryo_7_frappy_demo(sec_node_uri=cryo_sim.uri)
 
     cryo_val = await cryo_gen_code.read()
 
@@ -808,13 +811,12 @@ async def test_generated_enum_parameter_datatype_is_preserved(
 
     await cryo_node_no_re.class_from_instance(clean_generated_file)
 
-    from tests.testgen.Cryo_7_frappy_demo import (  # type: ignore
-        Cryo_7_frappy_demo,
-        Cryostat_Mode_Enum,
-    )
+    generated = import_generated(clean_generated_file, "Cryo_7_frappy_demo")
+    Cryo_7_frappy_demo = generated.Cryo_7_frappy_demo
+    Cryostat_Mode_Enum = generated.Cryostat_Mode_Enum
 
     async with init_devices():
-        cryo_gen_code = Cryo_7_frappy_demo(sec_node_uri="localhost:10769")
+        cryo_gen_code = Cryo_7_frappy_demo(sec_node_uri=cryo_sim.uri)
 
     assert cryo_gen_code.cryo.mode.datatype is Cryostat_Mode_Enum
 
@@ -848,10 +850,12 @@ async def test_gen_cryo_status_not_in_cfg(
     assert status_reding.get(stat_name) is not None, "Status signal should be readable"
 
     # Import generated class
-    from tests.testgen.Cryo_7_frappy_demo import Cryo_7_frappy_demo  # type: ignore
+    Cryo_7_frappy_demo = import_generated(
+        clean_generated_file, "Cryo_7_frappy_demo"
+    ).Cryo_7_frappy_demo
 
     async with init_devices():
-        cryo_gen_code = Cryo_7_frappy_demo(sec_node_uri="localhost:10769")
+        cryo_gen_code = Cryo_7_frappy_demo(sec_node_uri=cryo_sim.uri)
 
     # Status signal should still be present and functional in the generated code, even
     # though it's not in the configuration

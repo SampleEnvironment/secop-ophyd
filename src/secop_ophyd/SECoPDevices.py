@@ -815,6 +815,11 @@ class SECoPTriggerableDevice(SECoPReadableDevice, Stoppable):
             sri=sri, name=name, connector=connector, loglevel=loglevel, logdir=logdir
         )
 
+    async def stop(self, *, success: bool = False) -> None:
+        """Abort a running measurement via the module's ``stop`` command."""
+        self._logger.info(f"Stopping {self.name}")
+        await self._client.exec_command(self._module, "stop")
+
 
 class SECoPWritableDevice(SECoPReadableDevice):
     hinted_signals: list[str] = ["target", "value"]
