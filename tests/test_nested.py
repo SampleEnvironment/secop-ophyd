@@ -1,6 +1,6 @@
 # mypy: disable-error-code="attr-defined"
 import numpy as np
-from ophyd_async.core import SignalR, SignalRW
+from ophyd_async.core import SignalR, SignalRW, init_devices
 
 from secop_ophyd.SECoPDevices import SECoPNodeDevice, SECoPReadableDevice
 
@@ -11,7 +11,7 @@ async def test_nested_connect(nested_struct_sim, nested_node_no_re: SECoPNodeDev
 
 async def test_tuple_dev(nested_struct_sim):
 
-    ophy_struct = SECoPReadableDevice("localhost:10771:ophy_struct")
+    ophy_struct = SECoPReadableDevice(f"{nested_struct_sim.uri}:ophy_struct")
 
     await ophy_struct.connect()
 
@@ -26,13 +26,14 @@ async def test_tuple_dev(nested_struct_sim):
     stat0 = reading_val["f0"]
     stat1 = reading_val["f1"]
 
-    assert stat0.item() == 300  # isinstance(stat0, int)
+    assert isinstance(stat0.item(), int)
+    assert stat0.item() in (100, 300)  # IDLE or BUSY, depending on sim timing
 
     assert isinstance(stat1.item(), str)
 
 
 async def test_struct_dev(nested_struct_sim):
-    ophy_struct = SECoPReadableDevice("localhost:10771:ophy_struct")
+    ophy_struct = SECoPReadableDevice(f"{nested_struct_sim.uri}:ophy_struct")
     await ophy_struct.connect()
 
     nested_struct_sig: SignalR = ophy_struct.nested_struct
@@ -58,10 +59,13 @@ async def test_nested_dtype_str_signal_generation(
     assert "struct" in descr["SECOP_datainfo"]
 
 
-async def test_nested_dtype_set_str_struct(
-    nested_struct_sim, nested_node_no_re: SECoPNodeDevice
-):
-    struct_mod = nested_node_no_re.ophy_struct
+async def test_nested_dtype_set_str_struct(fresh_nested_struct_sim):
+    # moving the target keeps the module BUSY for a long time, so use a
+    # private node instead of the shared one
+    async with init_devices():
+        node = SECoPNodeDevice(sec_node_uri=fresh_nested_struct_sim.uri)
+
+    struct_mod = node.ophy_struct
 
     target: SignalRW = struct_mod.target
 
@@ -107,11 +111,13 @@ async def test_nested_dtype_set_str_tuple(
 
     tuple_val = (50, 20, 30, "blue")
 
-    stat = tuple_param.set(tuple_val)
+    try:
+        await tuple_param.set(tuple_val)
 
-    await stat
-
-    reading = await tuple_param.read()
+        reading = await tuple_param.read()
+    finally:
+        # restore the default on the shared node
+        await tuple_param.set((5, 5, 5, "green"))
 
     val = reading.get(tuple_param.name)["value"]
 

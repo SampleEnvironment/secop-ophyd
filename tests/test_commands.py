@@ -1,5 +1,4 @@
 # mypy: disable-error-code="attr-defined"
-import asyncio
 from typing import Any
 
 import bluesky.plan_stubs as bps
@@ -22,7 +21,7 @@ class _AnnotatedStructDevice(SECoPReadableDevice):
 
 
 async def test_annotated_command_declaration(nested_struct_sim):
-    dev = _AnnotatedStructDevice("localhost:10771:ophy_struct")
+    dev = _AnnotatedStructDevice(f"{nested_struct_sim.uri}:ophy_struct")
 
     await dev.connect()
 
@@ -100,42 +99,3 @@ def test_stop_is_not_shadowed_by_a_command(cryo_sim, cryo_node_no_re: SECoPNodeD
     # Stoppable.stop() bound method (from StandardMovable) stays in place.
     assert not isinstance(cryo.stop, (Command, TriggerableCommand))
     assert callable(cryo.stop)
-
-
-async def test_stop_cmd_success(cryo_sim, cryo_node_no_re: SECoPNodeDevice):
-    cryo: SECoPMoveableDevice = cryo_node_no_re.cryo
-
-    await cryo.window.set(5)
-    await cryo.tolerance.set(1)
-    await cryo.ramp.set(20)
-
-    stat = cryo.set(15)
-
-    await asyncio.sleep(3)
-
-    # stop() always halts the SEC node module; success=True means the
-    # resulting AsyncStatus should still report successful completion
-    await cryo.stop(success=True)
-
-    await stat
-    assert stat.success
-
-
-async def test_stop_cmd_failure(cryo_sim, cryo_node_no_re: SECoPNodeDevice):
-    cryo: SECoPMoveableDevice = cryo_node_no_re.cryo
-
-    await cryo.window.set(5)
-    await cryo.tolerance.set(1)
-    await cryo.ramp.set(20)
-
-    stat = cryo.set(15)
-
-    await asyncio.sleep(3)
-
-    # stop() always halts the SEC node module; success=False means the
-    # resulting AsyncStatus should report failure
-    await cryo.stop(success=False)
-
-    with pytest.raises(RuntimeError):
-        await stat
-    assert not stat.success

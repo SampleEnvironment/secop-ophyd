@@ -1,7 +1,6 @@
 # mypy: disable-error-code="attr-defined"
 import logging
-import os
-import shutil
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -15,17 +14,18 @@ from frappy.datatypes import (
     TupleOf,
 )
 from ophyd_async.core import init_devices
-from xprocess import ProcessStarter
 
 from secop_ophyd.AsyncFrappyClient import AsyncSecopClient
 from secop_ophyd.SECoPDevices import SECoPDevice, SECoPNodeDevice
+from tests.util import SecNode
 
 
 @pytest.fixture(autouse=True)
 async def cleanup_secop_clients():
     """Clear SECoP clients between tests to ensure fresh connections."""
     yield
-    print("disconnecting and clearing clients")
+    # After each test, shut down and clear the cached clients, so they do not
+    # keep connections to the session scoped SEC nodes open.
     for client in list(SECoPDevice._clients.values()):
         try:
             await client.disconnect(True)
@@ -61,107 +61,74 @@ def mass_spectrometer_description_no_impl():
 
 
 @pytest.fixture
-def clean_generated_file():
-    """Provide a clean per-node output directory for code generation tests.
+def clean_generated_file(tmp_path):
+    """Provide an empty, per-test output directory for code generation tests.
 
-    Wipes the whole testgen directory before the test runs, since generation
-    now writes one file per SEC node into it, while still allowing inspection
-    of results after the test completes.
-
-    Returns:
-        Path to the testgen directory where files should be generated
+    pytest keeps the directories of the last few runs, so the generated files
+    can still be inspected after a test completes.
     """
-    testgen_dir = Path(__file__).parent / "testgen"
-    if testgen_dir.exists():
-        shutil.rmtree(testgen_dir)
-    testgen_dir.mkdir(parents=True, exist_ok=True)
-
+    testgen_dir = tmp_path / "testgen"
+    testgen_dir.mkdir()
     return testgen_dir
 
 
-@pytest.fixture
-def frappy_env():
-    """Create and return environment variables and paths for frappy server."""
-    # Create absolute paths for frappy requirements
-    base_dir = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
-    conf_dir = os.path.join(base_dir, "cfg")
-    log_dir = os.path.join(base_dir, "logs")
-    pid_dir = os.path.join(base_dir, "pid")
-
-    # Add path to frappy_modules
-    frappy_modules_dir = os.path.join(base_dir, "frappy_modules")
-
-    # Create environment variables
-    env = os.environ.copy()  # Start with current environment
-
-    env.update(
-        {
-            "FRAPPY_CONFDIR": conf_dir,
-            "FRAPPY_LOGDIR": log_dir,
-            "FRAPPY_PIDDIR": pid_dir,
-            "FRAPPY_PROJECT_ROOT": base_dir,  # Add the project root
-        }
-    )
-
-    return {
-        "env": env,
-        "conf_dir": conf_dir,
-        "log_dir": log_dir,
-        "pid_dir": pid_dir,
-        "modules_dir": frappy_modules_dir,
-    }
+@pytest.fixture(scope="session")
+def sec_node_workdir(tmp_path_factory) -> Path:
+    return tmp_path_factory.mktemp("sec_nodes")
 
 
-@pytest.fixture
-def cryo_sim(xprocess, frappy_env):
+@contextmanager
+def _running_node(cfg: str, name: str, workdir: Path, attempts: int = 3):
+    # a free port can be taken by another process before the node binds it,
+    # so retry on a new port
+    for attempt in range(attempts):
+        try:
+            node = SecNode(cfg, name, workdir).start()
+            break
+        except RuntimeError:
+            if attempt == attempts - 1:
+                raise
+    try:
+        yield node
+    finally:
+        node.stop()
 
-    class Starter(ProcessStarter):
-        # startup pattern
-        pattern = ".*: startup done with interface(s)*"
-        timeout = 5
-        # command to start process
-        env = frappy_env["env"]  # Use the environment variables from the fixture
 
-        args = [
-            "frappy-server",
-            "-c",
-            "cryo_cfg.py",
-            "cryo",
-        ]
+# Session scoped SEC nodes: started once per test session (per xdist worker).
+# Tests using these must not leave lasting changes on the node, tests that
+# need to kill/restart a node use the function scoped variants below.
 
-    # ensure process is running and return its logfile
-    xprocess.ensure("cryo_sim", Starter)
 
-    yield xprocess
+@pytest.fixture(scope="session")
+def cryo_sim(sec_node_workdir):
+    with _running_node("cryo_cfg.py", "cryo", sec_node_workdir) as node:
+        yield node
 
-    # clean up whole process tree afterwards
-    xprocess.getinfo("cryo_sim").terminate()
+
+@pytest.fixture(scope="session")
+def nested_struct_sim(sec_node_workdir):
+    with _running_node("ophyd_secop_test_cfg.py", "nested", sec_node_workdir) as node:
+        yield node
+
+
+@pytest.fixture(scope="session")
+def motion_sim(sec_node_workdir):
+    with _running_node("motion_cfg.py", "motion", sec_node_workdir) as node:
+        yield node
 
 
 @pytest.fixture
-def nested_struct_sim(xprocess, frappy_env):
+def fresh_cryo_sim(sec_node_workdir):
+    """A private cryo node, for tests that restart it or change its state."""
+    with _running_node("cryo_cfg.py", "cryo", sec_node_workdir) as node:
+        yield node
 
-    class Starter(ProcessStarter):
-        # startup pattern
-        pattern = ".*: startup done with interface(s)*"
-        timeout = 5
 
-        env = frappy_env["env"]  # Use the environment variables from the fixture
-        args = [
-            "frappy-server",
-            "-c",
-            "ophyd_secop_test_cfg.py",
-            "nested",
-        ]
-
-    pname = "nested"
-    # ensure process is running and return its logfile
-    xprocess.ensure(pname, Starter)
-
-    yield
-
-    # clean up whole process tree afterwards
-    xprocess.getinfo(pname).terminate()
+@pytest.fixture
+def fresh_nested_struct_sim(sec_node_workdir):
+    """A private nested node, for tests that change its state."""
+    with _running_node("ophyd_secop_test_cfg.py", "nested", sec_node_workdir) as node:
+        yield node
 
 
 @pytest.fixture
@@ -180,37 +147,30 @@ def logger():
     logger.addFilter(NoRXFilter())
     logger.addFilter(NoTXFilter())
 
-    logging.basicConfig(
-        datefmt="%d/%m/%Y %I:%M:%S",
-        format="%(asctime)s.%(msecs)03d  %(name)-12s %(levelname)-8s %(message)s",
-        filename="asyncclient.log",
-        encoding="utf-8",
-        level=logging.DEBUG,
-        filemode="w",
-    )
-
     return logger
 
 
 @pytest.fixture()
-async def async_frappy_client(cryo_sim, logger, port="10769"):
-    client = AsyncSecopClient(host="localhost", port=port, log=logger)
+async def async_frappy_client(cryo_sim, logger):
+    client = AsyncSecopClient(host="localhost", port=str(cryo_sim.port), log=logger)
     await client.connect(3)
     yield client
     await client.disconnect(True)
 
 
 @pytest.fixture()
-async def async_secop_client(cryo_sim, logger, port="10769"):
-    client = AsyncSecopClient(host="localhost", port=port, log=logger)
+async def async_secop_client(cryo_sim, logger):
+    client = AsyncSecopClient(host="localhost", port=str(cryo_sim.port), log=logger)
     await client.connect(3)
     yield client
     await client.disconnect(True)
 
 
 @pytest.fixture()
-async def nested_client(nested_struct_sim, logger, port="10771"):
-    client = AsyncSecopClient(host="localhost", port=port, log=logger)
+async def nested_client(nested_struct_sim, logger):
+    client = AsyncSecopClient(
+        host="localhost", port=str(nested_struct_sim.port), log=logger
+    )
     await client.connect(3)
     yield client
     await client.disconnect(True)
@@ -223,55 +183,48 @@ async def RE():  # noqa: N802
 
 
 @pytest.fixture()
-async def nested_node_no_re():
+async def nested_node_no_re(nested_struct_sim):
     async with init_devices():
-        nested = SECoPNodeDevice(
-            sec_node_uri="localhost:10771",
-        )
-
-    yield nested
-    client = SECoPDevice._clients.get("localhost:10771")
-    if client is not None:
-        try:
-            await client.disconnect(True)
-        except Exception:
-            pass
-
-
-@pytest.fixture()
-def nested_node(RE):  # noqa: N803
-    with init_devices():
-        nested = SECoPNodeDevice(
-            sec_node_uri="localhost:10771",
-        )
+        nested = SECoPNodeDevice(sec_node_uri=nested_struct_sim.uri)
 
     return nested
 
 
 @pytest.fixture()
-async def cryo_node_no_re():
-    async with init_devices():
-        cryo = SECoPNodeDevice(
-            sec_node_uri="localhost:10769",
-        )
+def nested_node(RE, nested_struct_sim):  # noqa: N803
+    with init_devices():
+        nested = SECoPNodeDevice(sec_node_uri=nested_struct_sim.uri)
 
-    yield cryo
-    client = SECoPDevice._clients.get("localhost:10769")
-    if client is not None:
-        try:
-            await client.disconnect(True)
-        except Exception:
-            pass
+    return nested
 
 
 @pytest.fixture()
-def cryo_node(RE):  # noqa: N803
+async def cryo_node_no_re(cryo_sim):
+    async with init_devices():
+        cryo = SECoPNodeDevice(sec_node_uri=cryo_sim.uri)
+    return cryo
+
+
+@pytest.fixture()
+def cryo_node(RE, cryo_sim):  # noqa: N803
     with init_devices():
-        cryo = SECoPNodeDevice(
-            sec_node_uri="localhost:10769",
-        )
+        cryo = SECoPNodeDevice(sec_node_uri=cryo_sim.uri)
 
     return cryo
+
+
+@pytest.fixture()
+async def motion_node_no_re(motion_sim):
+    async with init_devices():
+        motion = SECoPNodeDevice(sec_node_uri=motion_sim.uri)
+    return motion
+
+
+@pytest.fixture()
+def motion_node(RE, motion_sim):  # noqa: N803
+    with init_devices():
+        motion = SECoPNodeDevice(sec_node_uri=motion_sim.uri)
+    return motion
 
 
 @pytest.fixture

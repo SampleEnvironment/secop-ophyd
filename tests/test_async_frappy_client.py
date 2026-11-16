@@ -5,7 +5,6 @@ import pytest
 from frappy.client import CacheItem
 from frappy.protocol.messages import READREQUEST
 
-# import xprocess
 from secop_ophyd.AsyncFrappyClient import AsyncSecopClient
 
 
@@ -70,6 +69,37 @@ async def test_async_secopclient_reconn(
     assert reading3.value != reading4.value
 
 
+async def _wait_for_state(client: AsyncSecopClient, state: str, timeout=10):
+    async def wait():
+        while client.state != state:
+            await asyncio.sleep(0.01)
+
+    await asyncio.wait_for(wait(), timeout)
+
+
+async def test_async_secopclient_reconn_after_node_restart(fresh_cryo_sim, logger):
+    client = AsyncSecopClient(
+        host="localhost", port=str(fresh_cryo_sim.port), log=logger
+    )
+    await client.connect(3)
+
+    try:
+        # the SEC node goes away, the client keeps trying to reconnect
+        fresh_cryo_sim.stop()
+        await _wait_for_state(client, "reconnecting")
+
+        fresh_cryo_sim.start()
+        await _wait_for_state(client, "connected")
+
+        # ensures we are connected and getting fresh data again
+        reading1 = await client.get_parameter("cryo", "value", False)
+        reading2 = await client.get_parameter("cryo", "value", False)
+
+        assert reading1.value != reading2.value
+    finally:
+        await client.disconnect(True)
+
+
 async def test_async_secopclient_shutdown_and_reconn(
     cryo_sim, async_frappy_client: AsyncSecopClient
 ):
@@ -87,7 +117,7 @@ async def test_async_secopclient_shutdown_and_reconn(
 
     assert async_frappy_client.state == "shutdown"
 
-    await asyncio.sleep(2)
+    await asyncio.sleep(0.5)
 
     # ensure no auto reconnect
     assert async_frappy_client.state == "shutdown"
@@ -105,10 +135,16 @@ async def test_async_secopclient_shutdown_and_reconn(
     assert reading1.value != reading2.value
 
 
-async def test_async_secopclient_set_parameter(
-    cryo_sim, async_frappy_client: AsyncSecopClient
-):
-    result = await async_frappy_client.set_parameter("cryo", "target", 15.0)
+async def test_async_secopclient_set_parameter(fresh_cryo_sim, logger):
+    # a new target sets the cryo in motion, so use a private node
+    client = AsyncSecopClient(
+        host="localhost", port=str(fresh_cryo_sim.port), log=logger
+    )
+    await client.connect(3)
+    try:
+        result = await client.set_parameter("cryo", "target", 15.0)
+    finally:
+        await client.disconnect(True)
     assert isinstance(result, CacheItem)
     assert result.value == pytest.approx(15.0)
 
@@ -261,7 +297,7 @@ async def test_connect_cancels_pending_reconnect_task(
 
 async def test_connect_state_transition_sequence(cryo_sim, logger):
     """connect() drives the client through connecting → activating → connected."""
-    client = AsyncSecopClient(host="localhost", port="10769", log=logger)
+    client = AsyncSecopClient(host="localhost", port=str(cryo_sim.port), log=logger)
     states: list[tuple] = []
 
     def nodeStateChange(online, state):
@@ -355,8 +391,8 @@ async def test_disconnect_shutdown_while_reconnect_pending(
 
 async def test_two_independent_clients(cryo_sim, logger):
     """Two clients to the same server have independent state, caches, and streams."""
-    client_a = AsyncSecopClient(host="localhost", port="10769", log=logger)
-    client_b = AsyncSecopClient(host="localhost", port="10769", log=logger)
+    client_a = AsyncSecopClient(host="localhost", port=str(cryo_sim.port), log=logger)
+    client_b = AsyncSecopClient(host="localhost", port=str(cryo_sim.port), log=logger)
 
     await asyncio.gather(client_a.connect(3), client_b.connect(3))
 

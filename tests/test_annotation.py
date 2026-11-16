@@ -49,14 +49,16 @@ async def test_subset_signals_annotation(cryo_sim):
 
     async with init_devices():
         cryo = Cryo_7_frappy_demo(
-            sec_node_uri="localhost:10769",
+            sec_node_uri=cryo_sim.uri,
         )
 
     val_read = await cryo.cryo.read()
     assert val_read != {}
 
 
-async def test_enum_annotation(cryo_sim):
+async def test_enum_annotation(fresh_cryo_sim):
+    # switching the regulation mode disturbs the cryo simulation, so use a
+    # private node instead of the shared one
 
     from typing import Annotated as A
 
@@ -144,7 +146,7 @@ async def test_enum_annotation(cryo_sim):
 
     async with init_devices():
         cryo = Cryo_7_frappy_demo(
-            sec_node_uri="localhost:10769",
+            sec_node_uri=fresh_cryo_sim.uri,
         )
 
     await cryo.cryo.mode.set(Cryostat_Mode_Enum.RAMP)

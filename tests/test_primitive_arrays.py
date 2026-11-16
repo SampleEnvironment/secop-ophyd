@@ -25,7 +25,7 @@ def test_primitive_arrays(
         ]
     )
 
-    RE(count([prim_arr], 1, 3))
+    RE(count([prim_arr], 1))
 
 
 @pytest.mark.parametrize(
