@@ -28,7 +28,10 @@ async def test_source(cryo_sim, cryo_node_no_re: SECoPNodeDevice):
     val_name = cryo_node_no_re.cryo.value.name
     val_source = cryo_node_no_re.cryo.value.source
 
-    assert val_name == "cryo_7-frappy-demo-cryo-value"
+    # StandardMovable.set_name() renames the readback (value) signal to match
+    # its parent device, so it's the same name as the device itself
+    assert val_name == "cryo_7-frappy-demo-cryo"
+    assert val_name == cryo_node_no_re.cryo.name
     assert val_source == "localhost:10769:cryo:value"
 
     # property name and source
@@ -163,7 +166,7 @@ async def test_node_drive(cryo_sim, cryo_node_no_re: SECoPNodeDevice):
 
     assert old_target != new_target
 
-    stat = cryo_dev.set(new_target=new_target)
+    stat = cryo_dev.set(new_position=new_target)
 
     # assert new_target == conf_new.get('target').get('value')
 

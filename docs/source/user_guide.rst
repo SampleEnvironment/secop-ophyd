@@ -403,8 +403,10 @@ Using Generated Classes
 
 .. code-block:: python
 
-    # Import generated classes
-    from genNodeClass import MyDevice
+    # Import generated classes -- each node is written to its own file,
+    # named after the node class, inside secop_ophyd_devs/, which is an
+    # importable package
+    from secop_ophyd_devs import MyDevice
 
     # Instatiate device using generated class
     with init_devices():
