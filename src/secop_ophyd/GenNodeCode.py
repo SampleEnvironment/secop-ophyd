@@ -11,20 +11,25 @@ import black
 from frappy.client import get_datatype
 from frappy.datatypes import CommandType, DataType, EnumType, StructOf
 from jinja2 import Environment, PackageLoader, select_autoescape
-from ophyd_async.core import SignalR, SignalRW
+from ophyd_async.core import SignalR, SignalRW, SignalW
 from ophyd_async.core import StandardReadableFormat as Format
 
 from secop_ophyd.SECoPDevices import (
     IGNORED_PROPS,
+    ParameterMemberType,
     ParameterType,
     PropertyType,
+    SECoPMoveableDevice,
     class_from_interface,
 )
 from secop_ophyd.SECoPSignal import secop_dtype_obj_from_json
 from secop_ophyd.util import (
+    CompositeKind,
     SECoPdtype,
     build_command_signature,
+    classify_datatype,
     command_dtype_to_annotation_str,
+    get_composite_members,
     secop_enum_name_to_python,
 )
 
@@ -222,6 +227,7 @@ class GenNodeCode:
         self.add_import("typing", "Annotated as A")
         self.add_import("ophyd_async.core", "SignalR")
         self.add_import("ophyd_async.core", "SignalRW")
+        self.add_import("ophyd_async.core", "SignalW")
         self.add_import("ophyd_async.core", "Command")
         self.add_import("ophyd_async.core", "TriggerableCommand")
         self.add_import("ophyd_async.core", "StandardReadableFormat as Format")
@@ -230,6 +236,9 @@ class GenNodeCode:
         self.add_import("typing", "Any")
         self.add_import("numpy", "ndarray")
         self.add_import("secop_ophyd.SECoPDevices", "ParameterType as ParamT")
+        self.add_import(
+            "secop_ophyd.SECoPDevices", "ParameterMemberType as ParamMemberT"
+        )
         self.add_import("secop_ophyd.SECoPDevices", "PropertyType as PropT")
         # Add necessary Device imports
         self.add_import("secop_ophyd.SECoPDevices", "SECoPDevice")
@@ -425,6 +434,13 @@ class GenNodeCode:
             secop_ophyd_modclass = class_from_interface(properties)
             module_bases = [secop_ophyd_modclass.__name__]
 
+            # SECoPMoveableDevice is generic over the datatype of 'target'
+            # (see SECoPDevices.py) -- captured below, from whichever branch
+            # of the parameter loop resolves 'target', so the generated base
+            # can be parametrized as e.g. SECoPMoveableDevice[ndarray] instead
+            # of falling back to the unparametrized (implicitly Any) form.
+            movable_target_type_param: str | None = None
+
             # Add the module class, use self reported "implementation" module property,
             # if not present use the module name
             module_class = modname
@@ -535,6 +551,28 @@ class GenNodeCode:
 
             mod_parameters: list[ParameterAttribute] = []
 
+            def _camel(identifier: str) -> str:
+                words = identifier.replace(" ", "_").replace("-", "_").split("_")
+                return "".join(word.capitalize() for word in words)
+
+            def _enum_type_param(
+                type_param: str | None,
+                enum_class_name: str,
+                members: dict,
+                enum_descr: str,
+            ) -> str | None:
+                """If `type_param` is the generic 'StrictEnum', generate a
+                concrete named enum class for it and return that class's name
+                instead; otherwise return `type_param` unchanged."""
+                if not (type_param and "StrictEnum" in type_param):
+                    return type_param
+
+                enum_cls = _build_enum_class(enum_class_name, members, enum_descr)
+                if enum_cls:
+                    module_enum_classes.append(enum_cls)
+                    return enum_class_name
+                return type_param
+
             for param_name, param_data in parameters.items():
 
                 descr = self._normalize_description(param_data.get("description", ""))
@@ -546,7 +584,6 @@ class GenNodeCode:
                     )
                 else:
                     param_descr = descr
-                signal_base = SignalR if param_data["readonly"] else SignalRW
 
                 format = None
 
@@ -567,40 +604,84 @@ class GenNodeCode:
                     format = format or Format.HINTED_SIGNAL
 
                 # Remove "StandardReadable" prefix from format for cleaner annotation
-                format = (
+                format_str = (
                     str(format).removeprefix("StandardReadable") if format else None
                 )
 
+                raw_datatype = param_data["datatype"]
+                kind = classify_datatype(raw_datatype)
+
+                if kind is CompositeKind.UNSUPPORTED:
+                    # mirrors SECoPDeviceConnector.connect_real(): no signal is
+                    # generated for a struct/tuple nested inside another
+                    # struct/tuple/array. Unlike the runtime path, codegen has
+                    # no notion of "mandatory for this instance's interface
+                    # class" at generation time, so it always just skips --
+                    # the runtime path is still the one that raises for a
+                    # genuinely mandatory parameter when actually connecting.
+                    continue
+
+                if kind is CompositeKind.DECOMPOSABLE:
+                    for member_key, member_dt in get_composite_members(raw_datatype):
+                        member_type_param = get_type_param(member_dt)
+                        if isinstance(member_dt, EnumType):
+                            # an EnumType member embedded in a struct/tuple
+                            # resolves to its member name string at runtime,
+                            # just like a standalone top-level enum parameter
+                            # -- so it gets its own generated enum class too
+                            member_type_param = _enum_type_param(
+                                member_type_param,
+                                f"{module_class}_{_camel(param_name)}_"
+                                f"{_camel(member_key)}_Enum",
+                                member_dt.export_datatype().get("members", {}),
+                                f"{param_name}.{member_key} enum for "
+                                f"`{module_class}`.",
+                            )
+
+                        mod_parameters.append(
+                            ParameterAttribute(
+                                name=f"{param_name}_{member_key}",
+                                type=SignalR.__name__,
+                                type_param=member_type_param,
+                                description=param_descr,
+                                path_annotation=str(ParameterMemberType()),
+                                format_annotation=format_str,
+                            )
+                        )
+
+                    if not param_data["readonly"]:
+                        target_type_param = get_type_param(raw_datatype)
+                        mod_parameters.append(
+                            ParameterAttribute(
+                                name=param_name,
+                                type=SignalW.__name__,
+                                type_param=target_type_param,
+                                description=param_descr,
+                                path_annotation=str(ParameterType()),
+                                # a write-only SignalW can't carry a
+                                # StandardReadableFormat (nothing to read)
+                                format_annotation=None,
+                            )
+                        )
+                        if param_name == "target":
+                            movable_target_type_param = target_type_param
+                    continue
+
+                # ATOMIC: single signal, unchanged from previous behaviour
+                signal_base = SignalR if param_data["readonly"] else SignalRW
                 datainfo = param_data.get("datainfo", {})
 
                 # infer the ophyd type from secop datatype
-                type_param = get_type_param(param_data["datatype"])
+                type_param = get_type_param(raw_datatype)
+                type_param = _enum_type_param(
+                    type_param,
+                    f"{module_class}_{_camel(param_name)}_Enum",
+                    datainfo.get("members", {}),
+                    f"{param_name} enum for `{module_class}`.",
+                )
 
-                # Handle StrictEnum types - generate enum class
-                if type_param and "StrictEnum" in type_param:
-                    # Generate unique enum class name:
-                    # ModuleClass + ParamName + Enum
-                    param_name_list = (
-                        param_name.replace(" ", "_").replace("-", "_").split("_")
-                    )
-
-                    param_name_camel = "".join(
-                        word.capitalize() for word in param_name_list
-                    )
-
-                    enum_class_name = f"{module_class}_{param_name_camel}_Enum"
-
-                    enum_cls = _build_enum_class(
-                        enum_class_name,
-                        datainfo.get("members", {}),
-                        f"{param_name} enum for `{module_class}`.",
-                    )
-                    if enum_cls:
-                        module_enum_classes.append(enum_cls)
-
-                        # Use the specific enum class name instead of generic
-                        # StrictEnum
-                        type_param = enum_class_name
+                if param_name == "target":
+                    movable_target_type_param = type_param
 
                 # Default format for parameters is CONFIG_SIGNAL
 
@@ -611,7 +692,7 @@ class GenNodeCode:
                         type_param=type_param,
                         description=param_descr,
                         path_annotation=str(ParameterType()),
-                        format_annotation=format,
+                        format_annotation=format_str,
                     )
                 )
 
@@ -634,6 +715,19 @@ class GenNodeCode:
                         path_annotation=str(PropertyType()),
                     )
                 )
+
+            if (
+                secop_ophyd_modclass is SECoPMoveableDevice
+                and movable_target_type_param
+            ):
+                module_bases = [
+                    (
+                        f"{base}[{movable_target_type_param}]"
+                        if base == SECoPMoveableDevice.__name__
+                        else base
+                    )
+                    for base in module_bases
+                ]
 
             self.add_mod_class(
                 module_cls=module_class,

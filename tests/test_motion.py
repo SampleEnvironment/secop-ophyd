@@ -17,6 +17,7 @@ from secop_ophyd.SECoPDevices import (
     SECoPMoveableDevice,
     SECoPNodeDevice,
 )
+from secop_ophyd.SECoPDevices import _status_code as _code_of
 
 SPEED = 20.0  # mm/s
 
@@ -37,8 +38,9 @@ async def _position(mover: SECoPMoveableDevice) -> float:
 
 
 async def _status_code(mover: SECoPMoveableDevice) -> int:
-    reading = await mover.status.read(cached=False)
-    return reading[mover.status.name]["value"]["f0"]
+    # status_0 is the status code, resolved to its enum member name
+    code_name = await mover.status_0.get_value(cached=False)
+    return _code_of(mover.status_0, code_name)
 
 
 async def test_mover_is_moveable_device(mover: SECoPMoveableDevice):
@@ -187,14 +189,14 @@ def test_observe_status_change(RE, motion_node: SECoPNodeDevice):  # noqa: N803
         start = yield from bps.rd(mover)
 
         yield from bps.abs_set(mover.target, start + 2, wait=True)
-        status = yield from bps.rd(mover.status)
-        assert status["f0"] == BUSY
+        status = yield from bps.rd(mover.status_0)
+        assert _code_of(mover.status_0, status) == BUSY
 
         # blocks until the module leaves BUSY
         yield from mover.observe_status_change(BUSY)
 
-        status = yield from bps.rd(mover.status)
-        assert IDLE <= status["f0"] < BUSY
+        status = yield from bps.rd(mover.status_0)
+        assert IDLE <= _code_of(mover.status_0, status) < BUSY
         assert np.isclose((yield from bps.rd(mover)), start + 2)
 
     RE(plan())

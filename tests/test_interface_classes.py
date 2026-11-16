@@ -16,13 +16,15 @@ from secop_ophyd.SECoPDevices import (
     SECoPNodeDevice,
     SECoPTriggerableDevice,
     SECoPWritableDevice,
+    _status_code,
 )
 
 
 async def _status(dev) -> tuple[int, str]:
-    reading = await dev.status.read(cached=False)
-    stat = reading[dev.status.name]["value"]
-    return int(stat["f0"]), str(stat["f1"])
+    # status is split into status_0 (code, as enum member name) / status_1 (text)
+    code_name = await dev.status_0.get_value(cached=False)
+    text = await dev.status_1.get_value(cached=False)
+    return _status_code(dev.status_0, code_name), str(text)
 
 
 @pytest.fixture

@@ -110,15 +110,18 @@ async def test_signal_stage_unstage_read_cached(
 async def test_status(cryo_sim, cryo_node_no_re: SECoPNodeDevice):
 
     cryo_dev: SECoPMoveableDevice = cryo_node_no_re.cryo
-    status: SignalR = cryo_dev.status
+    status_code: SignalR = cryo_dev.status_0
 
     # the cryo simulation drifts in and out of tolerance on its own, so only the
     # structure is checked here (status values are covered in test_motion.py)
-    async for current_stat in observe_value(status):
+    async for stat_name in observe_value(status_code):
         break
 
-    assert 0 <= int(current_stat["f0"]) < 600
-    assert isinstance(current_stat["f1"].item(), str)
+    # status_0 is the status code resolved to its enum member name
+    assert isinstance(stat_name, str) and stat_name
+
+    status_text = await cryo_dev.status_1.get_value()
+    assert isinstance(status_text, str)
 
 
 async def test_trigger(cryo_sim, cryo_node_no_re: SECoPNodeDevice):

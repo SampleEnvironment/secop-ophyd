@@ -6,6 +6,7 @@ import re
 import time
 import warnings
 from abc import ABC, abstractmethod
+from enum import Enum
 from functools import reduce
 from itertools import chain
 from typing import Any, List, Union, cast
@@ -69,6 +70,18 @@ class SECoPDataKey(DataKey):
 
 class NestedRaggedArray(Exception):
     """The Datatype contains nested ragged arrays"""
+
+
+class IncompatibleSECoPDatatype(Exception):
+    """The datatype cannot be represented as ophyd-async Signal(s): it is a
+    struct/tuple nested inside another struct/tuple/array, which is
+    unsupported. Raised when this happens for a parameter that is mandatory
+    for its module's interface class."""
+
+
+# max depth of struct/tuple nesting supported by tiled & databroker (and,
+# for parameters, by the struct/tuple-member decomposition in SECoPDevices)
+MAX_DEPTH = 1
 
 
 def deep_get(dictionary, keys, default=None) -> dict:
@@ -737,6 +750,54 @@ class SECoPdtype:
             dt = self.dtype_tree.make_concrete_numpy_dtype(input_val)
 
             self.shape = dt[2]
+
+
+class CompositeKind(Enum):
+    """Classification of a SECoP datatype for parameter-signal construction.
+
+    ATOMIC: scalar or array-of-scalar (incl. array-of-enum/blob/...) -- gets
+        a single Signal, unchanged from today's behaviour.
+    DECOMPOSABLE: a top-level StructOf/TupleOf whose members are all
+        themselves ATOMIC (nesting depth <= MAX_DEPTH) -- gets split into
+        one read-only Signal per member (see get_composite_members()).
+    UNSUPPORTED: an ArrayOf wrapping a StructOf/TupleOf, or a StructOf/TupleOf
+        containing a nested StructOf/TupleOf member -- cannot be represented
+        as flat Signals; no Signal is constructed for it.
+    """
+
+    ATOMIC = "atomic"
+    DECOMPOSABLE = "decomposable"
+    UNSUPPORTED = "unsupported"
+
+
+def classify_datatype(datatype: DataType) -> CompositeKind:
+    """Classify a raw SECoP datatype for parameter-signal construction."""
+    secop_dt = SECoPdtype(datatype)
+
+    if not secop_dt._is_composite:
+        return CompositeKind.ATOMIC
+
+    if isinstance(datatype, (StructOf, TupleOf)) and secop_dt.max_depth <= MAX_DEPTH:
+        return CompositeKind.DECOMPOSABLE
+
+    return CompositeKind.UNSUPPORTED
+
+
+def get_composite_members(datatype: StructOf | TupleOf) -> list[tuple[str, DataType]]:
+    """Return (member_key, member_datatype) pairs for a StructOf/TupleOf, in
+    declaration order.
+
+    Struct members keep their SECoP member name as key. Tuple members are
+    keyed by their stringified 0-based index ("0", "1", ...), used as the
+    `_<idx>` naming postfix for split signals.
+    """
+    if isinstance(datatype, StructOf):
+        return list(datatype.members.items())
+
+    if isinstance(datatype, TupleOf):
+        return [(str(idx), member) for idx, member in enumerate(datatype.members)]
+
+    raise TypeError(f"{datatype!r} is neither StructOf nor TupleOf")
 
 
 def secop_enum_name_to_python(member_name: str) -> str:
