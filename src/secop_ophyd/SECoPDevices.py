@@ -769,9 +769,12 @@ class SECoPReadableDevice(SECoPDevice, Triggerable, Subscribable):
             awaitable=self._client.get_parameter(self._module, "value", trycache=False)
         )
 
-    def subscribe(self, function: Callback[dict[str, Reading]]) -> None:
+    def subscribe_reading(self, function: Callback[dict[str, Reading]]) -> None:
         """Subscribe to updates in the reading"""
-        self.value.subscribe(function=function)
+        self.value.subscribe_reading(function)
+
+    # Backwards-compatible alias (bluesky < 1.16 named this ``subscribe``)
+    subscribe = subscribe_reading
 
     def clear_sub(self, function: Callback) -> None:
         """Remove a subscription."""

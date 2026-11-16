@@ -32,7 +32,7 @@ async def test_annotated_command_declaration(nested_struct_sim):
 
     await status
 
-    assert isinstance(status.result, int)
+    assert isinstance(status.result(), int)
 
 
 async def test_struct_inp_cmd(nested_struct_sim, nested_node_no_re: SECoPNodeDevice):
@@ -42,7 +42,7 @@ async def test_struct_inp_cmd(nested_struct_sim, nested_node_no_re: SECoPNodeDev
 
     await status
 
-    assert isinstance(status.result, int)
+    assert isinstance(status.result(), int)
 
 
 def test_command_is_not_triggerable(
@@ -74,7 +74,7 @@ async def test_command_wait_for_idle(
 
     await status
 
-    assert isinstance(status.result, int)
+    assert isinstance(status.result(), int)
 
 
 def test_secop_command_plan(nested_struct_sim, nested_node: SECoPNodeDevice, RE):
@@ -86,7 +86,7 @@ def test_secop_command_plan(nested_struct_sim, nested_node: SECoPNodeDevice, RE)
             name="test_name", id=900, sort=False
         )
         yield from bps.wait_for([lambda: status])
-        result = status.result
+        result = status.result()
 
     RE(plan())
 
