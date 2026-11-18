@@ -1,8 +1,8 @@
 
 
 
-test: venv  ## 🎯 Unit tests for Bluesky SECoP Integration
-	source .venv/bin/activate && pytest -v .
+test:  ## 🎯 Unit tests for Bluesky SECoP Integration
+	uv run pytest -v .
 
 
 
