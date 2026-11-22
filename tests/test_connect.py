@@ -97,9 +97,14 @@ async def test_retry_after_failed_fill(cryo_sim):
         not_on_node: A[SignalR[float], ParameterType()]
 
     cryo = Cryostat(sri=cryo_sim.uri + ":cryo")
-    for _ in range(2):
-        with pytest.raises(Exception, match=r"cannot provision \['not_on_node'\]"):
-            await cryo.connect()
+    with pytest.raises(Exception, match=r"cannot provision \['not_on_node'\]"):
+        await cryo.connect()
+
+    # the retry reports the original error instead of a "would shadow" error
+    with pytest.raises(
+        Exception, match=r"failed earlier \(.*cannot provision.*create a new device"
+    ):
+        await cryo.connect()
 
 
 async def test_mock_movable_needs_annotations():

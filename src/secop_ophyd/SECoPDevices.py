@@ -879,7 +879,12 @@ class SECoPNodeDevice(SECoPDevice):
             self._client.conn_timestamp = ttime.time()
 
     async def _assign_interface_formats(self):
-        moddevs = [dev for _, dev in self.children() if isinstance(dev, SECoPDevice)]
+        # skip modules registered by an earlier (mock) connect
+        moddevs = [
+            dev
+            for _, dev in self.children()
+            if isinstance(dev, SECoPDevice) and dev.read not in self._read_funcs
+        ]
         self.add_readables(moddevs, StandardReadableFormat.CHILD)
 
     async def class_from_instance(self, path_to_module: str | None = None):
@@ -951,6 +956,10 @@ class SECoPMovableMock(InstantMovableMock):
         self, device: "SECoPMoveableDevice"
     ) -> None:
         missing = [name for name in ("target", "status_0") if not hasattr(device, name)]
+        if not hasattr(device, "value") and not any(
+            name.startswith("value_") for name, _ in device.children()
+        ):
+            missing.append("value")
         if missing:
             raise AttributeError(
                 f"{device.name}: a Drivable connected in mock mode needs annotated "
@@ -1056,6 +1065,9 @@ class SECoPReadableDevice(SECoPDevice, Triggerable, Subscribable):
         yield from bps.wait_for([switch_from_status_factory])
 
     def trigger(self) -> AsyncStatus:
+        if self._mock is not None:
+            # mock mode: no SEC node to read from
+            return AsyncStatus(asyncio.sleep(0))
         self._logger.info(f"Triggering {self.name}: read fresh data from device")
         # get fresh reading of the value Parameter from the SEC Node
         return AsyncStatus(

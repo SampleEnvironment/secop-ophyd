@@ -64,6 +64,29 @@ async def test_mock_movable(cryo_sim, tmp_path, logger):
     assert set(await node.read()) == {"cryo-cryo", "cryo-cryo-target"}
 
 
+async def test_mock_then_real_connect(cryo_sim, tmp_path, logger):
+    node_cls = await _generate(cryo_sim, tmp_path, logger)
+
+    async def keys(node):
+        return (
+            set(await node.read()),
+            set(await node.describe()),
+            set(await node.read_configuration()),
+        )
+
+    fresh = node_cls(cryo_sim.uri, name="cryo")
+    await fresh.connect()
+    expected = await keys(fresh)
+
+    node = node_cls(cryo_sim.uri, name="cryo")
+    await node.connect(mock=True)
+    await node.connect()
+    assert await keys(node) == expected
+
+    await node.connect(force_reconnect=True)
+    assert await keys(node) == expected
+
+
 async def test_mock_struct_parameters_and_commands(nested_struct_sim, tmp_path, logger):
     node = await _connect_mock(
         await _generate(nested_struct_sim, tmp_path, logger), "nested"

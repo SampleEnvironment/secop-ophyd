@@ -203,7 +203,8 @@ def _real_shaped_signature(annotated: inspect.Signature | None) -> inspect.Signa
 
     params = list(annotated.parameters.values())
     return_annotation = annotated.return_annotation
-    if return_annotation is inspect.Signature.empty:
+    # NoneType: from a Command[[X], None] annotation
+    if return_annotation in (inspect.Signature.empty, type(None)):
         return_annotation = None
 
     if not params:
@@ -587,7 +588,11 @@ class SECoPBackend(SignalBackend[SignalDatatypeT]):
             self.datatype = self.SECoP_type_info.np_datatype
 
     def source(self, name: str, read: bool) -> str:
-        return self._secclient.host + ":" + self._secclient.port + ":" + self.path_str
+        secclient = getattr(self, "_secclient", None)
+        if secclient is None:
+            # annotated without ParamT()/PropT(), not yet introspected
+            return self.path_str or name
+        return secclient.host + ":" + secclient.port + ":" + self.path_str
 
     async def connect(self, timeout: float):
         """Connect and initialize backend (parameters/properties are
