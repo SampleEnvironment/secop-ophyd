@@ -13,3 +13,6 @@ _api
 
 # Claude Code
 CLAUDE.md
+
+# Generated test code
+tests/testgen/
