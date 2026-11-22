@@ -69,15 +69,18 @@ class AttributeType(StrictEnum):
     MEMBER = "member"
 
 
+_ENUM_BASES = (StrictEnum, SubsetEnum, SupersetEnum)
+
+
 def _is_concrete_enum_class(datatype: Any) -> bool:
-    """True only for a genuine, member-carrying StrictEnum subclass produced
-    by codegen (e.g. Cryostat_Mode_Enum) -- as opposed to the generic,
-    member-less StrictEnum base class used when there is no class annotation
-    (pure introspection instantiation)."""
+    """True only for a genuine, member-carrying Strict/Subset/SupersetEnum
+    subclass produced by codegen (e.g. Cryostat_Mode_Enum) -- as opposed to
+    the generic, member-less base classes used when there is no class
+    annotation (pure introspection instantiation)."""
     return (
         isinstance(datatype, type)
-        and issubclass(datatype, StrictEnum)
-        and datatype is not StrictEnum
+        and issubclass(datatype, _ENUM_BASES)
+        and datatype not in _ENUM_BASES
     )
 
 
@@ -89,10 +92,10 @@ def _datatype_kind(datatype: Any) -> str | None:
             return "enum"
         if datatype is bool:
             return "bool"
-        if datatype is int:
-            return "int"
-        if datatype is float:
-            return "float"
+        # one kind: frappy delivers floats for ScaledInteger, and JSON numbers
+        # of properties are all described as FloatRange
+        if datatype in (int, float):
+            return "number"
         if datatype is str:
             return "str"
         if issubclass(datatype, np.ndarray):
@@ -125,6 +128,9 @@ def check_annotated_datatype(
         return
 
     name = getattr(annotated, "__name__", str(annotated))
+    if annotated_kind == "str" and described_kind == "enum":
+        # enum values are read as their (string) member names
+        return
     if annotated_kind != described_kind:
         raise TypeError(
             f"'{what}' is annotated as {name}, but the SEC node describes it as "
@@ -134,7 +140,7 @@ def check_annotated_datatype(
     if (
         annotated_kind == "enum"
         and isinstance(secop_dtype, EnumType)
-        and annotated not in (StrictEnum, SubsetEnum, SupersetEnum)
+        and annotated not in _ENUM_BASES
     ):
         node_members = set(secop_dtype.export_datatype()["members"])
         annotated_members = {member.value for member in annotated}
@@ -176,7 +182,45 @@ class _UnconvertedMockCommandBackend(MockCommandBackend):
         CommandBackend.__init__(self, signature=signature)
 
     async def execute(self, *args: Any, **kwargs: Any) -> Any:
+        self.signature.bind(*args, **kwargs)
         return await self.execute_mock(*args, **kwargs)
+
+
+def _real_shaped_signature(annotated: inspect.Signature | None) -> inspect.Signature:
+    """The call signature a SECoP command gets from the node description
+    (see `build_command_signature`), as far as its class annotation tells:
+    the argument is called 'arg', 'wait_for_idle' is appended, and a struct
+    argument becomes keyword members -- unknown without the description, so
+    any keywords are accepted."""
+    wait_for_idle = inspect.Parameter(
+        "wait_for_idle",
+        inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        annotation=bool,
+        default=False,
+    )
+    if annotated is None:
+        return inspect.Signature([wait_for_idle], return_annotation=None)
+
+    params = list(annotated.parameters.values())
+    return_annotation = annotated.return_annotation
+    if return_annotation is inspect.Signature.empty:
+        return_annotation = None
+
+    if not params:
+        return inspect.Signature([wait_for_idle], return_annotation=return_annotation)
+    if len(params) > 1:
+        # not a SECoP command annotation (at most one argument): keep it
+        return annotated
+
+    annotation = params[0].annotation
+    if annotation is dict or get_origin(annotation) is dict:
+        members = inspect.Parameter("members", inspect.Parameter.VAR_KEYWORD)
+        return inspect.Signature([members], return_annotation=return_annotation)
+
+    arg = inspect.Parameter(
+        "arg", inspect.Parameter.POSITIONAL_OR_KEYWORD, annotation=annotation
+    )
+    return inspect.Signature([arg, wait_for_idle], return_annotation=return_annotation)
 
 
 class SECoPCommandConnector(CommandConnector):
@@ -203,7 +247,13 @@ def property_dtype_and_value(prop_val: Any) -> tuple[DataType, Any]:
 
     Struct/tuple-valued properties (and arrays of them) are exposed as a JSON
     string: bluesky/TiledWriter cannot store numpy structured arrays."""
-    datatype = secop_dtype_obj_from_json(prop_val)
+    if isinstance(prop_val, dict):
+        return StringType(), json.dumps(prop_val)
+    try:
+        datatype = secop_dtype_obj_from_json(prop_val)
+    except Exception:
+        # e.g. null members: keep the value, as JSON
+        return StringType(), json.dumps(prop_val)
     if _is_composite_dtype(datatype):
         return StringType(), json.dumps(prop_val)
     return datatype, prop_val
@@ -238,7 +288,9 @@ class SECoPCommandBackend(CommandBackend[Any, Any]):
         # set by init_command_from_introspection(); empty without a node
         # description (mock mode)
         self.source_name = ""
-        super().__init__(signature=resolved_signature)
+        # until the node description replaces it, use the call convention the
+        # command will have then, so mocked commands are called like real ones
+        super().__init__(signature=_real_shaped_signature(signature))
 
     def init_command_from_introspection(
         self,
@@ -829,6 +881,12 @@ def secop_dtype_obj_from_json(prop_val):
     if isinstance(prop_val, list):
         # empty list, cannot infer proper type
         if not prop_val:
+            return ArrayOf(FloatRange())
+        # numbers: one float array, whether the node sends 10 or 10.0
+        if all(
+            isinstance(elem, (int, float)) and not isinstance(elem, bool)
+            for elem in prop_val
+        ):
             return ArrayOf(FloatRange())
         # check if all elements have same Type:
         if all(isinstance(elem, type(prop_val[0])) for elem in prop_val):

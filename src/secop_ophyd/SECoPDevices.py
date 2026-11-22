@@ -258,6 +258,7 @@ class SECoPDeviceConnector(DeviceConnector):
         self.loglevel = loglevel
         self.logdir = logdir
         self._filled = False
+        self._fill_error: Exception | None = None
         self._formats_assigned = False
 
         if sri.count(":") == 2:
@@ -326,14 +327,29 @@ class SECoPDeviceConnector(DeviceConnector):
         # Establish connection to SEC Node
         await self.client.connect(3)
 
-        if not self._filled:
-            if self.module:
-                await self._fill_module(device, timeout)
-            else:
-                self._fill_node(device)
+        if self._fill_error is not None:
+            # a failed fill leaves a half-built device; filling again would
+            # only fail on the children the first attempt already created
+            raise RuntimeError(
+                f"{device.name}: building the device from the description of "
+                f"{self.node_id} failed earlier ({self._fill_error}); create a "
+                f"new device instance"
+            ) from self._fill_error
 
-            self.filler.check_filled(f"{self.node_id}")
+        if not self._filled:
+            try:
+                if self.module:
+                    await self._fill_module(device, timeout)
+                else:
+                    self._fill_node(device)
+
+                self.filler.check_filled(f"{self.node_id}")
+            except Exception as exc:
+                self._fill_error = exc
+                raise
             self._filled = True
+            # a mock connect before only assigned formats to annotated signals
+            self._formats_assigned = False
 
         # Set the name of the device to name all children
         device.set_name(device.name)
@@ -934,6 +950,13 @@ class SECoPMovableMock(InstantMovableMock):
     async def connect(  # type: ignore[override]
         self, device: "SECoPMoveableDevice"
     ) -> None:
+        missing = [name for name in ("target", "status_0") if not hasattr(device, name)]
+        if missing:
+            raise AttributeError(
+                f"{device.name}: a Drivable connected in mock mode needs annotated "
+                f"{missing}: without a SEC node description only annotated "
+                f"signals exist"
+            )
         _set_mock_status_idle(device)
         if device._has_atomic_setpoint_readback():
             await super().connect(device)
@@ -1088,6 +1111,9 @@ class SECoPTriggerableDevice(SECoPReadableDevice, Stoppable):
 
     async def stop(self, *, success: bool = False) -> None:
         """Abort a running measurement via the module's ``stop`` command."""
+        if self._mock is not None:
+            # mock mode: no SEC node to send 'stop' to
+            return
         self._logger.info(f"Stopping {self.name}")
         await self._client.exec_command(self._module, "stop")
 
@@ -1116,6 +1142,9 @@ class SECoPMovableLogic(MovableLogic[Any]):
     logger: Logger
 
     async def stop(self) -> None:
+        if self.setpoint._mock is not None:
+            # mock mode: no SEC node to send 'stop' to
+            return
         self.logger.info(f"Stopping {self.module}")
         await self.secclient.exec_command(self.module, "stop")
 

@@ -7,10 +7,11 @@ from typing import Annotated as A
 
 import pytest
 from frappy.datatypes import ArrayOf, FloatRange, StringType
-from ophyd_async.core import SignalR, SignalRW, StrictEnum
+from ophyd_async.core import SignalR, SignalRW, StrictEnum, SubsetEnum
 
 from secop_ophyd.GenNodeCode import get_type_prop
 from secop_ophyd.SECoPDevices import (
+    ParameterMemberType,
     ParameterType,
     SECoPMoveableDevice,
     SECoPNodeDevice,
@@ -91,6 +92,41 @@ async def test_module_not_on_node(cryo_sim):
         await module.connect()
 
 
+async def test_retry_after_failed_fill(cryo_sim):
+    class Cryostat(SECoPMoveableDevice):
+        not_on_node: A[SignalR[float], ParameterType()]
+
+    cryo = Cryostat(sri=cryo_sim.uri + ":cryo")
+    for _ in range(2):
+        with pytest.raises(Exception, match=r"cannot provision \['not_on_node'\]"):
+            await cryo.connect()
+
+
+async def test_mock_movable_needs_annotations():
+    class Cryostat(SECoPMoveableDevice):
+        value: A[SignalR[float], ParameterType()]
+
+    cryo = Cryostat(sri="localhost:1:cryo")
+    with pytest.raises(Exception, match="status_0"):
+        await cryo.connect(mock=True)
+
+
+async def test_legitimate_annotations(cryo_sim):
+    class Mode(SubsetEnum):
+        RAMP = "ramp"
+        PID = "pid"
+
+    class Cryostat(SECoPMoveableDevice):
+        # number kinds are interchangeable, enums may be read as str
+        maxpower: A[SignalRW[int], ParameterType()]
+        mode: A[SignalRW[Mode], ParameterType()]
+        status_0: A[SignalR[str], ParameterMemberType()]
+
+    cryo = Cryostat(sri=cryo_sim.uri + ":cryo")
+    await cryo.connect()
+    assert await cryo.mode.get_value() in ("ramp", "pid", "openloop")
+
+
 async def test_wrong_annotated_datatype(cryo_sim):
     class Cryostat(SECoPMoveableDevice):
         ramp: A[SignalRW[str], ParameterType()]
@@ -126,6 +162,7 @@ def test_empty_variable_length_array():
         {"slope": 1.5, "label": "abc"},
         ["temperature", 10],
         [{"a": 1}, {"a": 2}],
+        {"a": None, "b": {}},
     ],
 )
 def test_composite_property_is_json_string(prop_val):
@@ -133,6 +170,12 @@ def test_composite_property_is_json_string(prop_val):
     assert isinstance(datatype, StringType)
     assert json.loads(value) == prop_val
     assert get_type_prop(prop_val) == "str"
+
+
+def test_numeric_list_property():
+    # the same datatype whether the node sends 10 or 10.0
+    for prop_val in ([0, 10.5], [0.0, 10.5], [1, 2]):
+        assert get_type_prop(prop_val) == "ndarray"
 
 
 def test_bool_property():

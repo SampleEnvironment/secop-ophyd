@@ -5,6 +5,7 @@ SEC node: the mocked devices point at a port nothing listens on."""
 import asyncio
 from pathlib import Path
 
+import pytest
 from ophyd_async.core import get_mock, get_mock_put, set_mock_value
 
 from secop_ophyd.AsyncFrappyClient import AsyncSecopClient
@@ -55,6 +56,9 @@ async def test_mock_movable(cryo_sim, tmp_path, logger):
 
     await asyncio.wait_for(node.cryo.wait_for_idle(), 5)
 
+    # no SEC node to send 'stop' to
+    await node.cryo.stop()
+
     # repeated connects keep the tree usable
     await node.connect(mock=True)
     assert set(await node.read()) == {"cryo-cryo", "cryo-cryo-target"}
@@ -70,18 +74,31 @@ async def test_mock_struct_parameters_and_commands(nested_struct_sim, tmp_path, 
     reading = await node.read()
     assert reading["nested-ophy_struct-value_x"]["value"] == 1.5
 
-    # struct argument commands are mocked without argument conversion
-    await struct.test_cmd.execute({"name": "x", "id": 1, "sort": True})
-    get_mock(struct.test_cmd).execute.assert_awaited_once()
+    # struct arguments are keyword members, as on a real node
+    await struct.test_cmd.execute(name="x", id=1, sort=True)
+    get_mock(struct.test_cmd).execute.assert_awaited_once_with(
+        name="x", id=1, sort=True
+    )
+    with pytest.raises(TypeError):
+        await struct.test_cmd.execute({"name": "x", "id": 1, "sort": True})
 
 
 async def test_mock_commands(motion_sim, tmp_path, logger):
     node = await _connect_mock(await _generate(motion_sim, tmp_path, logger), "motion")
 
-    # TriggerableCommand (no argument, no result)
-    await node.detector.go.execute()
-    get_mock(node.detector.go).execute.assert_awaited_once()
+    # same call convention as on a real node: 'arg', plus 'wait_for_idle'
+    await node.detector.go.execute(wait_for_idle=True)
+    get_mock(node.detector.go).execute.assert_awaited_once_with(True)
 
-    # argument and result convertible by ophyd-async's mock backend
-    await node.comm.communicate.execute("ping")
-    get_mock(node.comm.communicate).execute.assert_awaited_once_with("ping")
+    await node.comm.communicate.execute(arg="ping")
+    await node.comm.communicate.execute("pong", wait_for_idle=False)
+    assert get_mock(node.comm.communicate).execute.await_count == 2
+
+    # Readable, Writable and Triggerable modules start IDLE
+    for module in (node.detector, node.writer):
+        await asyncio.wait_for(module.wait_for_idle(), 5)
+        assert await module.status_0.get_value() == "IDLE"
+    await node.writer.target.set(1.0)
+    assert set(await node.read())
+
+    await node.detector.stop()
