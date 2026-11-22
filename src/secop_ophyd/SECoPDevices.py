@@ -6,6 +6,7 @@ import warnings
 from abc import abstractmethod
 from collections.abc import Sequence
 from dataclasses import dataclass
+from enum import Enum
 from functools import cached_property
 from logging import Logger
 from typing import Any, Dict
@@ -27,6 +28,7 @@ from ophyd_async.core import (
     DeviceConnector,
     DeviceFiller,
     DeviceMock,
+    InstantMovableMock,
     LazyMock,
     MovableLogic,
     Signal,
@@ -40,6 +42,7 @@ from ophyd_async.core import (
     TimeoutCalculator,
     TriggerableCommand,
     observe_value,
+    set_mock_value,
     wait_for_value,
     walk_devices,
 )
@@ -52,6 +55,7 @@ from secop_ophyd.SECoPSignal import (
     AttributeType,
     SECoPBackend,
     SECoPCommandBackend,
+    SECoPCommandConnector,
 )
 from secop_ophyd.util import (
     MAX_DEPTH,
@@ -84,6 +88,31 @@ ERROR = 400
 ERROR_STANDBY = 430
 ERROR_PREPARED = 450
 UNKNOWN = 401  # not in SECoP standard (yet)
+
+# status code per standard status name, for status signals whose SECoP
+# datatype is not known (mock mode)
+STATUS_CODES = {
+    "DISABLED": DISABLED,
+    "IDLE": IDLE,
+    "STANDBY": STANDBY,
+    "PREPARED": PREPARED,
+    "WARN": WARN,
+    "WARN_STANDBY": WARN_STANDBY,
+    "WARN_PREPARED": WARN_PREPARED,
+    "NSTABLE": NSTABLE,
+    "BUSY": BUSY,
+    "DISABLING": DISABLING,
+    "INITIALIZING": INITIALIZING,
+    "PREPARING": PREPARING,
+    "STARTING": STARTING,
+    "RAMPING": RAMPING,
+    "STABILIZING": STABILIZING,
+    "FINALIZING": FINALIZING,
+    "ERROR": ERROR,
+    "ERROR_STANDBY": ERROR_STANDBY,
+    "ERROR_PREPARED": ERROR_PREPARED,
+    "UNKNOWN": UNKNOWN,
+}
 
 
 IGNORED_PROPS = ["meaning", "_plotly"]
@@ -197,6 +226,18 @@ class PropertyType:
 
 
 class SECoPDeviceConnector(DeviceConnector):
+    """Connector for SECoP node and module devices.
+
+    Children declared by class annotations are created when the device is
+    constructed, as unfilled. On a real connect, the SEC node description fills
+    them (and, with ``auto_fill_signals``, adds everything else the node
+    describes); any annotated child the node does not provide is an error. In
+    mock mode only the annotated children exist and nothing touches the
+    network.
+
+    Filling and format assignment run once per device, so repeated connects
+    (including ``force_reconnect=True``) only reconnect.
+    """
 
     sri: str
     module: str | None
@@ -216,6 +257,8 @@ class SECoPDeviceConnector(DeviceConnector):
         self._auto_fill_signals = auto_fill_signals
         self.loglevel = loglevel
         self.logdir = logdir
+        self._filled = False
+        self._formats_assigned = False
 
         if sri.count(":") == 2:
             self.module = sri.split(":")[2]
@@ -230,50 +273,51 @@ class SECoPDeviceConnector(DeviceConnector):
         self.client: AsyncSecopClient = SECoPDevice._clients[self.node_id]
 
     def set_module(self, module_name: str):
-        if self.sri.count(":") != 1:
+        if self.module == module_name:
+            return
+        if self.module is not None:
             raise RuntimeError(
-                "Module can only be set if SRI does not already contain module"
+                f"Connector is already bound to module '{self.module}', "
+                f"cannot rebind it to '{module_name}'"
             )
         self.module = module_name
         self.sri = self.sri + ":" + module_name
 
     def create_children_from_annotations(self, device: Device):
-        if not hasattr(self, "filler"):
-            self.filler = DeviceFiller(
-                device=device,
-                signal_backend_factory=SECoPBackend,
-                device_connector_factory=lambda: SECoPDeviceConnector(
-                    self.sri, self._auto_fill_signals, self.loglevel, self.logdir
-                ),
-                command_backend_factory=SECoPCommandBackend,
-            )
+        if hasattr(self, "filler"):
+            return
 
-        list(self.filler.create_signals_from_annotations())
+        self.filler = DeviceFiller(
+            device=device,
+            signal_backend_factory=SECoPBackend,
+            device_connector_factory=lambda: SECoPDeviceConnector(
+                self.sri, self._auto_fill_signals, self.loglevel, self.logdir
+            ),
+            command_backend_factory=SECoPCommandBackend,
+        )
+
+        # created unfilled: connect_real() must find every annotated child in
+        # the node description, check_filled() reports the ones it does not
+        list(self.filler.create_signals_from_annotations(filled=False))
         list(self.filler.create_devices_from_annotations(filled=False))
         list(self.filler.create_commands_from_annotations(filled=False))
 
         self.filler.check_created()
 
-    def fill_backend_with_path(self, backend: SECoPBackend, annotations: list[Any]):
-        unhandled = []
-        while annotations:
-            annotation = annotations.pop(0)
-
-            if isinstance(annotation, StandardReadableFormat):
-                backend.format = annotation
-
-            else:
-                unhandled.append(annotation)
-
-        annotations.extend(unhandled)
-        # These leftover annotations will now be handled by the iterator
+        for attr_name, child in device.children():
+            if isinstance(child, Command):
+                child._connector = SECoPCommandConnector(child._connector.backend)
+            elif isinstance(child, SECoPDevice):
+                # an annotated module device knows its module from its
+                # attribute name; needed for mock mode, where no node
+                # description assigns it
+                child.set_module(attr_name.rstrip("_"))
 
     async def connect_mock(self, device: Device, mock: LazyMock):
-        # Make 2 entries for each DeviceVector
-        self.filler.create_device_vector_entries_to_mock(2)
         # Set the name of the device to name all children
         device.set_name(device.name)
         await super().connect_mock(device, mock)
+        await self._assign_formats(device)
 
     async def connect_real(self, device: Device, timeout: float, force_reconnect: bool):
         if not self.sri:
@@ -282,274 +326,280 @@ class SECoPDeviceConnector(DeviceConnector):
         # Establish connection to SEC Node
         await self.client.connect(3)
 
-        # deferred import to avoid a circular import (GenNodeCode imports
-        # from this module); imported once here rather than repeated inline
-        # in each branch below to avoid shadowing across loop iterations
-        from secop_ophyd.GenNodeCode import get_type_param
+        if not self._filled:
+            if self.module:
+                await self._fill_module(device, timeout)
+            else:
+                self._fill_node(device)
 
-        # Module Device: fill Parameters & Pproperties
-        # (commands are done via annotated plans)
-        if self.module:
-
-            # Fill Parmeters
-            parameter_dict = self.client.modules[self.module]["parameters"]
-
-            # StandardMovable's readback machinery (set_name/subscribe_reading/
-            # locate) unconditionally requires movable_logic.readback to be a
-            # working SignalR -- including right now, before any other child
-            # of this module has been filled below (assigning any child
-            # triggers a set_name() cascade that resolves movable_logic
-            # immediately). When 'value' is composite it is fully decomposed
-            # into split value_* signals below (for a tiled-safe
-            # read()/describe() stream), with no bare 'value' attribute -- so
-            # for a Movable module we additionally build+connect a private,
-            # undecomposed 'value' SignalR purely to satisfy that internal
-            # plumbing. `object.__setattr__` is used to store it without
-            # going through Device's own __setattr__, which would otherwise
-            # treat any Signal-valued attribute as a tracked child (making it
-            # show up in device.children()/read()/describe() -- exactly what
-            # decomposing 'value' is meant to avoid).
-            if (
-                isinstance(device, SECoPMoveableDevice)
-                and "value" in parameter_dict
-                and classify_datatype(parameter_dict["value"]["datatype"])
-                is CompositeKind.DECOMPOSABLE
-            ):
-                value_datatype = get_type_param(parameter_dict["value"]["datatype"])
-                value_backend = SECoPBackend(None)  # type: SECoPBackend
-                value_backend.init_parameter_from_introspection(
-                    datatype=value_datatype,  # type: ignore[arg-type]
-                    path=self.module + ":value",
-                    secclient=self.client,
-                )
-                value_readback = SignalR(value_backend)
-                await value_readback.connect(timeout=timeout)
-                object.__setattr__(device, "_composite_value_readback", value_readback)
-
-            # remove ignored signals
-            parameters = [
-                child
-                for child in parameter_dict.keys()
-                if child not in self.filler.ignored_signals
-            ]
-
-            # Dertermine children that are declared but not yet filled
-            not_filled = {unfilled for unfilled, _ in device.children()}
-
-            mandatory_parameters = getattr(device, "mandatory_parameters", [])
-
-            for param_name in parameters:
-                raw_datatype = parameter_dict[param_name]["datatype"]
-                readonly = parameter_dict[param_name]["readonly"]
-                kind = classify_datatype(raw_datatype)
-
-                if kind is CompositeKind.DECOMPOSABLE:
-                    members = get_composite_members(raw_datatype)
-                    declared = param_name in not_filled or any(
-                        f"{param_name}_{member_key}" in not_filled
-                        for member_key, _ in members
-                    )
-                else:
-                    declared = param_name in not_filled
-
-                if not (self._auto_fill_signals or declared):
-                    continue
-
-                if kind is CompositeKind.UNSUPPORTED:
-                    msg = (
-                        f"Parameter '{param_name}' of module '{self.module}' has a "
-                        f"datatype nesting depth of "
-                        f"{SECoPdtype(raw_datatype).max_depth} (struct/tuple nested "
-                        f"inside a struct/tuple/array). Tiled & Databroker only "
-                        f"support flat struct/tuple parameters (depth <= "
-                        f"{MAX_DEPTH}); no signal will be created for '{param_name}'."
-                    )
-                    if param_name in mandatory_parameters:
-                        raise IncompatibleSECoPDatatype(msg)
-                    warnings.warn(msg)
-                    continue
-
-                if kind is CompositeKind.DECOMPOSABLE:
-                    for member_key, member_dtype in members:
-                        member_backend = self.filler.fill_child_signal(
-                            f"{param_name}_{member_key}", SignalR
-                        )
-                        member_backend.init_member_from_introspection(
-                            module_name=self.module,
-                            parent_param=param_name,
-                            member_key=member_key,
-                            member_datatype=member_dtype,
-                            secclient=self.client,
-                        )
-
-                    if not readonly:
-                        write_backend = self.filler.fill_child_signal(
-                            param_name, SignalW
-                        )
-
-                        write_datatype = get_type_param(raw_datatype)
-                        write_backend.init_parameter_from_introspection(
-                            datatype=write_datatype,
-                            path=self.module + ":" + param_name,
-                            secclient=self.client,
-                        )
-
-                    if hasattr(device, "_resolved_parameters"):
-                        device._resolved_parameters.add(param_name)
-                    continue
-
-                # ATOMIC: single signal, unchanged from previous behaviour
-                signal_type = SignalR if readonly else SignalRW
-
-                backend = self.filler.fill_child_signal(param_name, signal_type)
-
-                datatype = get_type_param(raw_datatype)
-                backend.init_parameter_from_introspection(
-                    datatype=datatype,
-                    path=self.module + ":" + param_name,
-                    secclient=self.client,
-                )
-                if hasattr(device, "_resolved_parameters"):
-                    device._resolved_parameters.add(param_name)
-
-            # Fill Properties
-            module_property_dict = self.client.modules[self.module]["properties"]
-
-            # remove ignored signals
-            module_properties = [
-                child
-                for child in module_property_dict.keys()
-                if child not in self.filler.ignored_signals
-                and child not in IGNORED_PROPS
-            ]
-
-            for mod_property_name in module_properties:
-                if self._auto_fill_signals or mod_property_name in not_filled:
-
-                    # properties are always read only
-                    backend = self.filler.fill_child_signal(mod_property_name, SignalR)
-
-                    from secop_ophyd.GenNodeCode import get_type_prop
-
-                    datatype = get_type_prop(module_property_dict[mod_property_name])
-
-                    backend.init_property_from_introspection(
-                        datatype=datatype,
-                        path=self.module + ":" + mod_property_name,
-                        secclient=self.client,
-                    )
-
-            # Fill Commands
-            command_dict = self.client.modules[self.module]["commands"]
-
-            # "stop" is skipped: SECoPMoveableDevice already implements
-            # Stoppable.stop() (a real bound method) via StandardMovable, so
-            # exposing a raw command device at the same bare name would
-            # silently shadow it.
-            commands = [
-                c
-                for c in command_dict.keys()
-                if c not in self.filler.ignored_signals and c != "stop"
-            ]
-
-            wait_for_idle_fn = getattr(device, "wait_for_idle", None)
-
-            for command_name in commands:
-                if self._auto_fill_signals or command_name in not_filled:
-                    cmd_datatype: CommandType = command_dict[command_name]["datatype"]
-                    command_type = (
-                        TriggerableCommand
-                        if cmd_datatype.argument is None and cmd_datatype.result is None
-                        else Command
-                    )
-
-                    backend = self.filler.fill_child_command(command_name, command_type)
-
-                    cmd_path = Path(
-                        parameter_name=command_name, module_name=self.module
-                    )
-                    backend.init_command_from_introspection(
-                        cmd_datatype, cmd_path, self.client, wait_for_idle_fn
-                    )
-
-        # Node Device: fill child devices (modules)
-        else:
-
-            # Fill Module devices
-            modules = self.client.modules
-
-            not_filled = {unfilled for unfilled, _ in device.children()}
-
-            for module_name in modules.keys():
-                if self._auto_fill_signals or module_name in not_filled:
-                    module_properties = modules[module_name]["properties"]
-                    device_sub_class = class_from_interface(module_properties)
-
-                    self.filler.fill_child_device(module_name, device_sub_class)
-
-                    mod_dev: SECoPDevice = getattr(device, module_name)
-                    mod_dev.set_module(module_name)
-
-            # Fill Node propertiesdevice_filler
-            node_property_dict = self.client.properties
-
-            # remove ignored signals
-            node_properties = [
-                child
-                for child in node_property_dict.keys()
-                if child not in self.filler.ignored_signals
-            ]
-
-            for node_property_name in node_properties:
-                if self._auto_fill_signals or node_property_name in not_filled:
-
-                    # properties are always read only
-                    backend = self.filler.fill_child_signal(node_property_name, SignalR)
-
-                    from secop_ophyd.GenNodeCode import get_type_prop
-
-                    datatype = get_type_prop(node_property_dict[node_property_name])
-
-                    backend.init_property_from_introspection(
-                        datatype=datatype,
-                        path=node_property_name,
-                        secclient=self.client,
-                    )
-
-        self.filler.check_filled(f"{self.node_id}")
+            self.filler.check_filled(f"{self.node_id}")
+            self._filled = True
 
         # Set the name of the device to name all children
         device.set_name(device.name)
         await super().connect_real(device, timeout, force_reconnect)
 
-        # All Signals and child devs should be filled and connected now, in the next
-        # all signals and child devices need to be added to the according
-        # StandardReadableFormat with the hierarchiy:
-        # 1. Format given in Annotation
-        #       --> these will already have been set by the DeviceFiller
-        # 2. Module Interface Class definition (value, target,...)
-        #       --> these are set at the end of a .connect() method of the according
-        #           SECoPDevice subclass skipping any signals that have already been
-        #           set by annotations (should emit warning if there is a conflict
-        #           config vs read sig)
-        # 3. & 4. Definition in Parameter property "_signal_format" + Defaults
-        #   - _signal_format property + default CONFIG_SIGNAL for all other Signals
-        #       --> these are set here at the end of SECoPDeviceConnector.connect_real()
-        #           for all Signals that have not yet been set to a format
-        #   - CHILD format for all child devices (SECoPDevice instances)
-        #       --> these are set at the end of SECoPNodeDevice.connect() method
-        #           the device tree has only a depth of 2 levels (Node -> Modules)
-        #
+        await self._assign_formats(device)
 
-        # device has to be standard readable for this to make sense
-        if not isinstance(device, SECoPDevice):
+    async def _fill_module(self, device: Device, timeout: float):
+        """Fill parameters, properties and commands of a module device from
+        the node description."""
+        assert self.module is not None
+
+        if self.module not in self.client.modules:
+            raise RuntimeError(
+                f"Module '{self.module}' is not provided by SEC node {self.node_id} "
+                f"(available modules: {sorted(self.client.modules)})"
+            )
+
+        # deferred import to avoid a circular import (GenNodeCode imports
+        # from this module)
+        from secop_ophyd.GenNodeCode import get_type_param, get_type_prop
+
+        # Fill Parmeters
+        parameter_dict = self.client.modules[self.module]["parameters"]
+
+        # StandardMovable's readback machinery (set_name/subscribe_reading/
+        # locate) unconditionally requires movable_logic.readback to be a
+        # working SignalR -- including right now, before any other child
+        # of this module has been filled below (assigning any child
+        # triggers a set_name() cascade that resolves movable_logic
+        # immediately). When 'value' is composite it is fully decomposed
+        # into split value_* signals below (for a tiled-safe
+        # read()/describe() stream), with no bare 'value' attribute -- so
+        # for a Movable module we additionally build+connect a private,
+        # undecomposed 'value' SignalR purely to satisfy that internal
+        # plumbing. `object.__setattr__` is used to store it without
+        # going through Device's own __setattr__, which would otherwise
+        # treat any Signal-valued attribute as a tracked child (making it
+        # show up in device.children()/read()/describe() -- exactly what
+        # decomposing 'value' is meant to avoid).
+        if (
+            isinstance(device, SECoPMoveableDevice)
+            and "value" in parameter_dict
+            and classify_datatype(parameter_dict["value"]["datatype"])
+            is CompositeKind.DECOMPOSABLE
+        ):
+            value_datatype = get_type_param(parameter_dict["value"]["datatype"])
+            value_backend = SECoPBackend(None)  # type: SECoPBackend
+            value_backend.init_parameter_from_introspection(
+                datatype=value_datatype,  # type: ignore[arg-type]
+                path=self.module + ":value",
+                secclient=self.client,
+            )
+            value_readback = SignalR(value_backend)
+            await value_readback.connect(timeout=timeout)
+            object.__setattr__(device, "_composite_value_readback", value_readback)
+
+        # remove ignored signals
+        parameters = [
+            child
+            for child in parameter_dict.keys()
+            if child not in self.filler.ignored_signals
+        ]
+
+        # Dertermine children that are declared but not yet filled
+        not_filled = {unfilled for unfilled, _ in device.children()}
+
+        mandatory_parameters = getattr(device, "mandatory_parameters", [])
+
+        # parameters that got at least one Signal (split members and/or a
+        # monolithic signal)
+        resolved: set[str] = set()
+
+        for param_name in parameters:
+            raw_datatype = parameter_dict[param_name]["datatype"]
+            readonly = parameter_dict[param_name]["readonly"]
+            kind = classify_datatype(raw_datatype)
+
+            if kind is CompositeKind.DECOMPOSABLE:
+                members = get_composite_members(raw_datatype)
+                declared = param_name in not_filled or any(
+                    f"{param_name}_{member_key}" in not_filled
+                    for member_key, _ in members
+                )
+            else:
+                declared = param_name in not_filled
+
+            if not (self._auto_fill_signals or declared):
+                continue
+
+            if kind is CompositeKind.UNSUPPORTED:
+                msg = (
+                    f"Parameter '{param_name}' of module '{self.module}' has a "
+                    f"datatype nesting depth of "
+                    f"{SECoPdtype(raw_datatype).max_depth} (struct/tuple nested "
+                    f"inside a struct/tuple/array). Tiled & Databroker only "
+                    f"support flat struct/tuple parameters (depth <= "
+                    f"{MAX_DEPTH}); no signal will be created for '{param_name}'."
+                )
+                if param_name in mandatory_parameters:
+                    raise IncompatibleSECoPDatatype(msg)
+                warnings.warn(msg)
+                continue
+
+            if kind is CompositeKind.DECOMPOSABLE:
+                for member_key, member_dtype in members:
+                    member_backend = self.filler.fill_child_signal(
+                        f"{param_name}_{member_key}", SignalR
+                    )
+                    member_backend.init_member_from_introspection(
+                        module_name=self.module,
+                        parent_param=param_name,
+                        member_key=member_key,
+                        member_datatype=member_dtype,
+                        secclient=self.client,
+                    )
+
+                if not readonly:
+                    write_backend = self.filler.fill_child_signal(param_name, SignalW)
+
+                    write_datatype = get_type_param(raw_datatype)
+                    write_backend.init_parameter_from_introspection(
+                        datatype=write_datatype,  # type: ignore[arg-type]
+                        path=self.module + ":" + param_name,
+                        secclient=self.client,
+                    )
+
+                resolved.add(param_name)
+                continue
+
+            # ATOMIC: single signal
+            signal_type = SignalR if readonly else SignalRW
+
+            backend = self.filler.fill_child_signal(param_name, signal_type)
+
+            datatype = get_type_param(raw_datatype)
+            backend.init_parameter_from_introspection(
+                datatype=datatype,  # type: ignore[arg-type]
+                path=self.module + ":" + param_name,
+                secclient=self.client,
+            )
+            resolved.add(param_name)
+
+        for param_name in mandatory_parameters:
+            if param_name not in resolved:
+                raise AttributeError(
+                    f"Parameter '{param_name}' of module '{self.module}' has not "
+                    f"been assigned, but is needed for the "
+                    f"{type(device).__name__} interface class"
+                )
+
+        # Fill Properties
+        module_property_dict = self.client.modules[self.module]["properties"]
+
+        # remove ignored signals
+        module_properties = [
+            child
+            for child in module_property_dict.keys()
+            if child not in self.filler.ignored_signals and child not in IGNORED_PROPS
+        ]
+
+        for mod_property_name in module_properties:
+            if self._auto_fill_signals or mod_property_name in not_filled:
+
+                # properties are always read only
+                backend = self.filler.fill_child_signal(mod_property_name, SignalR)
+
+                datatype = get_type_prop(module_property_dict[mod_property_name])
+
+                backend.init_property_from_introspection(
+                    datatype=datatype,  # type: ignore[arg-type]
+                    path=self.module + ":" + mod_property_name,
+                    secclient=self.client,
+                )
+
+        # Fill Commands
+        command_dict = self.client.modules[self.module]["commands"]
+
+        # "stop" is skipped: SECoPMoveableDevice already implements
+        # Stoppable.stop() (a real bound method) via StandardMovable, so
+        # exposing a raw command device at the same bare name would
+        # silently shadow it.
+        commands = [
+            c
+            for c in command_dict.keys()
+            if c not in self.filler.ignored_signals and c != "stop"
+        ]
+
+        wait_for_idle_fn = getattr(device, "wait_for_idle", None)
+
+        for command_name in commands:
+            if self._auto_fill_signals or command_name in not_filled:
+                cmd_datatype: CommandType = command_dict[command_name]["datatype"]
+                command_type = (
+                    TriggerableCommand
+                    if cmd_datatype.argument is None and cmd_datatype.result is None
+                    else Command
+                )
+
+                cmd_backend = self.filler.fill_child_command(command_name, command_type)
+
+                cmd_path = Path(parameter_name=command_name, module_name=self.module)
+                cmd_backend.init_command_from_introspection(
+                    cmd_datatype, cmd_path, self.client, wait_for_idle_fn
+                )
+
+    def _fill_node(self, device: Device):
+        """Fill module devices and node properties from the node description."""
+        from secop_ophyd.GenNodeCode import get_type_prop
+
+        # Fill Module devices
+        modules = self.client.modules
+
+        not_filled = {unfilled for unfilled, _ in device.children()}
+
+        for module_name in modules.keys():
+            if self._auto_fill_signals or module_name in not_filled:
+                module_properties = modules[module_name]["properties"]
+                device_sub_class = class_from_interface(module_properties)
+
+                self.filler.fill_child_device(module_name, device_sub_class)
+
+                mod_dev: SECoPDevice = getattr(device, module_name)
+                mod_dev.set_module(module_name)
+
+        # Fill Node properties
+        node_property_dict = self.client.properties
+
+        # remove ignored signals
+        node_properties = [
+            child
+            for child in node_property_dict.keys()
+            if child not in self.filler.ignored_signals
+        ]
+
+        for node_property_name in node_properties:
+            if self._auto_fill_signals or node_property_name in not_filled:
+
+                # properties are always read only
+                backend = self.filler.fill_child_signal(node_property_name, SignalR)
+
+                datatype = get_type_prop(node_property_dict[node_property_name])
+
+                backend.init_property_from_introspection(
+                    datatype=datatype,  # type: ignore[arg-type]
+                    path=node_property_name,
+                    secclient=self.client,
+                )
+
+    async def _assign_formats(self, device: Device):
+        """Assign StandardReadableFormats to all signals, once.
+
+        Priority:
+        1. Format given in an annotation -- already applied by the DeviceFiller
+           when the child was created
+        2. Module interface class (value, target, ...), skipping signals that
+           already have a format (with a warning on a config vs read conflict)
+        3. ``_signal_format`` parameter property, falling back to
+           CONFIG_SIGNAL; CHILD for the module devices of a node
+        """
+        if self._formats_assigned or not isinstance(device, SECoPDevice):
             return
 
-        # 2. Module Interface Class definition (value, target,...)
         await device._assign_interface_formats()
-
-        # 3. & 4. Definition in Parameter property "_signal_format" + Defaults
         await device._assign_default_formats()
+        self._formats_assigned = True
 
 
 class SECoPDevice(StandardReadable):
@@ -561,8 +611,6 @@ class SECoPDevice(StandardReadable):
     _host: str
     _port: str
     _module: str | None
-    _mod_prop_devices: Dict[str, SignalR]
-    _param_devices: Dict[str, Any]
     _logger: Logger
 
     hinted_signals: list[str] = []
@@ -588,17 +636,12 @@ class SECoPDevice(StandardReadable):
         self._sri = sri
         self._host = sri.split(":")[0]
         self._port = sri.split(":")[1]
-        self._mod_prop_devices = {}
-        self._param_devices = {}
         self._node_id = sri.split(":")[0] + ":" + sri.split(":")[1]
 
-        # raw SECoP parameter names that got at least one Signal built for
-        # them (split members and/or a monolithic signal); used to tell
-        # "parameter missing from the SEC node entirely" apart from
-        # "parameter present but incompatible datatype" (the latter raises
-        # eagerly in SECoPDeviceConnector.connect_real() for mandatory
-        # parameters instead)
-        self._resolved_parameters: set[str] = set()
+        # an explicit name is never replaced; otherwise the first real connect
+        # names the device (node: equipment id, standalone module: module name)
+        self._name_given = bool(name)
+        self._auto_named = False
 
         self._logger = setup_logging(
             name=f"frappy:{self._host}:{self._port}",
@@ -622,8 +665,13 @@ class SECoPDevice(StandardReadable):
         super().__init__(name=name, connector=connector)
 
     def set_module(self, module_name: str):
+        if self._module == module_name:
+            return
         if self._module is not None:
-            raise RuntimeError("Module can only be set if it was not already set")
+            raise RuntimeError(
+                f"Device is already bound to module '{self._module}', "
+                f"cannot rebind it to '{module_name}'"
+            )
 
         self._module = module_name
         self._sri = self._sri + ":" + module_name
@@ -636,19 +684,24 @@ class SECoPDevice(StandardReadable):
         timeout: float = DEFAULT_TIMEOUT,
         force_reconnect: bool = False,
     ):
-        if not self._client.online or force_reconnect:
-            # Establish connection to SEC Node
-            await self._client.connect(3)
-
+        # the connector opens the client connection in connect_real(); in mock
+        # mode nothing touches the network
         await super().connect(mock, timeout, force_reconnect)
 
-        if self._module is None:
-            # set device name from equipment id property
-            self.set_name(self._client.properties[EQUIPMENT_ID].replace(".", "-"))
-        else:
-            self.set_name(self._module)
+        if not self._name_given and not self._auto_named:
+            self._auto_name(mock=bool(mock))
 
         warn_on_long_device_names(walk_devices(self))
+
+    def _auto_name(self, mock: bool) -> None:
+        if self._module is not None:
+            # a module inside a node device is named by its parent
+            if self.parent is None:
+                self.set_name(self._module)
+                self._auto_named = True
+        elif not mock and EQUIPMENT_ID in self._client.properties:
+            self.set_name(self._client.properties[EQUIPMENT_ID].replace(".", "-"))
+            self._auto_named = True
 
     @abstractmethod
     async def _assign_interface_formats(self):
@@ -671,7 +724,8 @@ class SECoPDevice(StandardReadable):
             if not isinstance(child, Signal):
                 continue
 
-            backend = child._connector.backend
+            # _init_backend: in mock mode `backend` is the MockSignalBackend
+            backend = child._connector._init_backend
 
             if not isinstance(backend, SECoPBackend):
                 continue
@@ -691,7 +745,8 @@ class SECoPDevice(StandardReadable):
                 # format already assigned by annotation or module IF class
                 continue
 
-            match backend.format:
+            # no format without a node description (mock mode)
+            match getattr(backend, "format", StandardReadableFormat.CONFIG_SIGNAL):
                 case StandardReadableFormat.CHILD:
                     raise RuntimeError("Signal cannot have CHILD format")
                 case StandardReadableFormat.CONFIG_SIGNAL:
@@ -719,14 +774,20 @@ class SECoPDevice(StandardReadable):
         parameter (empty list if `parent_param` is atomic, i.e. was not
         decomposed)."""
         result: list[SignalR] = []
-        for _, child in self.children():
+        for attr_name, child in self.children():
             if not isinstance(child, SignalR):
                 continue
-            backend = child._connector.backend
+            backend = child._connector._init_backend
             if (
-                isinstance(backend, SECoPBackend)
-                and backend.attribute_type == AttributeType.MEMBER
-                and backend._parent_param == parent_param
+                not isinstance(backend, SECoPBackend)
+                or backend.attribute_type != AttributeType.MEMBER
+            ):
+                continue
+            # without a node description (mock mode) the parent is only
+            # known from the member's name
+            parent = getattr(backend, "_parent_param", None)
+            if parent == parent_param or (
+                parent is None and attr_name.startswith(f"{parent_param}_")
             ):
                 result.append(child)
         return result
@@ -771,23 +832,20 @@ class SECoPNodeDevice(SECoPDevice):
                 f"SECoPNodeDevice SRI must only contain host:port {sec_node_uri}"
             )
 
+        self._callbacks_registered = False
+
         super().__init__(sri=sec_node_uri, name=name, loglevel=loglevel, logdir=logdir)
 
     async def connect(self, mock=False, timeout=DEFAULT_TIMEOUT, force_reconnect=False):
         await super().connect(mock, timeout, force_reconnect)
 
-        moddevs = []
-        for _, moddev in self.children():
-            if isinstance(moddev, SECoPDevice):
-                moddevs.append(moddev)
-
-        self.add_readables(moddevs, StandardReadableFormat.CHILD)
-
-        # register secclient callbacks (these are useful if sec node description
-        # changes after a reconnect)
-        self._client.register_callback(
-            None, self.descriptiveDataChange, self.nodeStateChange
-        )
+        if not mock and not self._callbacks_registered:
+            # register secclient callbacks (these are useful if sec node
+            # description changes after a reconnect)
+            self._client.register_callback(
+                None, self.descriptiveDataChange, self.nodeStateChange
+            )
+            self._callbacks_registered = True
 
     def descriptiveDataChange(self, module, description):  # noqa: N802
         raise RuntimeError(
@@ -805,8 +863,8 @@ class SECoPNodeDevice(SECoPDevice):
             self._client.conn_timestamp = ttime.time()
 
     async def _assign_interface_formats(self):
-        # Node device has no specific interface class formats
-        pass
+        moddevs = [dev for _, dev in self.children() if isinstance(dev, SECoPDevice)]
+        self.add_readables(moddevs, StandardReadableFormat.CHILD)
 
     async def class_from_instance(self, path_to_module: str | None = None):
         """Generate an annotated device class for this SEC node and write it
@@ -845,6 +903,42 @@ class SECoPCommunicatorDevice(SECoPDevice):
         pass
 
 
+def _set_mock_status_idle(device: Device) -> None:
+    """Start a mocked module in the IDLE state, if its status enum has one
+    (a mock enum signal otherwise starts at its first member)."""
+    status_0 = getattr(device, "status_0", None)
+    if not isinstance(status_0, SignalR):
+        return
+
+    datatype = status_0.datatype
+    if datatype is str:
+        set_mock_value(status_0, "IDLE")
+    elif isinstance(datatype, type) and issubclass(datatype, Enum):
+        idle = next((m for m in datatype if m.value == "IDLE"), None)
+        if idle is not None:
+            set_mock_value(status_0, idle)
+
+
+class SECoPReadableMock(DeviceMock["SECoPReadableDevice"]):
+    """Mock behaviour for SECoP Readable modules: start IDLE."""
+
+    async def connect(self, device: "SECoPReadableDevice") -> None:
+        _set_mock_status_idle(device)
+
+
+class SECoPMovableMock(InstantMovableMock):
+    """Mock behaviour for SECoP Drivable modules: start IDLE, and move the
+    readback to the target instantly (atomic value/target only; struct/tuple
+    targets are not mocked yet)."""
+
+    async def connect(  # type: ignore[override]
+        self, device: "SECoPMoveableDevice"
+    ) -> None:
+        _set_mock_status_idle(device)
+        if device._has_atomic_setpoint_readback():
+            await super().connect(device)
+
+
 class SECoPReadableDevice(SECoPDevice, Triggerable, Subscribable):
     """
     Standard readable SECoP device, corresponding to a SECoP module with the
@@ -853,6 +947,8 @@ class SECoPReadableDevice(SECoPDevice, Triggerable, Subscribable):
 
     hinted_signals: list[str] = ["value"]
     mandatory_parameters: list[str] = ["value", "status"]
+
+    _mock_class: type[DeviceMock] = SECoPReadableMock
 
     def __init__(
         self,
@@ -879,21 +975,6 @@ class SECoPReadableDevice(SECoPDevice, Triggerable, Subscribable):
         super().__init__(
             sri=sri, name=name, connector=connector, loglevel=loglevel, logdir=logdir
         )
-
-    async def connect(self, mock=False, timeout=DEFAULT_TIMEOUT, force_reconnect=False):
-        await super().connect(mock, timeout, force_reconnect)
-
-        if "value" not in self._resolved_parameters:
-            raise AttributeError(
-                "Parameter 'value' has not been assigned,"
-                + "but is needed for Readable interface class"
-            )
-
-        if "status" not in self._resolved_parameters:
-            raise AttributeError(
-                "Parameter 'status' has not been assigned,"
-                + "but is needed for Readable interface class"
-            )
 
     async def _assign_interface_formats(self):
         value_signals = (
@@ -1082,10 +1163,7 @@ class SECoPMoveableDevice(SECoPReadableDevice, StandardMovable[SignalDatatypeT])
     # (the atomic-value case, where movable_logic.readback is self.value)
     _composite_value_readback: SignalR | None = None
 
-    # StandardMovable is @default_mock_class(InstantMovableMock), which would
-    # otherwise also install a mock put-callback on 'target' on top of this
-    # project's own SECoPBackend mock machinery when connecting with mock=True.
-    _mock_class = DeviceMock
+    _mock_class: type[DeviceMock] = SECoPMovableMock
 
     def __init__(
         self,
@@ -1110,16 +1188,6 @@ class SECoPMoveableDevice(SECoPReadableDevice, StandardMovable[SignalDatatypeT])
             sri=sri, name=name, connector=connector, loglevel=loglevel, logdir=logdir
         )
 
-    async def connect(self, mock=False, timeout=DEFAULT_TIMEOUT, force_reconnect=False):
-
-        await super().connect(mock, timeout, force_reconnect)
-
-        if "target" not in self._resolved_parameters:
-            raise AttributeError(
-                "Parameter 'target' has not been assigned, "
-                + "but is needed for 'Drivable' interface class!"
-            )
-
     def _has_atomic_setpoint_readback(self) -> bool:
         """True if both 'target' and 'value' are plain (non-composite)
         parameters, i.e. self.target is a real SignalRW and self.value
@@ -1132,7 +1200,7 @@ class SECoPMoveableDevice(SECoPReadableDevice, StandardMovable[SignalDatatypeT])
     @cached_property
     def movable_logic(self) -> MovableLogic:
         if self._module is None:
-            raise RuntimeError
+            raise RuntimeError(f"{self.name}: device is not bound to a SECoP module")
 
         # atomic 'value': the real signal. composite 'value': the private,
         # undecomposed readback SignalR pre-connected in connect_real() --
@@ -1157,7 +1225,7 @@ class SECoPMoveableDevice(SECoPReadableDevice, StandardMovable[SignalDatatypeT])
             return await super().locate()
 
         if self._module is None:
-            raise RuntimeError
+            raise RuntimeError(f"{self.name}: device is not bound to a SECoP module")
 
         # 'target'/'value' were decomposed into split member signals (no
         # single Signal to .get_value() on) -- bypass Signals entirely and
@@ -1186,14 +1254,20 @@ class SECoPMoveableDevice(SECoPReadableDevice, StandardMovable[SignalDatatypeT])
         # device's own connect_real() fills its signals), and a resolvable
         # readback (either the atomic 'value' signal, or -- for composite
         # 'value' -- the private _composite_value_readback connected at the
-        # very start of this device's own connect_real(), see there) to
+        # very start of this device's own connect_real(), see there) and
+        # 'status_0' (the node may describe 'target' before 'status') to
         # resolve movable_logic, so skip it and fall back to plain
-        # Device.set_name() until all three are present; a later call does
+        # Device.set_name() until all of them are present; a later call does
         # the real renaming.
         readback_ready = (
             hasattr(self, "value") or self._composite_value_readback is not None
         )
-        if self._module is None or not hasattr(self, "target") or not readback_ready:
+        if (
+            self._module is None
+            or not hasattr(self, "target")
+            or not hasattr(self, "status_0")
+            or not readback_ready
+        ):
             Device.set_name(self, name, child_name_separator=child_name_separator)
             return
         super().set_name(name, child_name_separator=child_name_separator)
@@ -1228,7 +1302,18 @@ def class_from_interface(mod_properties: dict):
 
 
 def _status_code(status_sig: SignalR, status: str) -> int:
-    return status_sig._connector.backend.SECoPdtype_obj.export_value(status)
+    secop_dtype = getattr(status_sig._connector._init_backend, "SECoPdtype_obj", None)
+    if secop_dtype is not None:
+        return secop_dtype.export_value(status)
+
+    # no node description (mock mode): only standard status names are known
+    status_name = getattr(status, "value", status)
+    if status_name not in STATUS_CODES:
+        raise ValueError(
+            f"Unknown status '{status_name}' of {status_sig.name}: without a SEC "
+            f"node description only the standard SECoP status names are known"
+        )
+    return STATUS_CODES[status_name]
 
 
 IF_CLASSES = {

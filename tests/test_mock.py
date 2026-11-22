@@ -1,0 +1,87 @@
+# mypy: disable-error-code="attr-defined"
+"""Generated device classes must connect and work with ``mock=True`` without a
+SEC node: the mocked devices point at a port nothing listens on."""
+
+import asyncio
+from pathlib import Path
+
+from ophyd_async.core import get_mock, get_mock_put, set_mock_value
+
+from secop_ophyd.AsyncFrappyClient import AsyncSecopClient
+from secop_ophyd.GenNodeCode import GenNodeCode
+from tests.util import import_generated
+
+UNREACHABLE = "localhost:1"
+
+
+async def _generate(sim, tmp_path: Path, logger):
+    client = AsyncSecopClient(host="localhost", port=str(sim.port), log=logger)
+    await client.connect(3)
+    try:
+        description = (await client.request("describe"))[2]
+    finally:
+        await client.disconnect(True)
+
+    gen_code = GenNodeCode(path=str(tmp_path), log=logger)
+    gen_code.from_json_describe(description)
+    gen_code.write_gen_node_class_file()
+
+    (node_cls,) = gen_code.node_classes
+    module = import_generated(tmp_path, node_cls.name)
+    return getattr(module, node_cls.name)
+
+
+async def _connect_mock(node_cls, name: str):
+    node = node_cls(UNREACHABLE, name=name)
+    await asyncio.wait_for(node.connect(mock=True), 10)
+    return node
+
+
+async def test_mock_movable(cryo_sim, tmp_path, logger):
+    node = await _connect_mock(await _generate(cryo_sim, tmp_path, logger), "cryo")
+
+    assert node.name == "cryo"
+    assert node.cryo.name == "cryo-cryo"
+
+    # same names as a real connect: the readback is named after the module
+    assert set(await node.read()) == {"cryo-cryo", "cryo-cryo-target"}
+    assert "cryo-cryo-ramp" in await node.read_configuration()
+
+    # mocked modules start IDLE, a move arrives instantly
+    await asyncio.wait_for(node.cryo.set(12.5), 5)
+    get_mock_put(node.cryo.target).assert_called_once_with(12.5)
+    location = await node.cryo.locate()
+    assert location["setpoint"] == location["readback"] == 12.5
+
+    await asyncio.wait_for(node.cryo.wait_for_idle(), 5)
+
+    # repeated connects keep the tree usable
+    await node.connect(mock=True)
+    assert set(await node.read()) == {"cryo-cryo", "cryo-cryo-target"}
+
+
+async def test_mock_struct_parameters_and_commands(nested_struct_sim, tmp_path, logger):
+    node = await _connect_mock(
+        await _generate(nested_struct_sim, tmp_path, logger), "nested"
+    )
+
+    struct = node.ophy_struct
+    set_mock_value(struct.value_x, 1.5)
+    reading = await node.read()
+    assert reading["nested-ophy_struct-value_x"]["value"] == 1.5
+
+    # struct argument commands are mocked without argument conversion
+    await struct.test_cmd.execute({"name": "x", "id": 1, "sort": True})
+    get_mock(struct.test_cmd).execute.assert_awaited_once()
+
+
+async def test_mock_commands(motion_sim, tmp_path, logger):
+    node = await _connect_mock(await _generate(motion_sim, tmp_path, logger), "motion")
+
+    # TriggerableCommand (no argument, no result)
+    await node.detector.go.execute()
+    get_mock(node.detector.go).execute.assert_awaited_once()
+
+    # argument and result convertible by ophyd-async's mock backend
+    await node.comm.communicate.execute("ping")
+    get_mock(node.comm.communicate).execute.assert_awaited_once_with("ping")

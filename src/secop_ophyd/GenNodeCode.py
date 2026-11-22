@@ -22,7 +22,7 @@ from secop_ophyd.SECoPDevices import (
     SECoPMoveableDevice,
     class_from_interface,
 )
-from secop_ophyd.SECoPSignal import secop_dtype_obj_from_json
+from secop_ophyd.SECoPSignal import property_dtype_and_value
 from secop_ophyd.util import (
     CompositeKind,
     SECoPdtype,
@@ -705,7 +705,7 @@ class GenNodeCode:
                 if prop_name in IGNORED_PROPS:
                     continue
 
-                type_param = get_type_param(secop_dtype_obj_from_json(property_value))
+                type_param = get_type_prop(property_value)
 
                 module_properties.append(
                     PropertyAttribute(
@@ -746,7 +746,7 @@ class GenNodeCode:
 
         # Process module properties
         for prop_name, property_value in node_properties.items():
-            type_param = get_type_param(secop_dtype_obj_from_json(property_value))
+            type_param = get_type_prop(property_value)
 
             # Generate PropPath annotation for node-level properties
 
@@ -956,5 +956,5 @@ def get_type_param(secop_dtype: DataType) -> str | None:
 
 
 def get_type_prop(prop_value) -> str | None:
-    secop_dtype: DataType = secop_dtype_obj_from_json(prop_value)
+    secop_dtype, _ = property_dtype_and_value(prop_value)
     return get_type_param(secop_dtype)

@@ -1,8 +1,11 @@
 import inspect
+import json
 import warnings
-from collections.abc import Awaitable, Callable
-from typing import Any, cast
+from collections.abc import Awaitable, Callable, Sequence
+from enum import Enum
+from typing import Any, cast, get_origin
 
+import numpy as np
 from bluesky.protocols import DataKey, Reading
 from frappy.client import CacheItem
 from frappy.datatypes import (
@@ -11,6 +14,7 @@ from frappy.datatypes import (
     BoolType,
     CommandType,
     DataType,
+    EnumType,
     FloatRange,
     IntRange,
     ScaledInteger,
@@ -19,13 +23,23 @@ from frappy.datatypes import (
     TupleOf,
 )
 from ophyd_async.core import (
+    NO_ARG_VOID_SIGNATURE,
     Callback,
     CommandBackend,
+    Device,
+    LazyMock,
     SignalBackend,
     SignalDatatypeT,
     StandardReadableFormat,
     StrictEnum,
+    SubsetEnum,
+    SupersetEnum,
 )
+
+# not exported from ophyd_async.core: needed to give SECoP commands a mock
+# backend that tolerates argument types SoftCommandBackend cannot convert
+from ophyd_async.core._command import CommandConnector, MockCommandBackend
+from ophyd_async.core._soft_signal_backend import make_converter
 
 from secop_ophyd.AsyncFrappyClient import AsyncSecopClient
 from secop_ophyd.util import (
@@ -67,6 +81,134 @@ def _is_concrete_enum_class(datatype: Any) -> bool:
     )
 
 
+def _datatype_kind(datatype: Any) -> str | None:
+    """Coarse kind of a Signal datatype, for comparing an annotation with what
+    the SEC node describes. None means "not checked"."""
+    if isinstance(datatype, type):
+        if issubclass(datatype, Enum):
+            return "enum"
+        if datatype is bool:
+            return "bool"
+        if datatype is int:
+            return "int"
+        if datatype is float:
+            return "float"
+        if datatype is str:
+            return "str"
+        if issubclass(datatype, np.ndarray):
+            return "array"
+        return None
+    origin = get_origin(datatype)
+    if origin is np.ndarray or (
+        isinstance(origin, type) and issubclass(origin, Sequence)
+    ):
+        return "array"
+    return None
+
+
+def check_annotated_datatype(
+    annotated: Any, secop_dtype: DataType, described: Any, what: str
+) -> None:
+    """Raise TypeError if the datatype from a class annotation (``annotated``)
+    does not fit what the SEC node describes (``secop_dtype``, mapped to the
+    Signal datatype ``described``).
+
+    Enum annotations must match the node's enum members: exactly for a
+    StrictEnum, as a subset for a SubsetEnum and as a superset for a
+    SupersetEnum."""
+    if annotated is None:
+        return
+
+    annotated_kind = _datatype_kind(annotated)
+    described_kind = _datatype_kind(described)
+    if annotated_kind is None or described_kind is None:
+        return
+
+    name = getattr(annotated, "__name__", str(annotated))
+    if annotated_kind != described_kind:
+        raise TypeError(
+            f"'{what}' is annotated as {name}, but the SEC node describes it as "
+            f"{secop_dtype!r}; regenerate or fix the device class"
+        )
+
+    if (
+        annotated_kind == "enum"
+        and isinstance(secop_dtype, EnumType)
+        and annotated not in (StrictEnum, SubsetEnum, SupersetEnum)
+    ):
+        node_members = set(secop_dtype.export_datatype()["members"])
+        annotated_members = {member.value for member in annotated}
+
+        if issubclass(annotated, SubsetEnum):
+            ok = annotated_members <= node_members
+        elif issubclass(annotated, SupersetEnum):
+            ok = node_members <= annotated_members
+        else:
+            ok = annotated_members == node_members
+
+        if not ok:
+            raise TypeError(
+                f"'{what}' is annotated with enum {name} "
+                f"{sorted(annotated_members)}, but the SEC node describes the "
+                f"members {sorted(node_members)}; regenerate or fix the device class"
+            )
+
+
+class _UnconvertedMockCommandBackend(MockCommandBackend):
+    """Mock command backend that records calls without converting arguments.
+
+    ophyd-async's MockCommandBackend converts every argument through a
+    SoftCommandBackend, which has no converter for the dict/list/tuple
+    argument types of SECoP struct, array and tuple commands. This variant
+    passes arguments straight to the mock instead."""
+
+    def __init__(self, initial_backend: CommandBackend, mock: LazyMock):
+        self._initial_backend = initial_backend
+        self._mock = mock
+        self._mock_execute_callback = None
+
+        signature = initial_backend.signature or NO_ARG_VOID_SIGNATURE
+        try:
+            self._return_converter = make_converter(signature.return_annotation)
+        except TypeError:
+            self._return_converter = None
+
+        CommandBackend.__init__(self, signature=signature)
+
+    async def execute(self, *args: Any, **kwargs: Any) -> Any:
+        return await self.execute_mock(*args, **kwargs)
+
+
+class SECoPCommandConnector(CommandConnector):
+    """CommandConnector that can mock commands with struct, array or tuple
+    arguments (see `_UnconvertedMockCommandBackend`)."""
+
+    async def connect_mock(self, device: Device, mock: LazyMock):
+        try:
+            self.backend = MockCommandBackend(self._init_backend, mock)
+        except TypeError:
+            self.backend = _UnconvertedMockCommandBackend(self._init_backend, mock)
+
+
+def _is_composite_dtype(datatype: DataType) -> bool:
+    if isinstance(datatype, (StructOf, TupleOf)):
+        return True
+    if isinstance(datatype, ArrayOf):
+        return _is_composite_dtype(datatype.members)
+    return False
+
+
+def property_dtype_and_value(prop_val: Any) -> tuple[DataType, Any]:
+    """Datatype and value with which a SECoP property is exposed as a Signal.
+
+    Struct/tuple-valued properties (and arrays of them) are exposed as a JSON
+    string: bluesky/TiledWriter cannot store numpy structured arrays."""
+    datatype = secop_dtype_obj_from_json(prop_val)
+    if _is_composite_dtype(datatype):
+        return StringType(), json.dumps(prop_val)
+    return datatype, prop_val
+
+
 class SECoPCommandBackend(CommandBackend[Any, Any]):
     """Backend for a SECoP command.
 
@@ -83,14 +225,19 @@ class SECoPCommandBackend(CommandBackend[Any, Any]):
     def __init__(self, signature: inspect.Signature | None = None) -> None:
         """Initialize SECoPCommandBackend (optionally with a signature derived
         from a `Command[[ArgT], ResT]` class annotation)."""
-        resolved_signature = signature or inspect.Signature()
+        # NO_ARG_VOID_SIGNATURE (rather than a bare inspect.Signature()) so the
+        # mock backend sees an annotated return type for TriggerableCommands
+        resolved_signature = signature or NO_ARG_VOID_SIGNATURE
         # Snapshot of the annotation-derived signature (e.g. carrying the
         # concrete `Cryostat_SetMode_Arg_Enum` class from a generated
         # `Command[[Cryostat_SetMode_Arg_Enum], ...]` annotation), captured
         # before init_command_from_introspection() rebuilds self.signature
-        # from live introspection. Empty inspect.Signature() for pure
+        # from live introspection. NO_ARG_VOID_SIGNATURE for pure
         # introspection instantiation (no class annotation).
         self._annotated_signature: inspect.Signature = resolved_signature
+        # set by init_command_from_introspection(); empty without a node
+        # description (mock mode)
+        self.source_name = ""
         super().__init__(signature=resolved_signature)
 
     def init_command_from_introspection(
@@ -138,7 +285,7 @@ class SECoPCommandBackend(CommandBackend[Any, Any]):
         )
 
     def source(self, name: str) -> str:
-        return self.source_name
+        return self.source_name or name
 
     async def connect(self, timeout: float) -> None:
         pass
@@ -376,6 +523,12 @@ class SECoPBackend(SignalBackend[SignalDatatypeT]):
         self.describe_dict["source"] = self.source_name
         self.describe_dict.update(self.SECoP_type_info.get_datakey())
 
+        check_annotated_datatype(
+            self._annotated_datatype,
+            member_datatype,
+            self.SECoP_type_info.np_datatype,
+            self.path_str,
+        )
         if _is_concrete_enum_class(self._annotated_datatype):
             self.datatype = cast(type, self._annotated_datatype)
         else:
@@ -454,6 +607,12 @@ class SECoPBackend(SignalBackend[SignalDatatypeT]):
                 property_name = "units"
             self.describe_dict[property_name] = prop_val
 
+        check_annotated_datatype(
+            self._annotated_datatype,
+            self.SECoPdtype_obj,
+            self.SECoP_type_info.np_datatype,
+            self.path_str,
+        )
         if _is_concrete_enum_class(self._annotated_datatype):
             self.datatype = cast(type, self._annotated_datatype)
         else:
@@ -468,8 +627,9 @@ class SECoPBackend(SignalBackend[SignalDatatypeT]):
         else:
             self._property_dict = self._secclient.properties
 
-        self._prop_value = self._property_dict[self._attribute_name]
-        self.SECoPdtype_obj = secop_dtype_obj_from_json(self._prop_value)
+        self.SECoPdtype_obj, self._prop_value = property_dtype_and_value(
+            self._property_dict[self._attribute_name]
+        )
         self.SECoP_type_info = SECoPdtype(self.SECoPdtype_obj)
 
         if self.SECoP_type_info.max_depth > MAX_DEPTH:
@@ -487,6 +647,12 @@ class SECoPBackend(SignalBackend[SignalDatatypeT]):
         # Properties are always readonly
         self.format = StandardReadableFormat.CONFIG_SIGNAL
         self.readonly = True
+        check_annotated_datatype(
+            self._annotated_datatype,
+            self.SECoPdtype_obj,
+            self.SECoP_type_info.np_datatype,
+            self.path_str,
+        )
         if _is_concrete_enum_class(self._annotated_datatype):
             self.datatype = cast(type, self._annotated_datatype)
         else:
@@ -646,13 +812,14 @@ def secop_dtype_obj_from_json(prop_val):
     if isinstance(prop_val, str):
         return StringType()
 
-    if isinstance(prop_val, (int, float)):
-        return FloatRange()
-
+    # bool first: bool is a subclass of int
     if isinstance(prop_val, bool):
         return BoolType()
 
-    if isinstance(prop_val, dict):  # SECoP Structs/tuples --> numpy ndarray
+    if isinstance(prop_val, (int, float)):
+        return FloatRange()
+
+    if isinstance(prop_val, dict):
         members = {}
         for key, elem in prop_val.items():
             members[key] = secop_dtype_obj_from_json(elem)
