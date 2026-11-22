@@ -125,3 +125,24 @@ async def test_mock_commands(motion_sim, tmp_path, logger):
     assert set(await node.read())
 
     await node.detector.stop()
+
+
+async def test_generated_meaning(cryo_sim, nested_struct_sim, tmp_path, logger):
+    cryo_cls = await _generate(cryo_sim, tmp_path / "cryo", logger)
+    annotations = cryo_cls.__annotations__["cryo"].__annotations__
+    assert "SignalR[str]" in str(annotations["meaning_function"])
+    assert "SignalR[int]" in str(annotations["meaning_importance"])
+
+    cryo = await _connect_mock(cryo_cls, "cryo")
+    assert "cryo-cryo-meaning_importance" in await cryo.read_configuration()
+
+    # enum1 and enum2 share a class, only enum1 has a meaning: the class
+    # does not annotate it, so both modules connect
+    nested_cls = await _generate(nested_struct_sim, tmp_path / "nested", logger)
+    enum_cls = nested_cls.__annotations__["enum1"]
+    assert "meaning_function" not in enum_cls.__annotations__
+
+    nested = nested_cls(nested_struct_sim.uri, name="nested")
+    await nested.connect()
+    assert await nested.enum1.meaning_function.get_value() == "flowrate"
+    assert not hasattr(nested.enum2, "meaning_function")

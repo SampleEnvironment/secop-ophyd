@@ -56,6 +56,7 @@ from secop_ophyd.SECoPSignal import (
     SECoPBackend,
     SECoPCommandBackend,
     SECoPCommandConnector,
+    module_property_signals,
 )
 from secop_ophyd.util import (
     MAX_DEPTH,
@@ -115,7 +116,7 @@ STATUS_CODES = {
 }
 
 
-IGNORED_PROPS = ["meaning", "_plotly"]
+IGNORED_PROPS = ["_plotly"]
 
 TILED_MAX_NAME_LENGTH = 63
 
@@ -370,7 +371,7 @@ class SECoPDeviceConnector(DeviceConnector):
 
         # deferred import to avoid a circular import (GenNodeCode imports
         # from this module)
-        from secop_ophyd.GenNodeCode import get_type_param, get_type_prop
+        from secop_ophyd.GenNodeCode import get_type_param
 
         # Fill Parmeters
         parameter_dict = self.client.modules[self.module]["parameters"]
@@ -502,12 +503,14 @@ class SECoPDeviceConnector(DeviceConnector):
                 )
 
         # Fill Properties
-        module_property_dict = self.client.modules[self.module]["properties"]
+        property_signals = module_property_signals(
+            self.client.modules[self.module]["properties"]
+        )
 
         # remove ignored signals
         module_properties = [
             child
-            for child in module_property_dict.keys()
+            for child in property_signals
             if child not in self.filler.ignored_signals and child not in IGNORED_PROPS
         ]
 
@@ -517,7 +520,7 @@ class SECoPDeviceConnector(DeviceConnector):
                 # properties are always read only
                 backend = self.filler.fill_child_signal(mod_property_name, SignalR)
 
-                datatype = get_type_prop(module_property_dict[mod_property_name])
+                datatype = get_type_param(property_signals[mod_property_name][0])
 
                 backend.init_property_from_introspection(
                     datatype=datatype,  # type: ignore[arg-type]

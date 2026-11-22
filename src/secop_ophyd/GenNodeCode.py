@@ -22,7 +22,10 @@ from secop_ophyd.SECoPDevices import (
     SECoPMoveableDevice,
     class_from_interface,
 )
-from secop_ophyd.SECoPSignal import property_dtype_and_value
+from secop_ophyd.SECoPSignal import (
+    module_property_signals,
+    property_dtype_and_value,
+)
 from secop_ophyd.util import (
     CompositeKind,
     SECoPdtype,
@@ -320,7 +323,15 @@ class GenNodeCode:
             (cls for cls in self.module_classes if cls.name == module_cls), None
         )
         if existing_class:
-            # Class already exists - merge enums if provided
+            # Optional properties (e.g. 'meaning', 'group') may be set on only
+            # some instances: annotate only those that all instances have,
+            # auto_fill_signals adds the rest at connect
+            names = {prop.name for prop in properties}
+            existing_class.properties = [
+                prop for prop in existing_class.properties if prop.name in names
+            ]
+
+            # merge enums if provided
             if enum_classes:
                 existing_class.enums.extend(enum_classes)
                 if self.log:
@@ -700,12 +711,14 @@ class GenNodeCode:
             module_properties: list[PropertyAttribute] = []
 
             # Process module properties
-            for prop_name, property_value in properties.items():
+            for prop_name, (prop_dtype, _) in module_property_signals(
+                properties
+            ).items():
 
                 if prop_name in IGNORED_PROPS:
                     continue
 
-                type_param = get_type_prop(property_value)
+                type_param = get_type_param(prop_dtype)
 
                 module_properties.append(
                     PropertyAttribute(

@@ -117,6 +117,7 @@ Mod(
     "frappy_modules.ophyd_secop_test_modules.Test_Enum",
     "test module for enum codegen testing",
     group="test",
+    meaning=("flowrate", 20),
     value=1,
     gas_type=Param(
         description="gaslist of MFC",

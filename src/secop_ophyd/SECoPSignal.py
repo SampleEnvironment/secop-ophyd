@@ -42,6 +42,7 @@ from ophyd_async.core._command import CommandConnector, MockCommandBackend
 from ophyd_async.core._soft_signal_backend import make_converter
 
 from secop_ophyd.AsyncFrappyClient import AsyncSecopClient
+from secop_ophyd.propertykeys import MEANING
 from secop_ophyd.util import (
     MAX_DEPTH,
     Path,
@@ -258,6 +259,55 @@ def property_dtype_and_value(prop_val: Any) -> tuple[DataType, Any]:
     if _is_composite_dtype(datatype):
         return StringType(), json.dumps(prop_val)
     return datatype, prop_val
+
+
+# members of the predefined module property 'meaning' (SECoP 2.0: a struct
+# whose members are all optional)
+MEANING_MEMBERS: dict[str, DataType] = {
+    "function": StringType(),
+    "importance": IntRange(0, 50),
+    "belongs_to": StringType(),
+    "link": StringType(),
+    "key": StringType(),
+}
+
+
+def _meaning_members(value: Any) -> dict[str, Any] | None:
+    """Members of a 'meaning' module property, or None if it is malformed.
+
+    SECoP 1.x sends a ``(function, importance)`` tuple, SECoP 2.0 a struct."""
+    if isinstance(value, (list, tuple)) and len(value) == 2:
+        value = {"function": value[0], "importance": value[1]}
+    if (
+        not isinstance(value, dict)
+        or not value
+        or not set(value) <= MEANING_MEMBERS.keys()
+    ):
+        return None
+    try:
+        return {key: MEANING_MEMBERS[key](member) for key, member in value.items()}
+    except Exception:
+        return None
+
+
+def module_property_signals(
+    properties: dict[str, Any],
+) -> dict[str, tuple[DataType, Any]]:
+    """Signal name -> (datatype, value) for the properties of a module.
+
+    A well-formed 'meaning' becomes one typed signal per member it has
+    (``meaning_function``, ``meaning_importance``, ...). Every other property,
+    and a malformed 'meaning', is one signal as given by
+    `property_dtype_and_value`."""
+    signals: dict[str, tuple[DataType, Any]] = {}
+    for name, value in properties.items():
+        members = _meaning_members(value) if name == MEANING else None
+        if members is None:
+            signals[name] = property_dtype_and_value(value)
+            continue
+        for key, member in members.items():
+            signals[f"{name}_{key}"] = (MEANING_MEMBERS[key], member)
+    return signals
 
 
 class SECoPCommandBackend(CommandBackend[Any, Any]):
@@ -677,16 +727,19 @@ class SECoPBackend(SignalBackend[SignalDatatypeT]):
 
     async def _init_property(self):
         """Initialize as a property signal."""
+        assert self._attribute_name is not None
 
         if self._module_name:
             module_desc = self._secclient.modules[self._module_name]
             self._property_dict = module_desc["properties"]
+            self.SECoPdtype_obj, self._prop_value = module_property_signals(
+                self._property_dict
+            )[self._attribute_name]
         else:
             self._property_dict = self._secclient.properties
-
-        self.SECoPdtype_obj, self._prop_value = property_dtype_and_value(
-            self._property_dict[self._attribute_name]
-        )
+            self.SECoPdtype_obj, self._prop_value = property_dtype_and_value(
+                self._property_dict[self._attribute_name]
+            )
         self.SECoP_type_info = SECoPdtype(self.SECoPdtype_obj)
 
         if self.SECoP_type_info.max_depth > MAX_DEPTH:

@@ -17,7 +17,7 @@ from secop_ophyd.SECoPDevices import (
     SECoPNodeDevice,
     SECoPReadableDevice,
 )
-from secop_ophyd.SECoPSignal import property_dtype_and_value
+from secop_ophyd.SECoPSignal import module_property_signals, property_dtype_and_value
 from secop_ophyd.util import SECoPdtype
 
 
@@ -187,3 +187,53 @@ def test_bool_property():
     datatype, value = property_dtype_and_value(True)
     assert SECoPdtype(datatype).np_datatype is bool
     assert value is True
+
+
+@pytest.mark.parametrize(
+    "meaning, expected",
+    [
+        # SECoP 1.x: (function, importance)
+        (["temperature", 10], {"function": "temperature", "importance": 10}),
+        # SECoP 2.0: a struct whose members are all optional
+        (
+            {"function": "temperature_regulation", "importance": 20, "link": "x"},
+            {"function": "temperature_regulation", "importance": 20, "link": "x"},
+        ),
+        ({"key": "synthesis temperature", "link": "x"}, None),
+    ],
+)
+def test_meaning_property_signals(meaning, expected):
+    signals = module_property_signals({"meaning": meaning, "group": "g"})
+    expected = expected or meaning
+    assert {name: value for name, (_, value) in signals.items()} == {
+        "group": "g",
+        **{f"meaning_{key}": value for key, value in expected.items()},
+    }
+    if "meaning_importance" in signals:
+        assert SECoPdtype(signals["meaning_importance"][0]).np_datatype is int
+
+
+@pytest.mark.parametrize(
+    "meaning",
+    [
+        {"function": "temperature", "colour": "red"},  # unknown member
+        {"function": "temperature", "importance": "high"},  # wrong type
+        ["temperature", 10, 3],
+        {},
+    ],
+)
+def test_malformed_meaning_is_json_string(meaning):
+    signals = module_property_signals({"meaning": meaning})
+    datatype, value = signals["meaning"]
+    assert isinstance(datatype, StringType)
+    assert json.loads(value) == meaning
+
+
+async def test_meaning_signals(cryo_sim):
+    node = SECoPNodeDevice(sec_node_uri=cryo_sim.uri, name="node")
+    await node.connect()
+    config = await node.cryo.read_configuration()
+    assert config["node-cryo-meaning_function"]["value"] == "temperature_regulation"
+    assert config["node-cryo-meaning_importance"]["value"] == 10
+    describe = await node.cryo.describe_configuration()
+    assert describe["node-cryo-meaning_importance"]["dtype"] == "integer"
