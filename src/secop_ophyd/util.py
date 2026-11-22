@@ -554,12 +554,13 @@ class ArrayNP(DtypeNP):
                 self.shape,
             )
         else:
-            if value == []:
-                member_np = self.members.make_concrete_numpy_dtype(None)
-                val_shape = [0]
-            elif value is None:
+            if value is None:
                 member_np = self.members.make_concrete_numpy_dtype(None)
                 val_shape = []
+            elif len(value) == 0:
+                # frappy delivers arrays as tuples, so compare by length
+                member_np = self.members.make_concrete_numpy_dtype(None)
+                val_shape = [0]
             else:
                 member_np = self.members.make_concrete_numpy_dtype(value[0])
                 val_shape = [len(value)]

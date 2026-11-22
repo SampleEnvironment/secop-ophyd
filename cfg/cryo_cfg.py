@@ -28,6 +28,7 @@ Mod(
     "A simulated cc cryostat with heat-load, specific heat for the sample and a "
     "temperature dependent heat-link between sample and regulation.",
     group="very important/stuff",
+    meaning=("temperature_regulation", 10),
     jitter=0.1,
     T_start=10.0,
     target=10.0,
