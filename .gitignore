@@ -16,3 +16,8 @@ CLAUDE.md
 
 # Generated test code
 tests/testgen/
+
+# coverage data
+.coverage
+.coverage.*
+coverage.xml
