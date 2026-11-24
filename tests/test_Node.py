@@ -175,3 +175,14 @@ async def test_node_reconn(fresh_cryo_sim):
             await asyncio.sleep(0.05)
 
     await asyncio.wait_for(wait_for_new_firmware_reading(), timeout=10)
+
+
+async def test_signal_locate(cryo_sim, cryo_node_no_re: SECoPNodeDevice):
+    # SignalRW.locate() reads the backend's location; both fields must hold
+    # the parameter's current value
+    target = cryo_node_no_re.cryo.target
+    value = await target.get_value()
+
+    location = await target.locate()
+
+    assert location == {"setpoint": value, "readback": value}

@@ -27,7 +27,11 @@ async def test_annotated_command_declaration(nested_struct_sim):
 
     assert isinstance(dev.test_cmd, Command)
 
-    status = dev.test_cmd.execute(name="test_name", id=900, sort=False)
+    # a struct argument is passed as keyword members at runtime, which the
+    # Command[[dict[str, Any]], int] annotation cannot express
+    status = dev.test_cmd.execute(  # type: ignore[call-arg]
+        name="test_name", id=900, sort=False
+    )
 
     await status
 
