@@ -869,12 +869,9 @@ class SECoPBackend(SignalBackend[SignalDatatypeT]):
         dataset: Reading = await self.get_reading()
         return dataset["value"]  # type: ignore
 
-    async def get_setpoint(self) -> SignalDatatypeT:
-        return await self.get_value()
-
     async def get_location(self) -> Location[SignalDatatypeT]:
-        # a SECoP parameter has no separate setpoint (get_setpoint() is its
-        # value too), so one read gives both fields
+        # reads and writes go to the same SECoP parameter (like an EPICS
+        # signal whose read and write PV are the same), so one read gives both
         value = await self.get_value()
         return Location(setpoint=value, readback=value)
 

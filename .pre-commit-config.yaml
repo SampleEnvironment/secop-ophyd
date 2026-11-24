@@ -32,16 +32,17 @@ repos:
     hooks:
       - id: nbstripout
 
-  # runs in the project environment so mypy sees the real types of
-  # ophyd-async, frappy, numpy etc. instead of treating them as Any
+  # runs in the project environment (needs uv) so mypy sees the real types
+  # of ophyd-async, bluesky, numpy etc.; checks all packages on every run so
+  # a change in one file can't hide the errors it causes in another
   - repo: local
     hooks:
       - id: mypy
         name: mypy (project env)
-        entry: uv run --locked mypy --config-file=.mypy.ini
+        entry: uv run --locked mypy --config-file=.mypy.ini src tests frappy_modules
         language: system
         types: [python]
-        exclude: ^(cfg/|docs/)
+        pass_filenames: false
         require_serial: true
 
   - repo: https://github.com/rhysd/actionlint
