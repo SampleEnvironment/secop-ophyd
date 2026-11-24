@@ -23,3 +23,5 @@ uv run pre-commit install        # run the checks on every commit
 ```
 
 The pre-commit mypy hook runs through `uv run`, so uv must be on your `PATH`.
+`uv run` also syncs `.venv` to `uv.lock`; to keep a locally installed
+development version of a dependency, commit with `UV_NO_SYNC=1 git commit`.
