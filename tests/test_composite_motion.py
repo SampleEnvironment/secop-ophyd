@@ -234,28 +234,42 @@ async def test_move_timeout(struct_mover: SECoPCompositeMoveableDevice):
     await struct_mover.speed.set(1)
     x, y = await _xy(struct_mover)
 
-    with pytest.raises(asyncio.TimeoutError):
+    # the message names the status signal and its last value
+    with pytest.raises(asyncio.TimeoutError, match="status_0"):
         await struct_mover.set({"x": x + 100, "y": y, "mode": "strict"}, timeout=0.2)
 
 
-async def test_move_asks_the_node_for_the_status(
-    struct_mover: SECoPCompositeMoveableDevice, monkeypatch
+@pytest.mark.parametrize("module", ["struct_mover", "mover"])
+async def test_move_does_not_end_on_a_stale_status(
+    motion_node_no_re: SECoPNodeDevice, monkeypatch, module
 ):
-    """The status cached before the target write may be the pre-move state,
-    so a move must fetch it from the node before waiting."""
-    client = struct_mover._client
-    calls: list[tuple[str, bool]] = []
-    get_parameter = client.get_parameter
+    """A node may send its BUSY update after replying to the target write. A
+    move must then not end on the pre-move IDLE status still in the cache."""
+    mover = getattr(motion_node_no_re, module)
+    await mover.speed.set(SPEED)
+    client = mover._client
+    set_parameter = client.set_parameter
 
-    async def recording_get_parameter(module, parameter, trycache=False):
-        calls.append((parameter, trycache))
-        return await get_parameter(module, parameter, trycache=trycache)
+    async def set_parameter_then_stale_status(module, parameter, value):
+        stale = client.cache[(module, "status")]
+        result = await set_parameter(module, parameter, value)
+        if parameter == "target":
+            client.cache[(module, "status")] = stale
+        return result
 
-    monkeypatch.setattr(client, "get_parameter", recording_get_parameter)
-    x, y = await _xy(struct_mover)
-    await struct_mover.set({"x": x + 1, "y": y, "mode": "strict"})
+    monkeypatch.setattr(client, "set_parameter", set_parameter_then_stale_status)
 
-    assert ("status", False) in calls
+    distance = 4.0
+    if module == "struct_mover":
+        x, y = await _xy(mover)
+        target: object = {"x": x + distance, "y": y, "mode": "strict"}
+    else:
+        target = await mover.value.get_value(cached=False) + distance
+
+    before = time.monotonic()
+    await mover.set(target)
+    assert time.monotonic() - before >= 0.8 * distance / SPEED
+    assert IDLE <= await _status_code(mover) < BUSY
 
 
 async def test_timeout_covers_writing_the_target(
@@ -268,7 +282,7 @@ async def test_timeout_covers_writing_the_target(
     x, y = await _xy(struct_mover)
 
     before = time.monotonic()
-    with pytest.raises(asyncio.TimeoutError):
+    with pytest.raises(asyncio.TimeoutError, match="writing the target"):
         await struct_mover.set({"x": x + 1, "y": y, "mode": "strict"}, timeout=0.2)
     assert time.monotonic() - before < 1
 
@@ -391,6 +405,15 @@ async def test_wrong_drivable_class_is_rejected(motion_sim):
     )
     with pytest.raises(TypeError, match="use SECoPMoveableDevice"):
         await composite.connect()
+
+
+async def test_composite_mover_needs_a_stop_command(motion_sim):
+    # 'switch' is a Writable with a struct target: it cannot be stopped
+    mover: SECoPCompositeMoveableDevice = SECoPCompositeMoveableDevice(
+        f"{motion_sim.uri}:switch"
+    )
+    with pytest.raises(TypeError, match="no 'stop' command"):
+        await mover.connect()
 
 
 async def test_directly_instantiated_composite_mover(motion_sim):

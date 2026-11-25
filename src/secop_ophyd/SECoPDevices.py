@@ -402,7 +402,12 @@ class SECoPDeviceConnector(DeviceConnector):
         # Fill Parmeters
         parameter_dict = self.client.modules[self.module]["parameters"]
 
-        _check_drivable_class(device, self.module, parameter_dict)
+        _check_drivable_class(
+            device,
+            self.module,
+            parameter_dict,
+            self.client.modules[self.module]["commands"],
+        )
 
         # a struct/tuple target is only changed through set()
         set_only_target = isinstance(device, SECoPWritableDevice) and (
@@ -1175,6 +1180,11 @@ class SECoPTriggerableDevice(SECoPReadableDevice, Stoppable):
         await self._client.exec_command(self._module, "stop")
 
 
+def _remaining(deadline: float | None) -> float | None:
+    """Seconds left until ``deadline`` (a ``time.monotonic()`` value)."""
+    return None if deadline is None else max(0.0, deadline - ttime.monotonic())
+
+
 async def _wait_for_move(
     status: SignalR,
     module: str,
@@ -1192,6 +1202,7 @@ async def _wait_for_move(
 
     ``secclient`` is None in mock mode, where there is no SEC node to ask.
     """
+    deadline = None if timeout is None else ttime.monotonic() + timeout
 
     def _left_busy(stat_name) -> bool:
         stat_code = _status_code(status, stat_name)
@@ -1201,9 +1212,11 @@ async def _wait_for_move(
     # cached value: the node may send the BUSY update after its reply to the
     # target write. The reply updates the cache that 'status' reads from.
     if secclient is not None:
-        await secclient.get_parameter(module, "status", trycache=False)
+        async with asyncio.timeout(timeout):
+            await secclient.get_parameter(module, "status", trycache=False)
 
-    await wait_for_value(status, _left_busy, timeout=timeout)
+    # wait_for_value's own timeout names the signal and its last value
+    await wait_for_value(status, _left_busy, timeout=_remaining(deadline))
 
     stat_code = _status_code(status, await status.get_value())
     if stat_code >= ERROR or stat_code < IDLE:
@@ -1420,7 +1433,9 @@ class SECoPWritableDevice(SECoPWritableBase, Locatable[T], Checkable[T], Generic
 
     ``set()`` writes 'target' and waits until the module is not BUSY. For a
     module whose value follows the target at once that is immediately; a
-    Writable that needs time to reach its target reports BUSY meanwhile.
+    Writable that needs time to reach its target reports BUSY meanwhile. The
+    module must report BUSY by the time it answers the target write, or
+    ``set()`` ends at once: SECoP has no other sign that a move has started.
     ``locate()`` returns the setpoint ('target') and readback ('value').
 
     'target' and 'value' may be of any SECoP datatype. For a struct or tuple,
@@ -1486,15 +1501,30 @@ class SECoPWritableDevice(SECoPWritableBase, Locatable[T], Checkable[T], Generic
 
         self._logger.info(f"Moving {self._module} to {value}")
         # the timeout covers writing the target as well as waiting
-        async with asyncio.timeout(timeout):
-            await self._client.set_parameter(self._module, "target", secop_value)
-            await _wait_for_move(
-                self.status_0, self._module, self._logger, value, None, self._client
-            )
+        deadline = None if timeout is None else ttime.monotonic() + timeout
+        try:
+            async with asyncio.timeout(timeout):
+                await self._client.set_parameter(self._module, "target", secop_value)
+        except TimeoutError as exc:
+            raise TimeoutError(
+                f"{self.name}: writing the target {value!r} took longer than "
+                f"{timeout} s"
+            ) from exc
+        await _wait_for_move(
+            self.status_0,
+            self._module,
+            self._logger,
+            value,
+            _remaining(deadline),
+            self._client,
+        )
 
     def _mock_move(self, value: Any) -> None:
         """Arrive instantly: set the mocked 'target' and 'value' Signals to
         ``value``, as far as they have the same form as 'target'."""
+        if isinstance(value, np.ndarray) and value.ndim == 1:
+            # accepted as a tuple target in real mode too
+            value = value.tolist()
         composite_target = not isinstance(getattr(self, "target", None), SignalR)
         for param in ("target", "value"):
             signal = getattr(self, param, None)
@@ -1607,7 +1637,7 @@ class SECoPCompositeMoveableDevice(
             self._logger.info(f"Stopping {self._module}")
             try:
                 await self._client.exec_command(self._module, "stop")
-            except BaseException:
+            except Exception:
                 # not stopped: a running set() ends as it would have
                 self._stop_success = None
                 raise
@@ -1627,11 +1657,21 @@ def _composite_target_params(parameters: Mapping[str, Any]) -> list[str]:
 
 
 def _check_drivable_class(
-    device: Device, module: str, parameters: Mapping[str, Any]
+    device: Device,
+    module: str,
+    parameters: Mapping[str, Any],
+    commands: Mapping[str, Any],
 ) -> None:
     """A Drivable's device class depends on the datatypes of 'target' and
     'value', which a directly instantiated device cannot know in advance."""
     composite = _composite_target_params(parameters)
+
+    if isinstance(device, SECoPCompositeMoveableDevice) and "stop" not in commands:
+        raise TypeError(
+            f"Module '{module}' has no 'stop' command, which "
+            f"{SECoPCompositeMoveableDevice.__name__} needs: use "
+            f"{SECoPWritableDevice.__name__} for this module"
+        )
 
     if isinstance(device, SECoPMoveableDevice) and composite:
         raise TypeError(

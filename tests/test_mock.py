@@ -173,6 +173,10 @@ async def test_mock_writable_with_target_limits():
     assert await pair.locate() == {"setpoint": (1.0, 2.0), "readback": (1.0, 2.0)}
     assert await pair.target_limits_0.get_value() == 0.0
 
+    # a numpy array is a tuple target in mock mode as well
+    await pair.set(np.array([3.0, 4.0]))  # type: ignore[arg-type]  # works at runtime
+    assert (await pair.locate())["setpoint"] == (3.0, 4.0)
+
     # an atomic array target given as a list
     array = Array(f"{UNREACHABLE}:array", name="array")
     await asyncio.wait_for(array.connect(mock=True), 10)
