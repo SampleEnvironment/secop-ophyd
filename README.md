@@ -11,3 +11,17 @@
 SECoP-Ophyd acts as a bridge between SECoP-enabled hardware and Bluesky's ophyd layer. It uses [Frappy](https://github.com/SampleEnvironment/frappy) to communicate with SECoP nodes over TCP, automatically generating [ophyd-async](https://blueskyproject.io/ophyd-async/main/index.html) device objects from the node's descriptive data. These devices can then be used in [Bluesky plans](https://blueskyproject.io/bluesky/main/tutorial.html#the-run-engine-and-plans) just like any other ophyd device, enabling seamless integration with EPICS, Tango, and other control system backends.
 
 For more information, see the [full documentation](https://sampleenvironment.github.io/secop-ophyd/).
+
+## Development
+
+The project is managed with [uv](https://docs.astral.sh/uv/):
+
+```bash
+uv sync                          # create the environment
+uv run pytest                    # run the tests
+uv run pre-commit install        # run the checks on every commit
+```
+
+The pre-commit mypy hook runs through `uv run`, so uv must be on your `PATH`.
+`uv run` also syncs `.venv` to `uv.lock`; to keep a locally installed
+development version of a dependency, commit with `UV_NO_SYNC=1 git commit`.

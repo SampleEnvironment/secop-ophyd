@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from enum import Enum
 from functools import cached_property
 from logging import Logger
-from typing import Any, Dict
+from typing import Any, Dict, cast
 
 import bluesky.plan_stubs as bps
 from bluesky.protocols import (
@@ -178,7 +178,8 @@ class ParameterType:
             return
 
         backend.attribute_type = AttributeType.PARAMETER
-        backend._secclient = parent._client
+        # annotations only appear on SECoPDevice subclasses
+        backend._secclient = cast("SECoPDevice", parent)._client
 
 
 class ParameterMemberType:
@@ -203,7 +204,8 @@ class ParameterMemberType:
             return
 
         backend.attribute_type = AttributeType.MEMBER
-        backend._secclient = parent._client
+        # annotations only appear on SECoPDevice subclasses
+        backend._secclient = cast("SECoPDevice", parent)._client
 
 
 class PropertyType:
@@ -223,7 +225,8 @@ class PropertyType:
             return
 
         backend.attribute_type = AttributeType.PROPERTY
-        backend._secclient = parent._client
+        # annotations only appear on SECoPDevice subclasses
+        backend._secclient = cast("SECoPDevice", parent)._client
 
 
 class SECoPDeviceConnector(DeviceConnector):
@@ -291,7 +294,7 @@ class SECoPDeviceConnector(DeviceConnector):
 
         self.filler = DeviceFiller(
             device=device,
-            signal_backend_factory=SECoPBackend,
+            signal_backend_factory=SECoPBackend[Any],
             device_connector_factory=lambda: SECoPDeviceConnector(
                 self.sri, self._auto_fill_signals, self.loglevel, self.logdir
             ),
@@ -624,6 +627,7 @@ class SECoPDeviceConnector(DeviceConnector):
 class SECoPDevice(StandardReadable):
 
     _clients: Dict[str, AsyncSecopClient] = {}
+    _connector: SECoPDeviceConnector
 
     _node_id: str
     _sri: str

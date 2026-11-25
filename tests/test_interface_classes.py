@@ -51,7 +51,8 @@ async def test_interface_class_mapping(motion_node_no_re: SECoPNodeDevice):
 async def test_triggerable_go_wait_for_idle(detector: SECoPTriggerableDevice):
     count = await detector.value.get_value(cached=False)
 
-    await detector.go.execute(wait_for_idle=True)
+    # wait_for_idle is added to the signature at connect time
+    await detector.go.execute(wait_for_idle=True)  # type: ignore[call-arg]
 
     assert await detector.value.get_value(cached=False) == count + 1
     assert await _status(detector) == (IDLE, "measurement done")
@@ -73,7 +74,10 @@ async def test_triggerable_go_trigger(detector: SECoPTriggerableDevice):
 async def test_triggerable_failed_measurement(detector: SECoPTriggerableDevice):
     await detector.fail.set(True)
 
-    await asyncio.wait_for(detector.go.execute(wait_for_idle=True), timeout=5)
+    await asyncio.wait_for(
+        detector.go.execute(wait_for_idle=True),  # type: ignore[call-arg]
+        timeout=5,
+    )
 
     assert (await _status(detector))[0] >= ERROR
     assert detector._success is False

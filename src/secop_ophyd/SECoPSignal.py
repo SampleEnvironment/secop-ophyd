@@ -6,7 +6,7 @@ from enum import Enum
 from typing import Any, cast, get_origin
 
 import numpy as np
-from bluesky.protocols import DataKey, Reading
+from bluesky.protocols import DataKey, Location, Reading
 from frappy.client import CacheItem
 from frappy.datatypes import (
     ArrayOf,
@@ -169,6 +169,9 @@ class _UnconvertedMockCommandBackend(MockCommandBackend):
     argument types of SECoP struct, array and tuple commands. This variant
     passes arguments straight to the mock instead."""
 
+    # always concrete: __init__ falls back to NO_ARG_VOID_SIGNATURE
+    signature: inspect.Signature
+
     def __init__(self, initial_backend: CommandBackend, mock: LazyMock):
         self._initial_backend = initial_backend
         self._mock = mock
@@ -322,6 +325,9 @@ class SECoPCommandBackend(CommandBackend[Any, Any]):
     then bound to a concrete SECoP command via `init_command_from_introspection`
     once the SEC node has been introspected.
     """
+
+    # always concrete: set in __init__ and by init_command_from_introspection()
+    signature: inspect.Signature
 
     def __init__(self, signature: inspect.Signature | None = None) -> None:
         """Initialize SECoPCommandBackend (optionally with a signature derived
@@ -863,8 +869,11 @@ class SECoPBackend(SignalBackend[SignalDatatypeT]):
         dataset: Reading = await self.get_reading()
         return dataset["value"]  # type: ignore
 
-    async def get_setpoint(self) -> SignalDatatypeT:
-        return await self.get_value()
+    async def get_location(self) -> Location[SignalDatatypeT]:
+        # reads and writes go to the same SECoP parameter (like an EPICS
+        # signal whose read and write PV are the same), so one read gives both
+        value = await self.get_value()
+        return Location(setpoint=value, readback=value)
 
     def set_callback(self, callback: Callback[Reading[SignalDatatypeT]] | None) -> None:
         if self.attribute_type == AttributeType.PROPERTY:
@@ -875,35 +884,41 @@ class SECoPBackend(SignalBackend[SignalDatatypeT]):
             # members are views onto their parent parameter: subscribe to the
             # parent and extract this member's value from every update
             path = (self._module_name, self._parent_param)
+        else:
+            path = self.get_path_tuple()
 
-            # must be named exactly 'updateItem': frappy's
-            # ProxyClient.register_callback() derives the callback kind from
-            # cbfunc.__name__ and validates it against a fixed whitelist
-            # (CALLBACK_NAMES) -- any other name is rejected with a TypeError
-            def updateItem(module, parameter, entry: CacheItem):  # noqa: N802
+        if callback is None:
+            if self._update_callback is not None:
+                self._secclient.unregister_callback(path, self._update_callback)
+                self._update_callback = None
+            return
+
+        # must be named exactly 'updateItem': frappy's
+        # ProxyClient.register_callback() derives the callback kind from
+        # cbfunc.__name__ and validates it against a fixed whitelist
+        # (CALLBACK_NAMES) -- any other name is rejected with a TypeError
+        if self.attribute_type == AttributeType.MEMBER:
+
+            def updateItem(  # noqa: N802
+                module: str, parameter: str, entry: CacheItem
+            ) -> None:
                 member_val = self._extract_member(entry.value)
                 reading: Reading = {
                     "value": self._convert_member(member_val),
                     "timestamp": entry.timestamp,
                 }
-                callback(reading=reading)  # type: ignore[misc]
+                callback(reading)
 
         else:
-            path = self.get_path_tuple()
 
-            def updateItem(  # type: ignore[misc]  # noqa: N802
-                module, parameter, entry: CacheItem
-            ):
+            def updateItem(  # noqa: N802
+                module: str, parameter: str, entry: CacheItem
+            ) -> None:
                 data = SECoPReading(secop_dt=self.SECoP_type_info, entry=entry)
-                callback(reading=data.get_reading())  # type: ignore[misc]
+                callback(data.get_reading())
 
-        if callback is not None:
-            self._update_callback = updateItem
-            self._secclient.register_callback(path, updateItem)
-        else:
-            if self._update_callback is not None:
-                self._secclient.unregister_callback(path, self._update_callback)
-                self._update_callback = None
+        self._update_callback = updateItem
+        self._secclient.register_callback(path, updateItem)
 
     def _get_param_desc(self) -> dict:
         return deep_get(

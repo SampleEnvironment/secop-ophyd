@@ -1,3 +1,4 @@
+# mypy: disable-error-code="attr-defined"
 """Simple test to verify GenNodeCode refactoring works."""
 
 import importlib

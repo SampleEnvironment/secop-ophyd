@@ -198,7 +198,9 @@ async def test_mandatory_composite_incompatible_raises(nested_struct_sim):
     # ophy_struct is a Drivable whose 'value'/'target'/'status' are all
     # depth-1 (compatible); nested_struct (depth 2, unsupported) is not
     # mandatory there, so connecting normally must succeed.
-    moveable = SECoPMoveableDevice(f"{nested_struct_sim.uri}:ophy_struct")
+    moveable: SECoPMoveableDevice = SECoPMoveableDevice(
+        f"{nested_struct_sim.uri}:ophy_struct"
+    )
     with pytest.warns(UserWarning, match="nested_struct"):
         await moveable.connect()
 
