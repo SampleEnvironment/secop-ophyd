@@ -4,12 +4,17 @@ SEC node: the mocked devices point at a port nothing listens on."""
 
 import asyncio
 from pathlib import Path
+from typing import Annotated
 
+import numpy as np
 import pytest
-from ophyd_async.core import get_mock, get_mock_put, set_mock_value
+from ophyd_async.core import SignalR, SignalRW, get_mock, get_mock_put, set_mock_value
 
 from secop_ophyd.AsyncFrappyClient import AsyncSecopClient
 from secop_ophyd.GenNodeCode import GenNodeCode
+from secop_ophyd.SECoPDevices import ParameterMemberType as ParamMemberT
+from secop_ophyd.SECoPDevices import ParameterType as ParamT
+from secop_ophyd.SECoPDevices import SECoPWritableDevice
 from tests.util import import_generated
 
 UNREACHABLE = "localhost:1"
@@ -106,6 +111,80 @@ async def test_mock_struct_parameters_and_commands(nested_struct_sim, tmp_path, 
         await struct.test_cmd.execute({"name": "x", "id": 1, "sort": True})
 
 
+async def test_mock_composite_movable(motion_sim, tmp_path, logger):
+    node = await _connect_mock(await _generate(motion_sim, tmp_path, logger), "motion")
+
+    struct_mover = node.struct_mover
+    target = {"x": 1.5, "y": -2.0, "mode": "strict"}
+
+    # mocked modules start IDLE, a move arrives instantly
+    await asyncio.wait_for(struct_mover.set(target), 5)
+    assert await struct_mover.locate() == {"setpoint": target, "readback": target}
+
+    reading = await struct_mover.read()
+    assert reading["motion-struct_mover-value_x"]["value"] == 1.5
+    assert reading["motion-struct_mover-target_y"]["value"] == -2.0
+
+    tuple_mover = node.tuple_mover
+    await asyncio.wait_for(tuple_mover.set((3.0, 4.0)), 5)
+    assert await tuple_mover.locate() == {
+        "setpoint": (3.0, 4.0),
+        "readback": (3.0, 4.0),
+    }
+
+    # no SEC node to check the target against or to send 'stop' to
+    await struct_mover.check_value(target)
+    await struct_mover.stop()
+
+
+async def test_mock_writable_with_target_limits():
+    """Without a node description, member signals are told apart by their
+    annotation: tuple index 0 of 'target' vs member 0 of 'target_limits'."""
+
+    class Scalar(SECoPWritableDevice[float]):
+        target: Annotated[SignalRW[float], ParamT()]
+        value: Annotated[SignalR[float], ParamT()]
+        status_0: Annotated[SignalR[str], ParamMemberT("status", "0")]
+        target_limits_0: Annotated[SignalR[float], ParamMemberT("target_limits", "0")]
+        target_limits_1: Annotated[SignalR[float], ParamMemberT("target_limits", "1")]
+
+    class Pair(SECoPWritableDevice[tuple[float, float]]):
+        target_0: Annotated[SignalR[float], ParamMemberT("target", "0")]
+        target_1: Annotated[SignalR[float], ParamMemberT("target", "1")]
+        value_0: Annotated[SignalR[float], ParamMemberT("value", "0")]
+        value_1: Annotated[SignalR[float], ParamMemberT("value", "1")]
+        status_0: Annotated[SignalR[str], ParamMemberT("status", "0")]
+        target_limits_0: Annotated[SignalR[float], ParamMemberT("target_limits", "0")]
+        target_limits_1: Annotated[SignalR[float], ParamMemberT("target_limits", "1")]
+
+    class Array(SECoPWritableDevice[np.ndarray]):
+        target: Annotated[SignalRW[np.ndarray], ParamT()]
+        value: Annotated[SignalR[np.ndarray], ParamT()]
+        status_0: Annotated[SignalR[str], ParamMemberT("status", "0")]
+
+    scalar = Scalar(f"{UNREACHABLE}:scalar", name="scalar")
+    await asyncio.wait_for(scalar.connect(mock=True), 10)
+    await scalar.set(5.0)
+    assert await scalar.locate() == {"setpoint": 5.0, "readback": 5.0}
+
+    pair = Pair(f"{UNREACHABLE}:pair", name="pair")
+    await asyncio.wait_for(pair.connect(mock=True), 10)
+    await pair.set((1.0, 2.0))
+    assert await pair.locate() == {"setpoint": (1.0, 2.0), "readback": (1.0, 2.0)}
+    assert await pair.target_limits_0.get_value() == 0.0
+
+    # a numpy array is a tuple target in mock mode as well
+    await pair.set(np.array([3.0, 4.0]))  # type: ignore[arg-type]  # works at runtime
+    assert (await pair.locate())["setpoint"] == (3.0, 4.0)
+
+    # an atomic array target given as a list
+    array = Array(f"{UNREACHABLE}:array", name="array")
+    await asyncio.wait_for(array.connect(mock=True), 10)
+    await array.set([1.0, 2.0])  # type: ignore[arg-type]  # works at runtime
+    location = await array.locate()
+    assert list(location["setpoint"]) == list(location["readback"]) == [1.0, 2.0]
+
+
 async def test_mock_commands(motion_sim, tmp_path, logger):
     node = await _connect_mock(await _generate(motion_sim, tmp_path, logger), "motion")
 
@@ -122,6 +201,14 @@ async def test_mock_commands(motion_sim, tmp_path, logger):
         await asyncio.wait_for(module.wait_for_idle(), 5)
         assert await module.status_0.get_value() == "IDLE"
     await node.writer.target.set(1.0)
+
+    # a Writable is set like a Drivable, and arrives instantly
+    await asyncio.wait_for(node.writer.set(2.0), 5)
+    assert await node.writer.locate() == {"setpoint": 2.0, "readback": 2.0}
+
+    state = {"on": True, "level": 5.0}
+    await asyncio.wait_for(node.switch.set(state), 5)
+    assert await node.switch.locate() == {"setpoint": state, "readback": state}
     assert set(await node.read())
 
     await node.detector.stop()

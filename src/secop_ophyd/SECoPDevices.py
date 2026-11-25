@@ -4,22 +4,26 @@ import re
 import time as ttime
 import warnings
 from abc import abstractmethod
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
 from functools import cached_property
 from logging import Logger
-from typing import Any, Dict, cast
+from typing import Any, Dict, Generic, TypeVar, cast
 
 import bluesky.plan_stubs as bps
+import numpy as np
 from bluesky.protocols import (
+    Checkable,
+    Locatable,
     Location,
     Reading,
     Stoppable,
     Subscribable,
     Triggerable,
 )
-from frappy.datatypes import CommandType
+from frappy.datatypes import CommandType, DataType, StructOf, TupleOf
+from frappy.errors import SECoPError
 from ophyd_async.core import (
     DEFAULT_TIMEOUT,
     AsyncStatus,
@@ -66,6 +70,7 @@ from secop_ophyd.util import (
     SECoPdtype,
     classify_datatype,
     get_composite_members,
+    optional_struct_members,
 )
 
 # Predefined Status Codes
@@ -188,11 +193,25 @@ class ParameterMemberType:
     annotation-scanning doesn't mark it AttributeType.PARAMETER -- it must
     stay unset until SECoPDeviceConnector.connect_real() calls
     init_member_from_introspection(), which needs to see it as MEMBER (or
-    unset), not PARAMETER."""
+    unset), not PARAMETER.
+
+    ``parent`` and ``key`` name the parameter and the member (struct member
+    name, or tuple index as a string). Without a node description (mock mode)
+    they are the only way to tell e.g. the tuple index 0 of 'target' from the
+    member 0 of a parameter 'target_limits'; without them, the member is
+    found from its attribute name."""
+
+    def __init__(self, parent: str | None = None, key: str | None = None) -> None:
+        if (parent is None) != (key is None):
+            raise ValueError("give both 'parent' and 'key', or neither")
+        self.parent = parent
+        self.key = key
 
     def __repr__(self) -> str:
         """Return repr suitable for code generation in annotations."""
-        return "ParamMemberT()"
+        if self.parent is None:
+            return "ParamMemberT()"
+        return f"ParamMemberT({self.parent!r}, {self.key!r})"
 
     def __call__(self, parent: Device, child: Device):
         if not isinstance(child, Signal):
@@ -204,6 +223,10 @@ class ParameterMemberType:
             return
 
         backend.attribute_type = AttributeType.MEMBER
+        if self.parent is not None and self.key is not None:
+            # overwritten with the same values by init_member_from_introspection()
+            backend._parent_param = self.parent
+            backend._member_key = self.key
         # annotations only appear on SECoPDevice subclasses
         backend._secclient = cast("SECoPDevice", parent)._client
 
@@ -379,37 +402,17 @@ class SECoPDeviceConnector(DeviceConnector):
         # Fill Parmeters
         parameter_dict = self.client.modules[self.module]["parameters"]
 
-        # StandardMovable's readback machinery (set_name/subscribe_reading/
-        # locate) unconditionally requires movable_logic.readback to be a
-        # working SignalR -- including right now, before any other child
-        # of this module has been filled below (assigning any child
-        # triggers a set_name() cascade that resolves movable_logic
-        # immediately). When 'value' is composite it is fully decomposed
-        # into split value_* signals below (for a tiled-safe
-        # read()/describe() stream), with no bare 'value' attribute -- so
-        # for a Movable module we additionally build+connect a private,
-        # undecomposed 'value' SignalR purely to satisfy that internal
-        # plumbing. `object.__setattr__` is used to store it without
-        # going through Device's own __setattr__, which would otherwise
-        # treat any Signal-valued attribute as a tracked child (making it
-        # show up in device.children()/read()/describe() -- exactly what
-        # decomposing 'value' is meant to avoid).
-        if (
-            isinstance(device, SECoPMoveableDevice)
-            and "value" in parameter_dict
-            and classify_datatype(parameter_dict["value"]["datatype"])
-            is CompositeKind.DECOMPOSABLE
-        ):
-            value_datatype = get_type_param(parameter_dict["value"]["datatype"])
-            value_backend = SECoPBackend(None)  # type: SECoPBackend
-            value_backend.init_parameter_from_introspection(
-                datatype=value_datatype,  # type: ignore[arg-type]
-                path=self.module + ":value",
-                secclient=self.client,
-            )
-            value_readback = SignalR(value_backend)
-            await value_readback.connect(timeout=timeout)
-            object.__setattr__(device, "_composite_value_readback", value_readback)
+        _check_drivable_class(
+            device,
+            self.module,
+            parameter_dict,
+            self.client.modules[self.module]["commands"],
+        )
+
+        # a struct/tuple target is only changed through set()
+        set_only_target = isinstance(device, SECoPWritableDevice) and (
+            "target" in _composite_target_params(parameter_dict)
+        )
 
         # remove ignored signals
         parameters = [
@@ -429,7 +432,9 @@ class SECoPDeviceConnector(DeviceConnector):
 
         for param_name in parameters:
             raw_datatype = parameter_dict[param_name]["datatype"]
-            readonly = parameter_dict[param_name]["readonly"]
+            readonly = parameter_dict[param_name]["readonly"] or (
+                set_only_target and param_name == "target"
+            )
             kind = classify_datatype(raw_datatype)
 
             if kind is CompositeKind.DECOMPOSABLE:
@@ -534,8 +539,8 @@ class SECoPDeviceConnector(DeviceConnector):
         # Fill Commands
         command_dict = self.client.modules[self.module]["commands"]
 
-        # "stop" is skipped: SECoPMoveableDevice already implements
-        # Stoppable.stop() (a real bound method) via StandardMovable, so
+        # "stop" is skipped: the Drivable and Triggerable device classes
+        # already implement Stoppable.stop() (a real bound method), so
         # exposing a raw command device at the same bare name would
         # silently shadow it.
         commands = [
@@ -574,7 +579,9 @@ class SECoPDeviceConnector(DeviceConnector):
         for module_name in modules.keys():
             if self._auto_fill_signals or module_name in not_filled:
                 module_properties = modules[module_name]["properties"]
-                device_sub_class = class_from_interface(module_properties)
+                device_sub_class = class_from_interface(
+                    module_properties, modules[module_name]["parameters"]
+                )
 
                 self.filler.fill_child_device(module_name, device_sub_class)
 
@@ -792,11 +799,11 @@ class SECoPDevice(StandardReadable):
             hinted_uncached_signals, StandardReadableFormat.HINTED_UNCACHED_SIGNAL
         )
 
-    def _split_signals(self, parent_param: str) -> list[SignalR]:
-        """Return the split member Signals for a decomposed composite
-        parameter (empty list if `parent_param` is atomic, i.e. was not
-        decomposed)."""
-        result: list[SignalR] = []
+    def _split_members(self, parent_param: str) -> dict[str, SignalR]:
+        """Return the split member Signals of a decomposed composite parameter
+        by member key: the struct member name, or the tuple index as a string
+        (empty dict if `parent_param` is atomic, i.e. was not decomposed)."""
+        result: dict[str, SignalR] = {}
         for attr_name, child in self.children():
             if not isinstance(child, SignalR):
                 continue
@@ -806,14 +813,20 @@ class SECoPDevice(StandardReadable):
                 or backend.attribute_type != AttributeType.MEMBER
             ):
                 continue
-            # without a node description (mock mode) the parent is only
-            # known from the member's name
+            # without a node description (mock mode) the parent and the
+            # member key are only known from the member's name
             parent = getattr(backend, "_parent_param", None)
-            if parent == parent_param or (
-                parent is None and attr_name.startswith(f"{parent_param}_")
-            ):
-                result.append(child)
+            if parent == parent_param:
+                result[backend._member_key] = child
+            elif parent is None and attr_name.startswith(f"{parent_param}_"):
+                result[attr_name.removeprefix(f"{parent_param}_")] = child
         return result
+
+    def _split_signals(self, parent_param: str) -> list[SignalR]:
+        """Return the split member Signals for a decomposed composite
+        parameter (empty list if `parent_param` is atomic, i.e. was not
+        decomposed)."""
+        return list(self._split_members(parent_param).values())
 
     def _assign_hinted_format(
         self, param_name: str, signals: Sequence[SignalR]
@@ -956,17 +969,16 @@ class SECoPReadableMock(DeviceMock["SECoPReadableDevice"]):
 
 class SECoPMovableMock(InstantMovableMock):
     """Mock behaviour for SECoP Drivable modules: start IDLE, and move the
-    readback to the target instantly (atomic value/target only; struct/tuple
-    targets are not mocked yet)."""
+    readback to the target instantly."""
 
     async def connect(  # type: ignore[override]
         self, device: "SECoPMoveableDevice"
     ) -> None:
-        missing = [name for name in ("target", "status_0") if not hasattr(device, name)]
-        if not hasattr(device, "value") and not any(
-            name.startswith("value_") for name, _ in device.children()
-        ):
-            missing.append("value")
+        missing = [
+            name
+            for name in ("target", "value", "status_0")
+            if not hasattr(device, name)
+        ]
         if missing:
             raise AttributeError(
                 f"{device.name}: a Drivable connected in mock mode needs annotated "
@@ -974,8 +986,27 @@ class SECoPMovableMock(InstantMovableMock):
                 f"signals exist"
             )
         _set_mock_status_idle(device)
-        if device._has_atomic_setpoint_readback():
-            await super().connect(device)
+        await super().connect(device)
+
+
+class SECoPWritableMock(DeviceMock["SECoPWritableDevice"]):
+    """Mock behaviour for SECoP Writable modules, and for Drivable modules with
+    a struct/tuple 'value' or 'target': start IDLE. `SECoPWritableDevice.set()`
+    itself moves the mocked signals to the target instantly."""
+
+    async def connect(self, device: "SECoPWritableDevice") -> None:
+        missing = [
+            param for param in ("target", "value") if not device._param_signals(param)
+        ]
+        if not hasattr(device, "status_0"):
+            missing.append("status_0")
+        if missing:
+            raise AttributeError(
+                f"{device.name}: a {type(device).__name__} connected in mock mode "
+                f"needs annotated {missing}: without a SEC node description only "
+                f"annotated signals exist"
+            )
+        _set_mock_status_idle(device)
 
 
 class SECoPReadableDevice(SECoPDevice, Triggerable, Subscribable):
@@ -1084,6 +1115,12 @@ class SECoPReadableDevice(SECoPDevice, Triggerable, Subscribable):
     def subscribe_reading(self, function: Callback[dict[str, Reading]]) -> None:
         """Subscribe to updates in the reading. Only supported for an atomic
         (non-composite) 'value' parameter."""
+        if not hasattr(self, "value"):
+            raise NotImplementedError(
+                f"{self.name}: 'value' is a struct/tuple, split into the signals "
+                f"{[sig.name for sig in self._split_signals('value')]}; subscribe "
+                f"to those"
+            )
         self.value.subscribe_reading(function)
 
     # Backwards-compatible alias (bluesky < 1.16 named this ``subscribe``)
@@ -1091,6 +1128,12 @@ class SECoPReadableDevice(SECoPDevice, Triggerable, Subscribable):
 
     def clear_sub(self, function: Callback) -> None:
         """Remove a subscription."""
+        if not hasattr(self, "value"):
+            raise NotImplementedError(
+                f"{self.name}: 'value' is a struct/tuple, split into the signals "
+                f"{[sig.name for sig in self._split_signals('value')]}; "
+                f"unsubscribe from those"
+            )
         self.value.clear_sub(function=function)
 
 
@@ -1137,10 +1180,53 @@ class SECoPTriggerableDevice(SECoPReadableDevice, Stoppable):
         await self._client.exec_command(self._module, "stop")
 
 
-class SECoPWritableDevice(SECoPReadableDevice):
-    hinted_signals: list[str] = ["target", "value"]
+def _remaining(deadline: float | None) -> float | None:
+    """Seconds left until ``deadline`` (a ``time.monotonic()`` value)."""
+    return None if deadline is None else max(0.0, deadline - ttime.monotonic())
 
-    pass
+
+async def _wait_for_move(
+    status: SignalR,
+    module: str,
+    logger: Logger,
+    new_position: Any,
+    timeout: float | None,
+    secclient: AsyncSecopClient | None,
+) -> None:
+    """Wait until a move started by writing 'target' has finished: the module's
+    status has left BUSY. Raises if it ended in ERROR/DISABLED.
+
+    Start watching 'status' only *after* 'target' was written -- the resting
+    (pre-move) state is already "not busy", so watching from before the write
+    would match immediately instead of waiting for a real move.
+
+    ``secclient`` is None in mock mode, where there is no SEC node to ask.
+    """
+    deadline = None if timeout is None else ttime.monotonic() + timeout
+
+    def _left_busy(stat_name) -> bool:
+        stat_code = _status_code(status, stat_name)
+        return not (BUSY <= stat_code < ERROR)
+
+    # ask the SEC node for the status, so we don't wait on a stale, pre-move
+    # cached value: the node may send the BUSY update after its reply to the
+    # target write. The reply updates the cache that 'status' reads from.
+    if secclient is not None:
+        async with asyncio.timeout(timeout):
+            await secclient.get_parameter(module, "status", trycache=False)
+
+    # wait_for_value's own timeout names the signal and its last value
+    await wait_for_value(status, _left_busy, timeout=_remaining(deadline))
+
+    stat_code = _status_code(status, await status.get_value())
+    if stat_code >= ERROR or stat_code < IDLE:
+        logger.error(f"Module {module} --> ERROR/DISABLED")
+        raise RuntimeError(
+            f"Move of {module} to {new_position} failed: module "
+            "entered ERROR/DISABLED state"
+        )
+
+    logger.info(f"Reached target, module {module} --> IDLE")
 
 
 @dataclass
@@ -1168,48 +1254,57 @@ class SECoPMovableLogic(MovableLogic[Any]):
         await self.secclient.exec_command(self.module, "stop")
 
     async def move(self, new_position: Any, timeout: TimeoutCalculator) -> None:
-        def _left_busy(stat_name) -> bool:
-            stat_code = _status_code(self.status, stat_name)
-            return not (BUSY <= stat_code < ERROR)
-
         self.logger.info(f"Moving {self.module} to {new_position}")
 
-        # set 'target' first, *then* start watching 'status' -- the resting
-        # (pre-move) state is already "not busy", so watching from before the
-        # set would match immediately instead of waiting for a real move
         await self.setpoint.set(new_position)
 
-        # force a fresh read so we don't wait on a stale, pre-move cached value
-        await self.status.read(False)
-
-        await wait_for_value(self.status, _left_busy, timeout=timeout())
-
-        stat_code = _status_code(self.status, await self.status.get_value())
-        if stat_code >= ERROR or stat_code < IDLE:
-            self.logger.error(f"Module {self.module} --> ERROR/DISABLED")
-            raise RuntimeError(
-                f"Move of {self.module} to {new_position} failed: module "
-                "entered ERROR/DISABLED state"
-            )
-
-        self.logger.info(f"Reached target, module {self.module} --> IDLE")
+        await _wait_for_move(
+            self.status,
+            self.module,
+            self.logger,
+            new_position,
+            timeout(),
+            None if self.setpoint._mock is not None else self.secclient,
+        )
 
 
-class SECoPMoveableDevice(SECoPReadableDevice, StandardMovable[SignalDatatypeT]):
-    """
-    Standard movable SECoP device, corresponding to a SECoP module with the
-    interface class "Drivable"
-    """
+class SECoPWritableBase(SECoPReadableDevice):
+    """Common base of all device classes for SECoP modules with a 'target':
+    the interface classes "Writable" and "Drivable"."""
 
     hinted_signals: list[str] = ["target", "value"]
     mandatory_parameters: list[str] = SECoPReadableDevice.mandatory_parameters + [
         "target"
     ]
 
-    # set (via object.__setattr__, bypassing Device's child-tracking) in
-    # SECoPDeviceConnector.connect_real() when 'value' is composite; None
-    # (the atomic-value case, where movable_logic.readback is self.value)
-    _composite_value_readback: SignalR | None = None
+    def _param_signals(self, param: str) -> list[SignalR]:
+        """The readable Signal of an atomic parameter, or the split member
+        Signals of a decomposed struct/tuple parameter."""
+        signal = getattr(self, param, None)
+        if isinstance(signal, SignalR):
+            return [signal]
+        return self._split_signals(param)
+
+    async def _assign_interface_formats(self):
+        await super()._assign_interface_formats()
+
+        self._assign_hinted_format("target", self._param_signals("target"))
+
+
+class SECoPDrivableBase(SECoPWritableBase):
+    """Common base of the device classes for SECoP modules with the interface
+    class "Drivable": `SECoPMoveableDevice` and `SECoPCompositeMoveableDevice`.
+    Which of the two a module gets depends on the datatypes of its 'target'
+    and 'value' parameters, see `class_from_interface`."""
+
+
+class SECoPMoveableDevice(SECoPDrivableBase, StandardMovable[SignalDatatypeT]):
+    """
+    Standard movable SECoP device, corresponding to a SECoP module with the
+    interface class "Drivable" whose 'target' and 'value' are atomic (scalar
+    or array). A Drivable with a struct/tuple 'target' or 'value' is a
+    `SECoPCompositeMoveableDevice`.
+    """
 
     _mock_class: type[DeviceMock] = SECoPMovableMock
 
@@ -1236,56 +1331,18 @@ class SECoPMoveableDevice(SECoPReadableDevice, StandardMovable[SignalDatatypeT])
             sri=sri, name=name, connector=connector, loglevel=loglevel, logdir=logdir
         )
 
-    def _has_atomic_setpoint_readback(self) -> bool:
-        """True if both 'target' and 'value' are plain (non-composite)
-        parameters, i.e. self.target is a real SignalRW and self.value
-        exists -- the case StandardMovable's default locate()/movable_logic
-        usage was designed for. False if either was decomposed into split
-        member signals (self.target is then a write-only SignalW, and/or
-        self.value doesn't exist as a bare attribute)."""
-        return isinstance(self.target, SignalR) and hasattr(self, "value")
-
     @cached_property
     def movable_logic(self) -> MovableLogic:
         if self._module is None:
             raise RuntimeError(f"{self.name}: device is not bound to a SECoP module")
 
-        # atomic 'value': the real signal. composite 'value': the private,
-        # undecomposed readback SignalR pre-connected in connect_real() --
-        # StandardMovable itself (set_name/subscribe_reading/locate) requires
-        # movable_logic.readback to always be a working SignalR; see the
-        # comment at its construction site for why it isn't just self.value.
-        readback = (
-            self.value if hasattr(self, "value") else self._composite_value_readback
-        )
-
         return SECoPMovableLogic(
             setpoint=self.target,
-            readback=readback,  # type: ignore[arg-type]
+            readback=self.value,
             status=self.status_0,
             secclient=self._client,
             module=self._module,
             logger=self._logger,
-        )
-
-    async def locate(self) -> Location[Any]:
-        if self._has_atomic_setpoint_readback():
-            return await super().locate()
-
-        if self._module is None:
-            raise RuntimeError(f"{self.name}: device is not bound to a SECoP module")
-
-        # 'target'/'value' were decomposed into split member signals (no
-        # single Signal to .get_value() on) -- bypass Signals entirely and
-        # read the whole structured parameter straight from the SEC node,
-        # mirroring the direct-client-access pattern already used by
-        # trigger()/SECoPMovableLogic.stop()
-        setpoint_reading, readback_reading = await asyncio.gather(
-            self._client.get_parameter(self._module, "target", trycache=True),
-            self._client.get_parameter(self._module, "value", trycache=True),
-        )
-        return Location(
-            setpoint=setpoint_reading.value, readback=readback_reading.value
         )
 
     def set_name(self, name: str, *, child_name_separator: str | None = None) -> None:
@@ -1298,40 +1355,358 @@ class SECoPMoveableDevice(SECoPReadableDevice, StandardMovable[SignalDatatypeT])
         # a *sibling* module being filled into the parent node, well before
         # this device's own connect_real() has run at all. StandardMovable's
         # set_name() needs '_module' (set by set_module(), early in the
-        # parent node's connect_real()), 'target' (only created once this
-        # device's own connect_real() fills its signals), and a resolvable
-        # readback (either the atomic 'value' signal, or -- for composite
-        # 'value' -- the private _composite_value_readback connected at the
-        # very start of this device's own connect_real(), see there) and
-        # 'status_0' (the node may describe 'target' before 'status') to
-        # resolve movable_logic, so skip it and fall back to plain
-        # Device.set_name() until all of them are present; a later call does
-        # the real renaming.
-        readback_ready = (
-            hasattr(self, "value") or self._composite_value_readback is not None
-        )
-        if (
-            self._module is None
-            or not hasattr(self, "target")
-            or not hasattr(self, "status_0")
-            or not readback_ready
+        # parent node's connect_real()) and 'target', 'value' and 'status_0'
+        # (only created once this device's own connect_real() fills its
+        # signals, in the order the node describes them) to resolve
+        # movable_logic, so skip it and fall back to plain Device.set_name()
+        # until all of them are present; a later call does the real renaming.
+        if self._module is None or not all(
+            hasattr(self, signal) for signal in ("target", "value", "status_0")
         ):
             Device.set_name(self, name, child_name_separator=child_name_separator)
             return
         super().set_name(name, child_name_separator=child_name_separator)
 
-    async def _assign_interface_formats(self):
-        await super()._assign_interface_formats()
 
-        target_signals = (
-            [self.target]
-            if isinstance(self.target, SignalR)
-            else self._split_signals("target")
+def _secop_to_python(datatype: DataType, value: Any) -> Any:
+    """Convert a value as delivered by the SECoP client into the form the
+    Signals deliver it in. A struct becomes a dict and a tuple a tuple, with
+    each member converted like the value of its split member Signal."""
+    if isinstance(datatype, StructOf):
+        return {
+            key: _secop_to_python(member, value[key])
+            for key, member in datatype.members.items()
+            if key in value
+        }
+
+    if isinstance(datatype, TupleOf):
+        return tuple(
+            _secop_to_python(member, member_value)
+            for member, member_value in zip(datatype.members, value, strict=True)
         )
-        self._assign_hinted_format("target", target_signals)
+
+    secop_dtype = SECoPdtype(datatype)
+    secop_dtype.update_dtype(value)
+    return secop_dtype.secop2val(value)
 
 
-def class_from_interface(mod_properties: dict):
+def _python_to_secop(
+    datatype: DataType, value: Any, optional: Sequence[str] = ()
+) -> Any:
+    """Validate a value given to set() against the SECoP datatype and return
+    it in the form the SECoP client expects. ``optional`` are the struct
+    members that may be left out."""
+    if isinstance(datatype, StructOf):
+        if not isinstance(value, Mapping):
+            raise TypeError(
+                f"expected a mapping with the members {list(datatype.members)}"
+            )
+        # frappy's client-side StructOf accepts any member being left out, and
+        # drops members whose value is None
+        missing = [
+            key
+            for key in datatype.members
+            if value.get(key) is None and key not in optional
+        ]
+        if missing:
+            raise ValueError(f"missing struct members {missing}")
+        # validate(), not __call__(): only validate() checks the limits
+        return datatype.validate(dict(value))
+
+    if isinstance(datatype, TupleOf):
+        if isinstance(value, np.ndarray) and value.ndim == 1:
+            value = value.tolist()
+        if isinstance(value, (str, bytes, Mapping)) or not isinstance(value, Sequence):
+            raise TypeError(f"expected a sequence of {len(datatype.members)} members")
+        return datatype.validate(tuple(value))
+
+    return datatype.validate(value)
+
+
+T = TypeVar("T")
+
+
+class SECoPWritableDevice(SECoPWritableBase, Locatable[T], Checkable[T], Generic[T]):
+    """
+    Settable SECoP device, corresponding to a SECoP module with the interface
+    class "Writable": a module with a 'target' but without a 'stop' command.
+
+    ``set()`` writes 'target' and waits until the module is not BUSY. For a
+    module whose value follows the target at once that is immediately; a
+    Writable that needs time to reach its target reports BUSY meanwhile. The
+    module must report BUSY by the time it answers the target write, or
+    ``set()`` ends at once: SECoP has no other sign that a move has started.
+    ``locate()`` returns the setpoint ('target') and readback ('value').
+
+    'target' and 'value' may be of any SECoP datatype. For a struct or tuple,
+    the position is one value in ``set()`` and ``locate()``, but several data
+    keys in ``read()`` and ``describe()``, because an event can only hold
+    scalars and arrays:
+
+    * ``set()`` takes the whole target: a dict for a struct, a tuple for a
+      tuple. ``locate()`` returns setpoint and readback in the same form.
+    * ``read()`` has one key per member, from the read-only Signals
+      ``target_<member>`` and ``value_<member>`` (``_0``, ``_1``, ... for a
+      tuple). ``locate()["readback"]["x"]`` is the value of ``value_x``.
+
+    ``set()`` is the only way to change a struct/tuple target: there is no
+    writable 'target' Signal for it. An atomic 'target' is also a ``SignalRW``,
+    whose ``set()`` only writes the parameter, without waiting.
+
+    The type parameter is the type of the target, e.g. ``float``, or a
+    ``TypedDict`` in a generated device class.
+    """
+
+    _mock_class: type[DeviceMock] = SECoPWritableMock
+
+    def _description(self, param: str) -> dict[str, Any]:
+        if self._module is None:
+            raise RuntimeError(f"{self.name}: device is not bound to a SECoP module")
+        return self._client.modules[self._module]["parameters"][param]
+
+    def _datatype(self, param: str) -> DataType:
+        return self._description(param)["datatype"]
+
+    def _target_to_secop(self, value: T) -> Any:
+        target = self._description("target")
+        try:
+            return _python_to_secop(
+                target["datatype"],
+                value,
+                optional_struct_members(target.get("datainfo", {})),
+            )
+        except (SECoPError, TypeError, ValueError) as exc:
+            raise ValueError(
+                f"{self.name}: {value!r} is not a valid target: {exc}"
+            ) from exc
+
+    async def check_value(self, value: T) -> None:
+        """Check that ``value`` is a valid target, without moving. In mock mode
+        there is no node description to check against, so every value passes."""
+        if self._mock is None:
+            self._target_to_secop(value)
+
+    @AsyncStatus.wrap
+    async def set(self, value: T, timeout: float | None = None) -> None:
+        """Set the target and wait until the module is not BUSY."""
+        await self._move(value, timeout)
+
+    async def _move(self, value: T, timeout: float | None) -> None:
+        if self._mock is not None:
+            self._mock_move(value)
+            return
+
+        assert self._module is not None
+        secop_value = self._target_to_secop(value)
+
+        self._logger.info(f"Moving {self._module} to {value}")
+        # the timeout covers writing the target as well as waiting
+        deadline = None if timeout is None else ttime.monotonic() + timeout
+        try:
+            async with asyncio.timeout(timeout):
+                await self._client.set_parameter(self._module, "target", secop_value)
+        except TimeoutError as exc:
+            raise TimeoutError(
+                f"{self.name}: writing the target {value!r} took longer than "
+                f"{timeout} s"
+            ) from exc
+        await _wait_for_move(
+            self.status_0,
+            self._module,
+            self._logger,
+            value,
+            _remaining(deadline),
+            self._client,
+        )
+
+    def _mock_move(self, value: Any) -> None:
+        """Arrive instantly: set the mocked 'target' and 'value' Signals to
+        ``value``, as far as they have the same form as 'target'."""
+        if isinstance(value, np.ndarray) and value.ndim == 1:
+            # accepted as a tuple target in real mode too
+            value = value.tolist()
+        composite_target = not isinstance(getattr(self, "target", None), SignalR)
+        for param in ("target", "value"):
+            signal = getattr(self, param, None)
+            if isinstance(signal, SignalR):
+                # an atomic parameter: takes the target only if that is atomic
+                # too (a struct target says nothing about a scalar value)
+                if not composite_target:
+                    set_mock_value(signal, value)
+                continue
+
+            for key, signal in self._split_members(param).items():
+                if isinstance(value, Mapping):
+                    if key in value:
+                        set_mock_value(signal, value[key])
+                elif isinstance(value, (tuple, list)):
+                    if key.isdigit() and int(key) < len(value):
+                        set_mock_value(signal, value[int(key)])
+
+    async def _mock_position(self, param: str) -> Any:
+        signal = getattr(self, param, None)
+        if isinstance(signal, SignalR):
+            return await signal.get_value()
+
+        members = self._split_members(param)
+        values = await asyncio.gather(*(sig.get_value() for sig in members.values()))
+        position = dict(zip(members, values, strict=True))
+        if all(key.isdigit() for key in position):
+            return tuple(position[key] for key in sorted(position, key=int))
+        return position
+
+    async def locate(self) -> Location[T]:
+        """Return the current setpoint ('target') and readback ('value')."""
+        if self._mock is not None:
+            setpoint, readback = await asyncio.gather(
+                self._mock_position("target"), self._mock_position("value")
+            )
+            return Location(setpoint=setpoint, readback=readback)
+
+        assert self._module is not None
+        # no single Signal holds a whole struct/tuple: read both parameters
+        # straight from the SEC node
+        target, value = await asyncio.gather(
+            self._client.get_parameter(self._module, "target", trycache=True),
+            self._client.get_parameter(self._module, "value", trycache=True),
+        )
+        for entry in (target, value):
+            if entry.readerror is not None:
+                raise entry.readerror
+
+        return Location(
+            setpoint=_secop_to_python(self._datatype("target"), target.value),
+            readback=_secop_to_python(self._datatype("value"), value.value),
+        )
+
+
+class SECoPCompositeMoveableDevice(
+    SECoPDrivableBase, SECoPWritableDevice[T], Stoppable
+):
+    """
+    Movable SECoP device, corresponding to a SECoP module with the interface
+    class "Drivable" whose 'target' and/or 'value' is a struct or tuple.
+
+    Behaves like `SECoPWritableDevice` for a struct/tuple, and can be stopped:
+    ``set()`` takes the whole target as a dict or tuple and is the only way to
+    change it, ``locate()`` returns setpoint and readback in the same form,
+    and ``read()`` has one data key per member. A move reports no progress
+    updates.
+    """
+
+    def __init__(
+        self,
+        sri: str = "",  # SECoP resource identifier host:port:optional[module]
+        name: str = "",
+        connector: SECoPDeviceConnector | None = None,
+        loglevel=logging.INFO,
+        logdir: str | None = None,
+    ):
+        # None: not stopped; else the 'success' argument of the last stop()
+        self._stop_success: bool | None = None
+        self._move_task: asyncio.Task | None = None
+
+        super().__init__(
+            sri=sri, name=name, connector=connector, loglevel=loglevel, logdir=logdir
+        )
+
+    @AsyncStatus.wrap
+    async def set(self, value: T, timeout: float | None = None) -> None:
+        """Move to the given target and wait until the module has left BUSY."""
+        self._stop_success = None
+        self._move_task = asyncio.create_task(self._move(value, timeout))
+        try:
+            await self._move_task
+        except asyncio.CancelledError:
+            # cancelled by stop(): how the move ends is decided below.
+            # Otherwise (e.g. the plan was aborted) pass the cancellation on.
+            if self._stop_success is None:
+                raise
+        finally:
+            self._move_task = None
+
+        stop_success, self._stop_success = self._stop_success, None
+        if stop_success is False:
+            raise RuntimeError(f"Device {self.name} was stopped.")
+
+    async def stop(self, success: bool = False) -> None:
+        """Stop the module and end a running ``set()``: successfully if
+        ``success``, else with a RuntimeError."""
+        self._stop_success = success
+        if self._mock is None:
+            self._logger.info(f"Stopping {self._module}")
+            try:
+                await self._client.exec_command(self._module, "stop")
+            except Exception:
+                # not stopped: a running set() ends as it would have
+                self._stop_success = None
+                raise
+        if self._move_task is not None:
+            self._move_task.cancel()
+
+
+def _composite_target_params(parameters: Mapping[str, Any]) -> list[str]:
+    """Which of 'target' and 'value' are struct/tuple parameters."""
+    return [
+        param
+        for param in ("target", "value")
+        if param in parameters
+        and classify_datatype(parameters[param]["datatype"])
+        is CompositeKind.DECOMPOSABLE
+    ]
+
+
+def _check_drivable_class(
+    device: Device,
+    module: str,
+    parameters: Mapping[str, Any],
+    commands: Mapping[str, Any],
+) -> None:
+    """A Drivable's device class depends on the datatypes of 'target' and
+    'value', which a directly instantiated device cannot know in advance."""
+    composite = _composite_target_params(parameters)
+
+    if isinstance(device, SECoPCompositeMoveableDevice) and "stop" not in commands:
+        raise TypeError(
+            f"Module '{module}' has no 'stop' command, which "
+            f"{SECoPCompositeMoveableDevice.__name__} needs: use "
+            f"{SECoPWritableDevice.__name__} for this module"
+        )
+
+    if isinstance(device, SECoPMoveableDevice) and composite:
+        raise TypeError(
+            f"{composite} of module '{module}' is a struct/tuple, which "
+            f"{SECoPMoveableDevice.__name__} does not support: use "
+            f"{SECoPCompositeMoveableDevice.__name__} for this module "
+            f"(regenerate the device classes if this one was generated)"
+        )
+
+    if (
+        isinstance(device, SECoPWritableDevice)
+        and "target" in composite
+        and "target" in dict(device.children())
+    ):
+        # declared by a device class generated before struct/tuple targets
+        # became set()-only
+        raise TypeError(
+            f"'target' of module '{module}' is a struct/tuple and only changed "
+            f"through set(), but {type(device).__name__} declares a 'target' "
+            f"signal: regenerate the device classes"
+        )
+
+    if isinstance(device, SECoPCompositeMoveableDevice) and not composite:
+        raise TypeError(
+            f"Neither 'target' nor 'value' of module '{module}' is a "
+            f"struct/tuple: use {SECoPMoveableDevice.__name__} for this module"
+        )
+
+
+def class_from_interface(
+    mod_properties: dict, parameters: Mapping[str, Any] | None = None
+):
+    """Device class for a module, from its interface classes. With the
+    module's ``parameters`` given, a Drivable whose 'target' or 'value' is a
+    struct/tuple gets `SECoPCompositeMoveableDevice`."""
     ophyd_class = None
 
     # infer highest level IF class
@@ -1345,6 +1720,13 @@ def class_from_interface(mod_properties: dict):
     # accessibles)
     if ophyd_class is None:
         ophyd_class = SECoPDevice  # type: ignore
+
+    if (
+        ophyd_class is SECoPMoveableDevice
+        and parameters is not None
+        and _composite_target_params(parameters)
+    ):
+        ophyd_class = SECoPCompositeMoveableDevice  # type: ignore
 
     return ophyd_class
 

@@ -23,3 +23,5 @@ Device Classes
 .. autodoc2-object:: secop_ophyd.SECoPDevices.SECoPWritableDevice
 
 .. autodoc2-object:: secop_ophyd.SECoPDevices.SECoPMoveableDevice
+
+.. autodoc2-object:: secop_ophyd.SECoPDevices.SECoPCompositeMoveableDevice

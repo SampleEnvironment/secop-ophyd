@@ -198,7 +198,7 @@ Read single values:
 Setting Signals
 ~~~~~~~~~~~~~~~
 
-There's an important distinction when setting values on movable devices (SECoP modules with the ``Drivable`` interface class):
+There's an important distinction when setting values on settable devices (SECoP modules with the ``Writable`` or ``Drivable`` interface class):
 
 **Module-level vs Signal-level Setting**
 
@@ -235,7 +235,50 @@ For a movable device like a temperature controller, you can set the target it sh
 
 .. note::
 
-   For ``Drivable`` modules, prefer module-level ``set()`` to ensure operations complete before proceeding. For simple parameter updates on ``Readable`` or ``Writable`` modules, use signal-level ``set()``.
+   For ``Writable`` and ``Drivable`` modules, prefer module-level ``set()`` to ensure operations complete before proceeding. A ``Writable`` (:class:`~secop_ophyd.SECoPDevices.SECoPWritableDevice`) is set the same way as a ``Drivable``, but has no ``stop()``. For other parameters, use signal-level ``set()``.
+
+Devices with a Struct or Tuple Target
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The ``target`` and ``value`` of a ``Writable`` or ``Drivable`` module may be a
+SECoP struct or tuple. Such a ``Drivable`` is a
+:class:`~secop_ophyd.SECoPDevices.SECoPCompositeMoveableDevice`; the class is
+chosen automatically when the node is connected and when device classes are
+generated. A ``Writable`` is a
+:class:`~secop_ophyd.SECoPDevices.SECoPWritableDevice` for every datatype.
+
+Its position has two forms, because a Bluesky event can only hold scalars and
+arrays:
+
+- ``set()`` takes the whole target, as a ``dict`` for a struct and a ``tuple``
+  for a tuple. ``locate()`` returns setpoint and readback in the same form.
+- ``read()`` and ``describe()`` have one data key per member, from the
+  read-only signals ``target_<member>`` and ``value_<member>`` (``target_0``,
+  ``target_1``, ... for a tuple).
+
+.. code-block:: python
+
+    from bluesky.plan_stubs import locate, mv
+
+    # move both axes, wait until the module is IDLE again
+    RE(mv(device.stage, {"x": 1.0, "y": 2.5}))
+
+    # needs RunEngine(call_returns_result=True), see the tutorial
+    # {"stage": {"setpoint": {"x": 1.0, "y": 2.5}, "readback": {"x": 1.0, "y": 2.5}}}
+    location = RE(locate(device.stage)).plan_result
+
+    # the same readback, member by member
+    await device.stage.value_x.get_value()  # 1.0
+
+``set()`` is the only way to change a struct or tuple target: there is no
+signal-level ``target.set()``, and the member signals are read-only. In a generated device
+class the target is typed with a ``TypedDict`` (or a ``tuple[...]``), so a type
+checker reports a missing member or a wrong member type.
+
+.. note::
+
+   Plans that calculate with positions, such as ``mvr``, ``scan`` or
+   ``rel_scan``, cannot be used with a struct or tuple target.
 
 Using SECoP Commands
 --------------------

@@ -3,11 +3,12 @@
 
 import importlib
 import inspect
+import subprocess
 import sys
 from pathlib import Path
 
 from frappy.datatypes import StructOf
-from ophyd_async.core import SignalR, SignalW, init_devices
+from ophyd_async.core import SignalR, init_devices
 
 from secop_ophyd.GenNodeCode import (
     CommandAttribute,
@@ -18,9 +19,16 @@ from secop_ophyd.GenNodeCode import (
     NodeClass,
     ParameterAttribute,
     PropertyAttribute,
+    TypedDictClass,
+    TypedDictMember,
 )
-from secop_ophyd.SECoPDevices import ParameterType, PropertyType, SECoPNodeDevice
-from tests.util import import_generated
+from secop_ophyd.SECoPDevices import (
+    ParameterType,
+    PropertyType,
+    SECoPCompositeMoveableDevice,
+    SECoPNodeDevice,
+)
+from tests.util import PROJECT_ROOT, import_generated
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
@@ -930,23 +938,11 @@ async def test_gen_real_node_composite_movable_sibling_connects(
     nested_struct_sim,
     nested_node_no_re: SECoPNodeDevice,
 ):
-    """Regression test: a Drivable module with a composite 'value' (no bare
-    'value' attribute, only split value_* signals) that is a sibling of
-    other modules in a fully class-annotated *generated* node must connect
-    without crashing.
-
-    create_children_from_annotations() pre-creates every declared child
-    device/signal -- including 'target' -- at construction time, before any
-    connect() call runs, purely from the generated class's annotations. So
-    by the time init_devices() does its first naming pass (also before
-    connect()), a sibling module being named can trigger this Drivable's
-    set_name() while 'target' already structurally exists but movable_logic
-    isn't actually resolvable yet (nothing has been connected). Regression
-    for a crash where SECoPMoveableDevice.set_name() only guarded on
-    hasattr(self, 'target'), not on whether the (possibly composite) readback
-    was ready too: AttributeError: 'NoneType' object has no attribute
-    'set_name' from StandardMovable.set_name() -> movable_logic.readback.
-    """
+    """A Drivable module with a composite 'value' and 'target' (no bare
+    'value'/'target' attributes, only split value_*/target_* signals) that is
+    a sibling of other modules in a fully class-annotated *generated* node
+    must connect: naming passes run before and during connect(), while the
+    module's signals are not all filled yet."""
     await nested_node_no_re.class_from_instance(clean_generated_file)
 
     Ophyd_secop_frappy_demo = import_generated(
@@ -958,7 +954,8 @@ async def test_gen_real_node_composite_movable_sibling_connects(
 
     struct_mod = gen_node.ophy_struct
     assert not hasattr(struct_mod, "value")
-    assert isinstance(struct_mod.target, SignalW)
+    assert isinstance(struct_mod, SECoPCompositeMoveableDevice)
+    assert not hasattr(struct_mod, "target")
 
     reading = await struct_mod.value_x.read()
     assert isinstance(reading[struct_mod.value_x.name]["value"], float)
@@ -1063,9 +1060,13 @@ def test_gen_shall_mass_spec_node(
     # field, plus a write-only SignalW at the base name for setting the
     # whole struct (accepting a plain dict, see SECoPBackend.put/val2secop)
     assert (
-        "mid_descriptor_device: A[SignalR[ndarray], ParamMemberT()]" in generated_code
+        "mid_descriptor_device: A[SignalR[ndarray], "
+        'ParamMemberT("mid_descriptor", "device")]' in generated_code
     )
-    assert "mid_descriptor_mass: A[SignalR[ndarray], ParamMemberT()]" in generated_code
+    assert (
+        "mid_descriptor_mass: A[SignalR[ndarray], "
+        'ParamMemberT("mid_descriptor", "mass")]' in generated_code
+    )
     assert "mid_descriptor: A[SignalW[ndarray], ParamT()]" in generated_code
 
     # Intentionally multiline descriptions should be rendered as multiline comments
@@ -1159,3 +1160,128 @@ def test_gen_command_with_enum_argument_and_result(clean_generated_file):
         "set_mode: Command[[Enummod_SetMode_Arg_Enum], Enummod_SetMode_Result_Enum]"
         in generated_code
     )
+
+
+async def test_gen_composite_movable_classes(
+    clean_generated_file, motion_node_no_re: SECoPNodeDevice
+):
+    """A Drivable with a struct/tuple target is generated as a
+    SECoPCompositeMoveableDevice, typed with a TypedDict or a tuple, and
+    without a writable 'target' signal."""
+    await motion_node_no_re.class_from_instance(clean_generated_file)
+    code = (clean_generated_file / "Motion_frappy_demo.py").read_text()
+
+    assert "class Fastmover(SECoPMoveableDevice[float]):" in code
+    assert (
+        "class Faststructmover(SECoPCompositeMoveableDevice[Faststructmover_Target]):"
+        in code
+    )
+    assert (
+        "class Fasttuplemover(SECoPCompositeMoveableDevice[tuple[float, float]]):"
+        in code
+    )
+    assert (
+        "class Faststructmover_Target(TypedDict):\n"
+        '    """target of `Faststructmover`."""\n'
+        "\n"
+        "    x: float\n"
+        "    y: float\n"
+        "    mode: Faststructmover_Target_Mode_Enum\n"
+    ) in code
+
+    # a Writable is typed the same way
+    # member signals name their parameter and member key
+    assert 'target_x: A[SignalR[float], ParamMemberT("target", "x")' in code
+    assert 'target_0: A[SignalR[float], ParamMemberT("target", "0")' in code
+
+    assert "class Instantwritable(SECoPWritableDevice[float]):" in code
+    assert "class Slowswitch(SECoPWritableDevice[Slowswitch_Target]):" in code
+    assert (
+        "class Slowswitch_Target(TypedDict):\n"
+        '    """target of `Slowswitch`."""\n'
+        "\n"
+        "    on: bool\n"
+        "    level: float\n"
+    ) in code
+
+    struct_cls = import_generated(clean_generated_file, "Motion_frappy_demo")
+    hints = inspect.get_annotations(struct_cls.Faststructmover)
+    assert "target" not in hints
+    assert {"target_x", "target_y", "target_mode", "value_x"} <= set(hints)
+    assert "target" in inspect.get_annotations(struct_cls.Fastmover)
+    assert "target" not in inspect.get_annotations(struct_cls.Slowswitch)
+    assert "target" in inspect.get_annotations(struct_cls.Instantwritable)
+
+
+async def test_gen_composite_movable_type_checks(
+    tmp_path, motion_node_no_re: SECoPNodeDevice
+):
+    """mypy checks the argument of set() against the generated types."""
+    await motion_node_no_re.class_from_instance(str(tmp_path / "devs"))
+    (tmp_path / "check.py").write_text(
+        "from devs.Motion_frappy_demo import (\n"
+        "    Faststructmover_Target_Mode_Enum as Mode,\n"
+        "    Motion_frappy_demo,\n"
+        ")\n"
+        'node = Motion_frappy_demo("localhost:1")\n'
+        'node.struct_mover.set({"x": 1.0, "y": 2.0, "mode": Mode.STRICT})\n'
+        'node.struct_mover.set({"x": 1.0, "y": 2.0})\n'
+        "node.struct_mover.set(3.0)\n"
+        "node.tuple_mover.set((1.0, 2.0))\n"
+        'node.tuple_mover.set((1.0, "a"))\n'
+        "node.mover.set(1.0)\n"
+        'node.mover.set("a")\n'
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "mypy",
+            f"--config-file={PROJECT_ROOT / '.mypy.ini'}",
+            f"--cache-dir={tmp_path / 'mypy_cache'}",
+            "check.py",
+        ],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+    )
+
+    error_lines = [line for line in result.stdout.splitlines() if " error: " in line]
+    # the generated module itself type-checks
+    assert all(line.startswith("check.py:") for line in error_lines), result.stdout
+    errors = {int(line.split(":")[1]): line for line in error_lines}
+    assert sorted(errors) == [7, 8, 10, 12], result.stdout + result.stderr
+    assert 'Missing key "mode"' in errors[7]
+    assert "Faststructmover_Target" in errors[8]
+    assert "tuple[float, float]" in errors[10]
+
+
+def test_gen_typed_dict_with_non_identifier_keys():
+    """Struct member names that cannot be written as class attributes need
+    the functional TypedDict syntax; optional members are NotRequired."""
+    gen_code = GenNodeCode()
+    gen_code.add_mod_class(
+        module_cls="Mod",
+        bases=["SECoPCompositeMoveableDevice[Mod_Target]"],
+        parameters=[],
+        properties=[],
+        cmd_plans=[],
+        typed_dicts=[
+            TypedDictClass(
+                name="Mod_Target",
+                members=[
+                    TypedDictMember(key="class", type="float"),
+                    TypedDictMember(key="x-pos", type="float", required=False),
+                ],
+            )
+        ],
+    )
+
+    namespace: dict = {}
+    exec(gen_code.generate_code(), namespace)
+
+    target = namespace["Mod_Target"]
+    assert target.__required_keys__ == {"class"}
+    assert target.__optional_keys__ == {"x-pos"}
+    assert namespace["Mod"].__orig_bases__[0].__args__ == (target,)
