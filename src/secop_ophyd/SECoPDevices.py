@@ -1181,6 +1181,7 @@ async def _wait_for_move(
     logger: Logger,
     new_position: Any,
     timeout: float | None,
+    secclient: AsyncSecopClient | None,
 ) -> None:
     """Wait until a move started by writing 'target' has finished: the module's
     status has left BUSY. Raises if it ended in ERROR/DISABLED.
@@ -1188,14 +1189,19 @@ async def _wait_for_move(
     Start watching 'status' only *after* 'target' was written -- the resting
     (pre-move) state is already "not busy", so watching from before the write
     would match immediately instead of waiting for a real move.
+
+    ``secclient`` is None in mock mode, where there is no SEC node to ask.
     """
 
     def _left_busy(stat_name) -> bool:
         stat_code = _status_code(status, stat_name)
         return not (BUSY <= stat_code < ERROR)
 
-    # force a fresh read so we don't wait on a stale, pre-move cached value
-    await status.read(False)
+    # ask the SEC node for the status, so we don't wait on a stale, pre-move
+    # cached value: the node may send the BUSY update after its reply to the
+    # target write. The reply updates the cache that 'status' reads from.
+    if secclient is not None:
+        await secclient.get_parameter(module, "status", trycache=False)
 
     await wait_for_value(status, _left_busy, timeout=timeout)
 
@@ -1240,7 +1246,12 @@ class SECoPMovableLogic(MovableLogic[Any]):
         await self.setpoint.set(new_position)
 
         await _wait_for_move(
-            self.status, self.module, self.logger, new_position, timeout()
+            self.status,
+            self.module,
+            self.logger,
+            new_position,
+            timeout(),
+            None if self.setpoint._mock is not None else self.secclient,
         )
 
 
@@ -1477,7 +1488,9 @@ class SECoPWritableDevice(SECoPWritableBase, Locatable[T], Checkable[T], Generic
         # the timeout covers writing the target as well as waiting
         async with asyncio.timeout(timeout):
             await self._client.set_parameter(self._module, "target", secop_value)
-            await _wait_for_move(self.status_0, self._module, self._logger, value, None)
+            await _wait_for_move(
+                self.status_0, self._module, self._logger, value, None, self._client
+            )
 
     def _mock_move(self, value: Any) -> None:
         """Arrive instantly: set the mocked 'target' and 'value' Signals to

@@ -238,6 +238,26 @@ async def test_move_timeout(struct_mover: SECoPCompositeMoveableDevice):
         await struct_mover.set({"x": x + 100, "y": y, "mode": "strict"}, timeout=0.2)
 
 
+async def test_move_asks_the_node_for_the_status(
+    struct_mover: SECoPCompositeMoveableDevice, monkeypatch
+):
+    """The status cached before the target write may be the pre-move state,
+    so a move must fetch it from the node before waiting."""
+    client = struct_mover._client
+    calls: list[tuple[str, bool]] = []
+    get_parameter = client.get_parameter
+
+    async def recording_get_parameter(module, parameter, trycache=False):
+        calls.append((parameter, trycache))
+        return await get_parameter(module, parameter, trycache=trycache)
+
+    monkeypatch.setattr(client, "get_parameter", recording_get_parameter)
+    x, y = await _xy(struct_mover)
+    await struct_mover.set({"x": x + 1, "y": y, "mode": "strict"})
+
+    assert ("status", False) in calls
+
+
 async def test_timeout_covers_writing_the_target(
     struct_mover: SECoPCompositeMoveableDevice, monkeypatch
 ):
