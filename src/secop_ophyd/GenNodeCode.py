@@ -712,7 +712,9 @@ class GenNodeCode:
                                 type=SignalR.__name__,
                                 type_param=member_type_param,
                                 description=param_descr,
-                                path_annotation=str(ParameterMemberType()),
+                                path_annotation=str(
+                                    ParameterMemberType(param_name, member_key)
+                                ),
                                 format_annotation=format_str,
                             )
                         )

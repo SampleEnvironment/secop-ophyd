@@ -12,6 +12,7 @@ from logging import Logger
 from typing import Any, Dict, Generic, TypeVar, cast
 
 import bluesky.plan_stubs as bps
+import numpy as np
 from bluesky.protocols import (
     Checkable,
     Locatable,
@@ -192,11 +193,25 @@ class ParameterMemberType:
     annotation-scanning doesn't mark it AttributeType.PARAMETER -- it must
     stay unset until SECoPDeviceConnector.connect_real() calls
     init_member_from_introspection(), which needs to see it as MEMBER (or
-    unset), not PARAMETER."""
+    unset), not PARAMETER.
+
+    ``parent`` and ``key`` name the parameter and the member (struct member
+    name, or tuple index as a string). Without a node description (mock mode)
+    they are the only way to tell e.g. the tuple index 0 of 'target' from the
+    member 0 of a parameter 'target_limits'; without them, the member is
+    found from its attribute name."""
+
+    def __init__(self, parent: str | None = None, key: str | None = None) -> None:
+        if (parent is None) != (key is None):
+            raise ValueError("give both 'parent' and 'key', or neither")
+        self.parent = parent
+        self.key = key
 
     def __repr__(self) -> str:
         """Return repr suitable for code generation in annotations."""
-        return "ParamMemberT()"
+        if self.parent is None:
+            return "ParamMemberT()"
+        return f"ParamMemberT({self.parent!r}, {self.key!r})"
 
     def __call__(self, parent: Device, child: Device):
         if not isinstance(child, Signal):
@@ -208,6 +223,10 @@ class ParameterMemberType:
             return
 
         backend.attribute_type = AttributeType.MEMBER
+        if self.parent is not None and self.key is not None:
+            # overwritten with the same values by init_member_from_introspection()
+            backend._parent_param = self.parent
+            backend._member_key = self.key
         # annotations only appear on SECoPDevice subclasses
         backend._secclient = cast("SECoPDevice", parent)._client
 
@@ -1104,6 +1123,12 @@ class SECoPReadableDevice(SECoPDevice, Triggerable, Subscribable):
 
     def clear_sub(self, function: Callback) -> None:
         """Remove a subscription."""
+        if not hasattr(self, "value"):
+            raise NotImplementedError(
+                f"{self.name}: 'value' is a struct/tuple, split into the signals "
+                f"{[sig.name for sig in self._split_signals('value')]}; "
+                f"unsubscribe from those"
+            )
         self.value.clear_sub(function=function)
 
 
@@ -1352,20 +1377,26 @@ def _python_to_secop(
             raise TypeError(
                 f"expected a mapping with the members {list(datatype.members)}"
             )
-        # frappy's client-side StructOf accepts any member being left out
+        # frappy's client-side StructOf accepts any member being left out, and
+        # drops members whose value is None
         missing = [
-            key for key in datatype.members if key not in value and key not in optional
+            key
+            for key in datatype.members
+            if value.get(key) is None and key not in optional
         ]
         if missing:
             raise ValueError(f"missing struct members {missing}")
-        return datatype(dict(value))
+        # validate(), not __call__(): only validate() checks the limits
+        return datatype.validate(dict(value))
 
     if isinstance(datatype, TupleOf):
+        if isinstance(value, np.ndarray) and value.ndim == 1:
+            value = value.tolist()
         if isinstance(value, (str, bytes, Mapping)) or not isinstance(value, Sequence):
             raise TypeError(f"expected a sequence of {len(datatype.members)} members")
-        return datatype(tuple(value))
+        return datatype.validate(tuple(value))
 
-    return datatype(value)
+    return datatype.validate(value)
 
 
 T = TypeVar("T")
@@ -1414,7 +1445,9 @@ class SECoPWritableDevice(SECoPWritableBase, Locatable[T], Checkable[T], Generic
         target = self._description("target")
         try:
             return _python_to_secop(
-                target["datatype"], value, optional_struct_members(target["datainfo"])
+                target["datatype"],
+                value,
+                optional_struct_members(target.get("datainfo", {})),
             )
         except (SECoPError, TypeError, ValueError) as exc:
             raise ValueError(
@@ -1422,7 +1455,8 @@ class SECoPWritableDevice(SECoPWritableBase, Locatable[T], Checkable[T], Generic
             ) from exc
 
     async def check_value(self, value: T) -> None:
-        """Check that ``value`` is a valid target, without moving."""
+        """Check that ``value`` is a valid target, without moving. In mock mode
+        there is no node description to check against, so every value passes."""
         if self._mock is None:
             self._target_to_secop(value)
 
@@ -1438,33 +1472,27 @@ class SECoPWritableDevice(SECoPWritableBase, Locatable[T], Checkable[T], Generic
 
         assert self._module is not None
         secop_value = self._target_to_secop(value)
-        deadline = None if timeout is None else ttime.monotonic() + timeout
 
         self._logger.info(f"Moving {self._module} to {value}")
-        await self._client.set_parameter(self._module, "target", secop_value)
-
-        await _wait_for_move(
-            self.status_0,
-            self._module,
-            self._logger,
-            value,
-            None if deadline is None else max(0.0, deadline - ttime.monotonic()),
-        )
+        # the timeout covers writing the target as well as waiting
+        async with asyncio.timeout(timeout):
+            await self._client.set_parameter(self._module, "target", secop_value)
+            await _wait_for_move(self.status_0, self._module, self._logger, value, None)
 
     def _mock_move(self, value: Any) -> None:
         """Arrive instantly: set the mocked 'target' and 'value' Signals to
-        ``value``, as far as they have the same form."""
+        ``value``, as far as they have the same form as 'target'."""
+        composite_target = not isinstance(getattr(self, "target", None), SignalR)
         for param in ("target", "value"):
-            members = self._split_members(param)
-            if not members:
-                signal = getattr(self, param, None)
-                if isinstance(signal, SignalR) and not isinstance(
-                    value, (Mapping, tuple, list)
-                ):
+            signal = getattr(self, param, None)
+            if isinstance(signal, SignalR):
+                # an atomic parameter: takes the target only if that is atomic
+                # too (a struct target says nothing about a scalar value)
+                if not composite_target:
                     set_mock_value(signal, value)
                 continue
 
-            for key, signal in members.items():
+            for key, signal in self._split_members(param).items():
                 if isinstance(value, Mapping):
                     if key in value:
                         set_mock_value(signal, value[key])
@@ -1473,10 +1501,11 @@ class SECoPWritableDevice(SECoPWritableBase, Locatable[T], Checkable[T], Generic
                         set_mock_value(signal, value[int(key)])
 
     async def _mock_position(self, param: str) -> Any:
-        members = self._split_members(param)
-        if not members:
-            return await getattr(self, param).get_value()
+        signal = getattr(self, param, None)
+        if isinstance(signal, SignalR):
+            return await signal.get_value()
 
+        members = self._split_members(param)
         values = await asyncio.gather(*(sig.get_value() for sig in members.values()))
         position = dict(zip(members, values, strict=True))
         if all(key.isdigit() for key in position):
@@ -1563,7 +1592,12 @@ class SECoPCompositeMoveableDevice(
         self._stop_success = success
         if self._mock is None:
             self._logger.info(f"Stopping {self._module}")
-            await self._client.exec_command(self._module, "stop")
+            try:
+                await self._client.exec_command(self._module, "stop")
+            except BaseException:
+                # not stopped: a running set() ends as it would have
+                self._stop_success = None
+                raise
         if self._move_task is not None:
             self._move_task.cancel()
 

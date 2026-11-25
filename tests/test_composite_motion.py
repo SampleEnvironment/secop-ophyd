@@ -7,6 +7,7 @@ import asyncio
 import time
 
 import bluesky.plan_stubs as bps
+import numpy as np
 import pytest
 from bluesky.protocols import Checkable, Locatable, Movable, Stoppable
 from bluesky.utils import ProgressBarManager
@@ -175,6 +176,7 @@ async def test_tuple_move_and_locate(tuple_mover: SECoPCompositeMoveableDevice):
     "bad_target, message",
     [
         ({"x": 1.0, "y": 2.0}, "missing struct members"),
+        ({"x": 1.0, "y": 2.0, "mode": None}, "missing struct members"),
         ({"x": 1.0, "y": 2.0, "mode": "strict", "z": 3.0}, "superfluous"),
         ({"x": "left", "y": 2.0, "mode": "strict"}, "x"),
         ({"x": 1.0, "y": 2.0, "mode": "unknown"}, "mode"),
@@ -205,6 +207,14 @@ async def test_invalid_tuple_target_is_rejected(
         await tuple_mover.set(bad_target)
 
 
+async def test_tuple_target_from_numpy_array(
+    tuple_mover: SECoPCompositeMoveableDevice,
+):
+    await tuple_mover.set(np.array([1.5, 0.5]))
+    assert (await tuple_mover.locate())["setpoint"] == pytest.approx((1.5, 0.5))
+    await tuple_mover.set((0.0, 0.0))
+
+
 def test_optional_struct_members_may_be_left_out():
     # as built by the client from a node description
     datatype = get_datatype(
@@ -226,6 +236,43 @@ async def test_move_timeout(struct_mover: SECoPCompositeMoveableDevice):
 
     with pytest.raises(asyncio.TimeoutError):
         await struct_mover.set({"x": x + 100, "y": y, "mode": "strict"}, timeout=0.2)
+
+
+async def test_timeout_covers_writing_the_target(
+    struct_mover: SECoPCompositeMoveableDevice, monkeypatch
+):
+    async def slow_set_parameter(*args, **kwargs):
+        await asyncio.sleep(5)
+
+    monkeypatch.setattr(struct_mover._client, "set_parameter", slow_set_parameter)
+    x, y = await _xy(struct_mover)
+
+    before = time.monotonic()
+    with pytest.raises(asyncio.TimeoutError):
+        await struct_mover.set({"x": x + 1, "y": y, "mode": "strict"}, timeout=0.2)
+    assert time.monotonic() - before < 1
+
+
+async def test_failed_stop_command_does_not_end_the_move(
+    struct_mover: SECoPCompositeMoveableDevice, monkeypatch
+):
+    x, y = await _xy(struct_mover)
+    target = {"x": x + 2, "y": y, "mode": "strict"}
+    stat = struct_mover.set(target)
+    await asyncio.sleep(0.02)
+
+    async def failing_exec_command(*args, **kwargs):
+        raise ConnectionError("node gone")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(struct_mover._client, "exec_command", failing_exec_command)
+        with pytest.raises(ConnectionError):
+            await struct_mover.stop()
+
+    # not stopped, so the move ends normally
+    await stat
+    assert stat.success
+    assert await _xy(struct_mover) == pytest.approx((target["x"], y))
 
 
 async def test_stop_success(struct_mover: SECoPCompositeMoveableDevice):
@@ -282,6 +329,8 @@ async def test_subscribe_reading_names_the_member_signals(
 ):
     with pytest.raises(NotImplementedError, match="value_x"):
         struct_mover.subscribe_reading(lambda reading: None)
+    with pytest.raises(NotImplementedError, match="value_x"):
+        struct_mover.clear_sub(lambda reading: None)
 
 
 def test_plan_with_progress_bar(RE, motion_node: SECoPNodeDevice):  # noqa: N803

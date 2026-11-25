@@ -4,12 +4,17 @@ SEC node: the mocked devices point at a port nothing listens on."""
 
 import asyncio
 from pathlib import Path
+from typing import Annotated
 
+import numpy as np
 import pytest
-from ophyd_async.core import get_mock, get_mock_put, set_mock_value
+from ophyd_async.core import SignalR, SignalRW, get_mock, get_mock_put, set_mock_value
 
 from secop_ophyd.AsyncFrappyClient import AsyncSecopClient
 from secop_ophyd.GenNodeCode import GenNodeCode
+from secop_ophyd.SECoPDevices import ParameterMemberType as ParamMemberT
+from secop_ophyd.SECoPDevices import ParameterType as ParamT
+from secop_ophyd.SECoPDevices import SECoPWritableDevice
 from tests.util import import_generated
 
 UNREACHABLE = "localhost:1"
@@ -130,6 +135,50 @@ async def test_mock_composite_movable(motion_sim, tmp_path, logger):
     # no SEC node to check the target against or to send 'stop' to
     await struct_mover.check_value(target)
     await struct_mover.stop()
+
+
+async def test_mock_writable_with_target_limits():
+    """Without a node description, member signals are told apart by their
+    annotation: tuple index 0 of 'target' vs member 0 of 'target_limits'."""
+
+    class Scalar(SECoPWritableDevice[float]):
+        target: Annotated[SignalRW[float], ParamT()]
+        value: Annotated[SignalR[float], ParamT()]
+        status_0: Annotated[SignalR[str], ParamMemberT("status", "0")]
+        target_limits_0: Annotated[SignalR[float], ParamMemberT("target_limits", "0")]
+        target_limits_1: Annotated[SignalR[float], ParamMemberT("target_limits", "1")]
+
+    class Pair(SECoPWritableDevice[tuple[float, float]]):
+        target_0: Annotated[SignalR[float], ParamMemberT("target", "0")]
+        target_1: Annotated[SignalR[float], ParamMemberT("target", "1")]
+        value_0: Annotated[SignalR[float], ParamMemberT("value", "0")]
+        value_1: Annotated[SignalR[float], ParamMemberT("value", "1")]
+        status_0: Annotated[SignalR[str], ParamMemberT("status", "0")]
+        target_limits_0: Annotated[SignalR[float], ParamMemberT("target_limits", "0")]
+        target_limits_1: Annotated[SignalR[float], ParamMemberT("target_limits", "1")]
+
+    class Array(SECoPWritableDevice[np.ndarray]):
+        target: Annotated[SignalRW[np.ndarray], ParamT()]
+        value: Annotated[SignalR[np.ndarray], ParamT()]
+        status_0: Annotated[SignalR[str], ParamMemberT("status", "0")]
+
+    scalar = Scalar(f"{UNREACHABLE}:scalar", name="scalar")
+    await asyncio.wait_for(scalar.connect(mock=True), 10)
+    await scalar.set(5.0)
+    assert await scalar.locate() == {"setpoint": 5.0, "readback": 5.0}
+
+    pair = Pair(f"{UNREACHABLE}:pair", name="pair")
+    await asyncio.wait_for(pair.connect(mock=True), 10)
+    await pair.set((1.0, 2.0))
+    assert await pair.locate() == {"setpoint": (1.0, 2.0), "readback": (1.0, 2.0)}
+    assert await pair.target_limits_0.get_value() == 0.0
+
+    # an atomic array target given as a list
+    array = Array(f"{UNREACHABLE}:array", name="array")
+    await asyncio.wait_for(array.connect(mock=True), 10)
+    await array.set([1.0, 2.0])  # type: ignore[arg-type]  # works at runtime
+    location = await array.locate()
+    assert list(location["setpoint"]) == list(location["readback"]) == [1.0, 2.0]
 
 
 async def test_mock_commands(motion_sim, tmp_path, logger):

@@ -195,6 +195,14 @@ async def test_struct_writable_waits_while_busy(switch: SECoPWritableDevice):
         await switch.set({"on": True})
 
 
+async def test_target_limits_are_checked_before_writing(switch: SECoPWritableDevice):
+    # level is FloatRange(0, 100)
+    for check in (switch.check_value, switch.set):
+        with pytest.raises(ValueError, match="level"):
+            await check({"on": True, "level": 500.0})
+    assert (await switch.locate())["setpoint"] == {"on": False, "level": 0.0}
+
+
 async def test_struct_writable_timeout(switch: SECoPWritableDevice):
     await switch.duration.set(1)
 

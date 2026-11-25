@@ -263,6 +263,7 @@ arrays:
     # move both axes, wait until the module is IDLE again
     RE(mv(device.stage, {"x": 1.0, "y": 2.5}))
 
+    # needs RunEngine(call_returns_result=True), see the tutorial
     # {"stage": {"setpoint": {"x": 1.0, "y": 2.5}, "readback": {"x": 1.0, "y": 2.5}}}
     location = RE(locate(device.stage)).plan_result
 

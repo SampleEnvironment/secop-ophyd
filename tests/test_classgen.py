@@ -1060,9 +1060,13 @@ def test_gen_shall_mass_spec_node(
     # field, plus a write-only SignalW at the base name for setting the
     # whole struct (accepting a plain dict, see SECoPBackend.put/val2secop)
     assert (
-        "mid_descriptor_device: A[SignalR[ndarray], ParamMemberT()]" in generated_code
+        "mid_descriptor_device: A[SignalR[ndarray], "
+        'ParamMemberT("mid_descriptor", "device")]' in generated_code
     )
-    assert "mid_descriptor_mass: A[SignalR[ndarray], ParamMemberT()]" in generated_code
+    assert (
+        "mid_descriptor_mass: A[SignalR[ndarray], "
+        'ParamMemberT("mid_descriptor", "mass")]' in generated_code
+    )
     assert "mid_descriptor: A[SignalW[ndarray], ParamT()]" in generated_code
 
     # Intentionally multiline descriptions should be rendered as multiline comments
@@ -1186,6 +1190,10 @@ async def test_gen_composite_movable_classes(
     ) in code
 
     # a Writable is typed the same way
+    # member signals name their parameter and member key
+    assert 'target_x: A[SignalR[float], ParamMemberT("target", "x")' in code
+    assert 'target_0: A[SignalR[float], ParamMemberT("target", "0")' in code
+
     assert "class Instantwritable(SECoPWritableDevice[float]):" in code
     assert "class Slowswitch(SECoPWritableDevice[Slowswitch_Target]):" in code
     assert (
@@ -1239,11 +1247,10 @@ async def test_gen_composite_movable_type_checks(
         text=True,
     )
 
-    errors = {
-        int(line.split(":")[1]): line
-        for line in result.stdout.splitlines()
-        if line.startswith("check.py:") and " error: " in line
-    }
+    error_lines = [line for line in result.stdout.splitlines() if " error: " in line]
+    # the generated module itself type-checks
+    assert all(line.startswith("check.py:") for line in error_lines), result.stdout
+    errors = {int(line.split(":")[1]): line for line in error_lines}
     assert sorted(errors) == [7, 8, 10, 12], result.stdout + result.stderr
     assert 'Missing key "mode"' in errors[7]
     assert "Faststructmover_Target" in errors[8]
