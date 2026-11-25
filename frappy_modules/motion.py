@@ -27,6 +27,8 @@ from frappy.core import (
 )
 from frappy.lib import mkthread
 
+from frappy_modules.ophyd_secop_test_modules import SignalFormatParameter
+
 
 class FastMover(Drivable):
     """Linear axis that moves to its target at a constant speed."""
@@ -395,6 +397,43 @@ class SlowSwitch(Writable):
         self._timer = threading.Timer(self.duration, self._finish)
         self._timer.start()
         return value
+
+
+class CalibratedMover(FastMover):
+    """Axis with additional hinted parameters next to value and target."""
+
+    value_uncalibrated = SignalFormatParameter(
+        "uncalibrated readback directly from the hardware",
+        FloatRange(unit="mm"),
+        default=0,
+        signal_format="HINTED_SIGNAL",
+    )
+    target_calibrated = SignalFormatParameter(
+        "calibrated target that is written to the hardware",
+        FloatRange(unit="mm"),
+        default=0,
+        signal_format="HINTED_SIGNAL",
+    )
+
+    def read_value_uncalibrated(self):
+        return self.value * 2
+
+    def read_target_calibrated(self):
+        return self.target * 2
+
+
+class CalibratedWritable(InstantWritable):
+    """Writable with an additional hinted parameter next to value and target."""
+
+    value_uncalibrated = SignalFormatParameter(
+        "uncalibrated readback directly from the hardware",
+        FloatRange(),
+        default=0,
+        signal_format="HINTED_SIGNAL",
+    )
+
+    def read_value_uncalibrated(self):
+        return self.value * 2
 
 
 class EchoCommunicator(Communicator):

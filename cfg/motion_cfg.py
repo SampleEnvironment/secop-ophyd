@@ -59,6 +59,21 @@ Mod(
 )
 
 Mod(
+    "calibrated_mover",
+    "frappy_modules.motion.CalibratedMover",
+    "axis with additional hinted parameters",
+    value=0,
+    target=0,
+    speed=100,
+)
+
+Mod(
+    "calibrated_writer",
+    "frappy_modules.motion.CalibratedWritable",
+    "writable with an additional hinted parameter",
+)
+
+Mod(
     "comm",
     "frappy_modules.motion.EchoCommunicator",
     "communicator echoing every command",

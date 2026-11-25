@@ -233,3 +233,36 @@ async def test_communicator_has_no_wait_for_idle(motion_node_no_re: SECoPNodeDev
     # a Communicator has no status parameter to wait on
     with pytest.raises(RuntimeError, match="wait_for_idle is not supported"):
         await comm.communicate.execute("ping", wait_for_idle=True)
+
+
+@pytest.mark.parametrize(
+    "module, hinted",
+    [
+        # a scalar Drivable is read under the name of the device itself
+        (
+            "calibrated_mover",
+            {"", "-target", "-value_uncalibrated", "-target_calibrated"},
+        ),
+        ("calibrated_writer", {"-value", "-target", "-value_uncalibrated"}),
+    ],
+)
+def test_additional_hinted_signals(
+    RE, motion_node: SECoPNodeDevice, module, hinted  # noqa: N803
+):
+    """A module may hint more parameters than 'value' and 'target' (the
+    ``_signal_format`` parameter property). Plans that need the one position
+    of the device take it from locate(), not from the hints."""
+    device = getattr(motion_node, module)
+    assert set(device.hints["fields"]) == {device.name + key for key in hinted}
+
+    def plan():
+        yield from bps.mv(device, 3.0)
+        assert (yield from bps.rd(device)) == 3.0
+
+        yield from bps.mvr(device, 1.5)
+        location = yield from bps.locate(device)
+        assert location[device.name] == {"setpoint": 4.5, "readback": 4.5}
+
+        yield from bps.mv(device, 0.0)
+
+    RE(plan())
