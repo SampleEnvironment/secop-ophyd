@@ -1,9 +1,13 @@
 # mypy: disable-error-code="attr-defined"
 import numpy as np
 import pytest
-from ophyd_async.core import SignalR, SignalW, init_devices
+from ophyd_async.core import SignalR, SignalW
 
-from secop_ophyd.SECoPDevices import SECoPNodeDevice, SECoPReadableDevice
+from secop_ophyd.SECoPDevices import (
+    SECoPCompositeMoveableDevice,
+    SECoPNodeDevice,
+    SECoPReadableDevice,
+)
 from secop_ophyd.util import IncompatibleSECoPDatatype
 
 
@@ -70,11 +74,10 @@ async def test_nested_dtype_str_signal_generation(
 ):
     struct_mod = nested_node_no_re.ophy_struct
 
-    # target is writable and composite (StructOf) -> a write-only SignalW
-    # at the base name, no read/describe capability there
-    target = struct_mod.target
-    assert isinstance(target, SignalW)
-    assert not isinstance(target, SignalR)
+    # target of a Drivable is composite (StructOf) -> only changed through
+    # set(), there is no signal at the base name
+    assert isinstance(struct_mod, SECoPCompositeMoveableDevice)
+    assert not hasattr(struct_mod, "target")
 
     target_x: SignalR = struct_mod.target_x
     target_color: SignalR = struct_mod.target_color
@@ -90,26 +93,6 @@ async def test_nested_dtype_str_signal_generation(
 
     color_reading = await target_color.read()
     assert isinstance(color_reading.get(target_color.name)["value"], str)
-
-
-async def test_nested_dtype_set_str_struct(fresh_nested_struct_sim):
-    # moving the target keeps the module BUSY for a long time, so use a
-    # private node instead of the shared one
-    async with init_devices():
-        node = SECoPNodeDevice(sec_node_uri=fresh_nested_struct_sim.uri)
-
-    struct_mod = node.ophy_struct
-
-    target: SignalW = struct_mod.target
-
-    # SignalW.put() accepts a plain dict for a StructOf parameter (frappy's
-    # StructOf.validate() coerces it), no need to build a numpy struct array
-    await target.set({"x": 20, "y": 30, "z": 40, "color": "yellow"})
-
-    assert (await struct_mod.target_x.get_value()) == 20
-    assert (await struct_mod.target_y.get_value()) == 30
-    assert (await struct_mod.target_z.get_value()) == 40
-    assert (await struct_mod.target_color.get_value()) == "yellow"
 
 
 async def test_nested_dtype_set_str_tuple(
@@ -193,18 +176,16 @@ async def test_hinted_signal(nested_struct_sim, nested_node_no_re: SECoPNodeDevi
 
 
 async def test_mandatory_composite_incompatible_raises(nested_struct_sim):
-    from secop_ophyd.SECoPDevices import SECoPMoveableDevice
-
     # ophy_struct is a Drivable whose 'value'/'target'/'status' are all
     # depth-1 (compatible); nested_struct (depth 2, unsupported) is not
     # mandatory there, so connecting normally must succeed.
-    moveable: SECoPMoveableDevice = SECoPMoveableDevice(
+    moveable: SECoPCompositeMoveableDevice = SECoPCompositeMoveableDevice(
         f"{nested_struct_sim.uri}:ophy_struct"
     )
     with pytest.warns(UserWarning, match="nested_struct"):
         await moveable.connect()
 
-    assert isinstance(moveable.target, SignalW)
+    assert moveable.target_x in moveable._split_signals("target")
 
 
 async def test_mandatory_incompatible_datatype_raises_exception(

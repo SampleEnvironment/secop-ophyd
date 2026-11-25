@@ -22,6 +22,28 @@ class {{ enum_cls.name }}({{ enum_cls.base_enum_class }}):
 
 {% endfor %}
 
+{# TypedDict classes section #}
+{% for td in typed_dict_classes %}
+{%- if td.class_syntax %}
+class {{ td.name }}(TypedDict):
+    """{{ td.description or 'Generated TypedDict' }}"""
+{% for member in td.members %}
+    {{ member.key }}: {% if member.required %}{{ member.type }}{% else %}NotRequired[{{ member.type }}]{% endif %}
+{%- endfor %}
+{%- else %}
+{{ td.name }} = TypedDict(
+    "{{ td.name }}",
+    {
+{%- for member in td.members %}
+        {{ member.key | tojson }}: {% if member.required %}{{ member.type }}{% else %}NotRequired[{{ member.type }}]{% endif %},
+{%- endfor %}
+    },
+)
+{%- endif %}
+
+
+{% endfor %}
+
 {# Module classes section #}
 {% for module_cls in module_classes %}
 class {{ module_cls.name }}({{ module_cls.bases | join(', ') }}):

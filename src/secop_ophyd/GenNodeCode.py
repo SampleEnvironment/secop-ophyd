@@ -1,6 +1,7 @@
 """Code generation for annotated ophyd device classes using Jinja2 templates."""
 
 import json
+import keyword
 from dataclasses import dataclass, field
 from inspect import Signature
 from logging import Logger
@@ -9,7 +10,7 @@ from pathlib import Path
 import autoflake
 import black
 from frappy.client import get_datatype
-from frappy.datatypes import CommandType, DataType, EnumType, StructOf
+from frappy.datatypes import CommandType, DataType, EnumType, StructOf, TupleOf
 from jinja2 import Environment, PackageLoader, select_autoescape
 from ophyd_async.core import SignalR, SignalRW, SignalW
 from ophyd_async.core import StandardReadableFormat as Format
@@ -19,6 +20,7 @@ from secop_ophyd.SECoPDevices import (
     ParameterMemberType,
     ParameterType,
     PropertyType,
+    SECoPCompositeMoveableDevice,
     SECoPMoveableDevice,
     class_from_interface,
 )
@@ -33,6 +35,7 @@ from secop_ophyd.util import (
     classify_datatype,
     command_dtype_to_annotation_str,
     get_composite_members,
+    optional_struct_members,
     secop_enum_name_to_python,
 )
 
@@ -80,6 +83,33 @@ def _build_enum_class(
     return EnumClass(
         name=enum_class_name, members=enum_members, description=description
     )
+
+
+@dataclass
+class TypedDictMember:
+    """One key of a generated TypedDict."""
+
+    key: str  # SECoP struct member name
+    type: str  # type annotation, e.g. "float"
+    required: bool = True  # False for an optional struct member
+
+
+@dataclass
+class TypedDictClass:
+    """A TypedDict describing a SECoP struct, e.g. the target of a Drivable."""
+
+    name: str
+    members: list[TypedDictMember]
+    description: str | None = None
+
+    @property
+    def class_syntax(self) -> bool:
+        """Whether every key can be written as a class attribute; otherwise
+        the TypedDict needs the functional syntax."""
+        return all(
+            member.key.isidentifier() and not keyword.iskeyword(member.key)
+            for member in self.members
+        )
 
 
 @dataclass
@@ -180,6 +210,7 @@ class ModuleClass:
     commands: list[CommandAttribute] = field(default_factory=list)
     description: str = ""
     enums: list[EnumClass] = field(default_factory=list)  # Enum classes for this module
+    typed_dicts: list[TypedDictClass] = field(default_factory=list)
 
 
 @dataclass
@@ -237,6 +268,9 @@ class GenNodeCode:
         self.add_import("ophyd_async.core", "StrictEnum")
         self.add_import("ophyd_async.core", "SupersetEnum")
         self.add_import("typing", "Any")
+        self.add_import("typing", "NotRequired")
+        self.add_import("typing", "TypedDict")
+        self.add_import("collections.abc", "Sequence")
         self.add_import("numpy", "ndarray")
         self.add_import("secop_ophyd.SECoPDevices", "ParameterType as ParamT")
         self.add_import(
@@ -250,6 +284,7 @@ class GenNodeCode:
         self.add_import("secop_ophyd.SECoPDevices", "SECoPTriggerableDevice")
         self.add_import("secop_ophyd.SECoPDevices", "SECoPWritableDevice")
         self.add_import("secop_ophyd.SECoPDevices", "SECoPMoveableDevice")
+        self.add_import("secop_ophyd.SECoPDevices", "SECoPCompositeMoveableDevice")
         self.add_import("secop_ophyd.SECoPDevices", "SECoPNodeDevice")
 
         # Setup Jinja2 environment
@@ -305,6 +340,7 @@ class GenNodeCode:
         description: str = "",
         enum_classes: list[EnumClass] | None = None,
         commands: list[CommandAttribute] | None = None,
+        typed_dicts: list[TypedDictClass] | None = None,
     ):
         """Add a module class to be generated.
 
@@ -350,6 +386,7 @@ class GenNodeCode:
             commands=commands or [],
             description=description,
             enums=enum_classes or [],
+            typed_dicts=typed_dicts or [],
         )
         self.module_classes.append(mod_cls)
 
@@ -442,15 +479,22 @@ class GenNodeCode:
 
             # Add module class (highest secop interface class) that the actual
             # module class is derived from
-            secop_ophyd_modclass = class_from_interface(properties)
+            secop_ophyd_modclass = class_from_interface(properties, parameters)
             module_bases = [secop_ophyd_modclass.__name__]
 
-            # SECoPMoveableDevice is generic over the datatype of 'target'
-            # (see SECoPDevices.py) -- captured below, from whichever branch
-            # of the parameter loop resolves 'target', so the generated base
-            # can be parametrized as e.g. SECoPMoveableDevice[ndarray] instead
-            # of falling back to the unparametrized (implicitly Any) form.
+            # a Drivable with a struct/tuple 'target' or 'value': its target
+            # is only changed through set(), so it gets no writable Signal
+            composite_movable = secop_ophyd_modclass is SECoPCompositeMoveableDevice
+
+            # Both movable classes are generic over the type of 'target' (see
+            # SECoPDevices.py) -- captured below, from whichever branch of the
+            # parameter loop resolves 'target', so the generated base can be
+            # parametrized as e.g. SECoPMoveableDevice[float] instead of
+            # falling back to the unparametrized (implicitly Any) form.
             movable_target_type_param: str | None = None
+
+            # TypedDict classes of this module
+            module_typed_dicts: list[TypedDictClass] = []
 
             # Add the module class, use self reported "implementation" module property,
             # if not present use the module name
@@ -621,6 +665,9 @@ class GenNodeCode:
 
                 raw_datatype = param_data["datatype"]
                 kind = classify_datatype(raw_datatype)
+                readonly = param_data["readonly"] or (
+                    composite_movable and param_name == "target"
+                )
 
                 if kind is CompositeKind.UNSUPPORTED:
                     # mirrors SECoPDeviceConnector.connect_real(): no signal is
@@ -633,6 +680,9 @@ class GenNodeCode:
                     continue
 
                 if kind is CompositeKind.DECOMPOSABLE:
+                    # (member key, type of the member's value)
+                    member_types: list[tuple[str, str]] = []
+
                     for member_key, member_dt in get_composite_members(raw_datatype):
                         member_type_param = get_type_param(member_dt)
                         if isinstance(member_dt, EnumType):
@@ -649,6 +699,10 @@ class GenNodeCode:
                                 f"`{module_class}`.",
                             )
 
+                        member_types.append(
+                            (member_key, _value_type(member_type_param))
+                        )
+
                         mod_parameters.append(
                             ParameterAttribute(
                                 name=f"{param_name}_{member_key}",
@@ -660,13 +714,21 @@ class GenNodeCode:
                             )
                         )
 
-                    if not param_data["readonly"]:
-                        target_type_param = get_type_param(raw_datatype)
+                    if composite_movable and param_name == "target":
+                        movable_target_type_param = _composite_type(
+                            raw_datatype,
+                            optional_struct_members(param_data["datainfo"]),
+                            member_types,
+                            f"{module_class}_Target",
+                            f"target of `{module_class}`.",
+                            module_typed_dicts,
+                        )
+                    elif not readonly:
                         mod_parameters.append(
                             ParameterAttribute(
                                 name=param_name,
                                 type=SignalW.__name__,
-                                type_param=target_type_param,
+                                type_param=get_type_param(raw_datatype),
                                 description=param_descr,
                                 path_annotation=str(ParameterType()),
                                 # a write-only SignalW can't carry a
@@ -674,12 +736,10 @@ class GenNodeCode:
                                 format_annotation=None,
                             )
                         )
-                        if param_name == "target":
-                            movable_target_type_param = target_type_param
                     continue
 
                 # ATOMIC: single signal, unchanged from previous behaviour
-                signal_base = SignalR if param_data["readonly"] else SignalRW
+                signal_base = SignalR if readonly else SignalRW
                 datainfo = param_data.get("datainfo", {})
 
                 # infer the ophyd type from secop datatype
@@ -729,14 +789,14 @@ class GenNodeCode:
                     )
                 )
 
-            if (
-                secop_ophyd_modclass is SECoPMoveableDevice
-                and movable_target_type_param
+            if movable_target_type_param and secop_ophyd_modclass in (
+                SECoPMoveableDevice,
+                SECoPCompositeMoveableDevice,
             ):
                 module_bases = [
                     (
                         f"{base}[{movable_target_type_param}]"
-                        if base == SECoPMoveableDevice.__name__
+                        if base == secop_ophyd_modclass.__name__
                         else base
                     )
                     for base in module_bases
@@ -751,6 +811,7 @@ class GenNodeCode:
                 description=properties.get("description", ""),
                 enum_classes=module_enum_classes,
                 commands=mod_commands,
+                typed_dicts=module_typed_dicts,
             )
 
             # Add to node attributes
@@ -811,6 +872,7 @@ class GenNodeCode:
             "module_classes": self.module_classes,
             "node_classes": self.node_classes,
             "enum_classes": self._collect_all_enums(),
+            "typed_dict_classes": self._collect_typed_dicts(),
             "inline_comment_threshold": self.inline_comment_threshold,
             "comment_wrap_width": self.comment_wrap_width,
         }
@@ -843,6 +905,14 @@ class GenNodeCode:
                 print(f"Warning: Black formatting failed: {e}")
 
         return code
+
+    def _collect_typed_dicts(self) -> list[TypedDictClass]:
+        """TypedDict classes of all module classes, once per name."""
+        typed_dicts: dict[str, TypedDictClass] = {}
+        for mod_cls in self.module_classes:
+            for typed_dict in mod_cls.typed_dicts:
+                typed_dicts.setdefault(typed_dict.name, typed_dict)
+        return list(typed_dicts.values())
 
     def _collect_all_enums(self) -> list[EnumClass]:
         """Collect and merge enum definitions from all module classes.
@@ -953,6 +1023,43 @@ class GenNodeCode:
         init_file = self.module_folder_path / "__init__.py"
         with open(init_file, "w") as file:
             file.writelines(lines)
+
+
+def _value_type(type_param: str | None) -> str:
+    """Type of a struct/tuple member in the argument of set(), from the type
+    parameter of the member's Signal: arrays are given as any sequence."""
+    if type_param is None:
+        return "Any"
+    if type_param == "ndarray":
+        return "Sequence[Any]"
+    return type_param
+
+
+def _composite_type(
+    datatype: StructOf | TupleOf,
+    optional: list[str],
+    member_types: list[tuple[str, str]],
+    name: str,
+    description: str,
+    typed_dicts: list[TypedDictClass],
+) -> str:
+    """Type annotation for the value of a struct/tuple parameter: a tuple
+    type, or the name of a TypedDict that is added to ``typed_dicts``.
+    ``optional`` are the struct members that may be left out."""
+    if isinstance(datatype, TupleOf):
+        return f"tuple[{', '.join(member_type for _, member_type in member_types)}]"
+
+    typed_dicts.append(
+        TypedDictClass(
+            name=name,
+            members=[
+                TypedDictMember(key=key, type=member_type, required=key not in optional)
+                for key, member_type in member_types
+            ],
+            description=description,
+        )
+    )
+    return name
 
 
 def get_type_param(secop_dtype: DataType) -> str | None:

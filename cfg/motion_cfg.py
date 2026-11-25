@@ -27,6 +27,18 @@ Mod(
 )
 
 Mod(
+    "struct_mover",
+    "frappy_modules.motion.FastStructMover",
+    "two axes with struct value and target",
+)
+
+Mod(
+    "tuple_mover",
+    "frappy_modules.motion.FastTupleMover",
+    "two axes with tuple value and target",
+)
+
+Mod(
     "detector",
     "frappy_modules.motion.FastTrigger",
     "measurement finishing after a short, fixed time",

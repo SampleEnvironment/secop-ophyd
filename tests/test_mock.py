@@ -106,6 +106,32 @@ async def test_mock_struct_parameters_and_commands(nested_struct_sim, tmp_path, 
         await struct.test_cmd.execute({"name": "x", "id": 1, "sort": True})
 
 
+async def test_mock_composite_movable(motion_sim, tmp_path, logger):
+    node = await _connect_mock(await _generate(motion_sim, tmp_path, logger), "motion")
+
+    struct_mover = node.struct_mover
+    target = {"x": 1.5, "y": -2.0, "mode": "strict"}
+
+    # mocked modules start IDLE, a move arrives instantly
+    await asyncio.wait_for(struct_mover.set(target), 5)
+    assert await struct_mover.locate() == {"setpoint": target, "readback": target}
+
+    reading = await struct_mover.read()
+    assert reading["motion-struct_mover-value_x"]["value"] == 1.5
+    assert reading["motion-struct_mover-target_y"]["value"] == -2.0
+
+    tuple_mover = node.tuple_mover
+    await asyncio.wait_for(tuple_mover.set((3.0, 4.0)), 5)
+    assert await tuple_mover.locate() == {
+        "setpoint": (3.0, 4.0),
+        "readback": (3.0, 4.0),
+    }
+
+    # no SEC node to check the target against or to send 'stop' to
+    await struct_mover.check_value(target)
+    await struct_mover.stop()
+
+
 async def test_mock_commands(motion_sim, tmp_path, logger):
     node = await _connect_mock(await _generate(motion_sim, tmp_path, logger), "motion")
 

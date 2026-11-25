@@ -801,6 +801,14 @@ def get_composite_members(datatype: StructOf | TupleOf) -> list[tuple[str, DataT
     raise TypeError(f"{datatype!r} is neither StructOf nor TupleOf")
 
 
+def optional_struct_members(datainfo: dict) -> list[str]:
+    """Names of the optional members of a struct, from its SECoP datainfo:
+    without an 'optional' entry every member is mandatory. (frappy's StructOf
+    cannot tell: built from such a datainfo it treats every member as
+    optional.)"""
+    return list(datainfo.get("optional", []))
+
+
 def secop_enum_name_to_python(member_name: str) -> str:
     """Convert SECoP enum member name to Python identifier.
 
