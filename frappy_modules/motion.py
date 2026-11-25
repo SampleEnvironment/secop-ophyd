@@ -336,6 +336,67 @@ class InstantWritable(Writable):
         return value
 
 
+class SlowSwitch(Writable):
+    """Writable with a struct target that needs ``duration`` seconds to reach
+    it and cannot be stopped. With ``fail`` set, it ends in ERROR instead."""
+
+    Status = Enum(Drivable.Status)  # Writable has no BUSY
+    status = Parameter(datatype=StatusType(Status))
+
+    value = Parameter(
+        "current state",
+        StructOf(on=BoolType(), level=FloatRange(0, 100)),
+        default=dict(on=False, level=0),
+    )
+    target = Parameter(
+        "requested state",
+        StructOf(on=BoolType(), level=FloatRange(0, 100)),
+        default=dict(on=False, level=0),
+        readonly=False,
+    )
+    duration = Parameter(
+        "time needed to reach the target",
+        FloatRange(0, 10, unit="s"),
+        default=0.1,
+        readonly=False,
+    )
+    fail = Parameter(
+        "let the next change fail", BoolType(), default=False, readonly=False
+    )
+
+    def initModule(self):
+        super().initModule()
+        self._timer = None
+
+    def initialReads(self):
+        self.status = self.Status.IDLE, "at target"
+
+    def read_value(self):
+        return self.value
+
+    def read_target(self):
+        return self.target
+
+    def read_status(self):
+        return self.status
+
+    def _finish(self):
+        if self.fail:
+            self.status = self.Status.ERROR, "switching failed"
+        else:
+            self.value = self.target
+            self.status = self.Status.IDLE, "at target"
+
+    def write_target(self, value):
+        self.target = value
+        self.status = self.Status.BUSY, "switching"
+        if self._timer:
+            self._timer.cancel()
+        self._timer = threading.Timer(self.duration, self._finish)
+        self._timer.start()
+        return value
+
+
 class EchoCommunicator(Communicator):
     """Communicator answering every command with an echo."""
 

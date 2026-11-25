@@ -22,6 +22,7 @@ from secop_ophyd.SECoPDevices import (
     PropertyType,
     SECoPCompositeMoveableDevice,
     SECoPMoveableDevice,
+    SECoPWritableDevice,
     class_from_interface,
 )
 from secop_ophyd.SECoPSignal import (
@@ -482,11 +483,11 @@ class GenNodeCode:
             secop_ophyd_modclass = class_from_interface(properties, parameters)
             module_bases = [secop_ophyd_modclass.__name__]
 
-            # a Drivable with a struct/tuple 'target' or 'value': its target
+            # classes whose set() takes the whole target: a struct/tuple target
             # is only changed through set(), so it gets no writable Signal
-            composite_movable = secop_ophyd_modclass is SECoPCompositeMoveableDevice
+            set_takes_target = issubclass(secop_ophyd_modclass, SECoPWritableDevice)
 
-            # Both movable classes are generic over the type of 'target' (see
+            # The settable classes are generic over the type of 'target' (see
             # SECoPDevices.py) -- captured below, from whichever branch of the
             # parameter loop resolves 'target', so the generated base can be
             # parametrized as e.g. SECoPMoveableDevice[float] instead of
@@ -666,7 +667,9 @@ class GenNodeCode:
                 raw_datatype = param_data["datatype"]
                 kind = classify_datatype(raw_datatype)
                 readonly = param_data["readonly"] or (
-                    composite_movable and param_name == "target"
+                    set_takes_target
+                    and param_name == "target"
+                    and kind is CompositeKind.DECOMPOSABLE
                 )
 
                 if kind is CompositeKind.UNSUPPORTED:
@@ -714,7 +717,7 @@ class GenNodeCode:
                             )
                         )
 
-                    if composite_movable and param_name == "target":
+                    if set_takes_target and param_name == "target":
                         movable_target_type_param = _composite_type(
                             raw_datatype,
                             optional_struct_members(param_data["datainfo"]),
@@ -790,6 +793,7 @@ class GenNodeCode:
                 )
 
             if movable_target_type_param and secop_ophyd_modclass in (
+                SECoPWritableDevice,
                 SECoPMoveableDevice,
                 SECoPCompositeMoveableDevice,
             ):

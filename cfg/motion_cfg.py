@@ -52,6 +52,13 @@ Mod(
 )
 
 Mod(
+    "switch",
+    "frappy_modules.motion.SlowSwitch",
+    "writable with a struct target that takes time to reach it",
+    duration=0.1,
+)
+
+Mod(
     "comm",
     "frappy_modules.motion.EchoCommunicator",
     "communicator echoing every command",

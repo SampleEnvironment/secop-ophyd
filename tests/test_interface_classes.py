@@ -3,14 +3,21 @@
 of the motion test node (see frappy_modules/motion.py)."""
 
 import asyncio
+import time
+from typing import Annotated as A
 
+import bluesky.plan_stubs as bps
+import numpy as np
 import pytest
-from ophyd_async.core import Command, TriggerableCommand
+from bluesky.protocols import Checkable, Locatable, Movable, Stoppable
+from bluesky.utils import ProgressBarManager
+from ophyd_async.core import Command, SignalR, SignalW, TriggerableCommand
 
 from secop_ophyd.SECoPDevices import (
     BUSY,
     ERROR,
     IDLE,
+    ParameterType,
     SECoPCommunicatorDevice,
     SECoPMoveableDevice,
     SECoPNodeDevice,
@@ -96,15 +103,122 @@ async def test_triggerable_stop(detector: SECoPTriggerableDevice):
     assert await detector.value.get_value(cached=False) == count
 
 
-async def test_writable(motion_node_no_re: SECoPNodeDevice):
+async def test_writable_signal_level_set(motion_node_no_re: SECoPNodeDevice):
     writer: SECoPWritableDevice = motion_node_no_re.writer
     new_value = await writer.value.get_value(cached=False) + 1.5
 
+    # an atomic target is also a writable signal
     await writer.target.set(new_value)
 
     assert await writer.value.get_value(cached=False) == new_value
     reading = await writer.read()
     assert reading[writer.value.name]["value"] == new_value
+
+
+async def test_writable_is_settable_but_not_stoppable(
+    motion_node_no_re: SECoPNodeDevice,
+):
+    for writable in (motion_node_no_re.writer, motion_node_no_re.switch):
+        assert type(writable) is SECoPWritableDevice
+        for protocol in (Movable, Locatable, Checkable):
+            assert isinstance(writable, protocol)
+        # a Writable has no 'stop' command
+        assert not isinstance(writable, Stoppable)
+        assert not hasattr(writable, "stop")
+
+
+async def test_writable_set_and_locate(motion_node_no_re: SECoPNodeDevice):
+    writer: SECoPWritableDevice = motion_node_no_re.writer
+    new_value = await writer.value.get_value(cached=False) + 2.5
+
+    await writer.set(new_value)
+
+    assert await writer.locate() == {"setpoint": new_value, "readback": new_value}
+    assert await writer.value.get_value(cached=False) == new_value
+
+    with pytest.raises(ValueError, match="not a valid target"):
+        await writer.check_value("far")
+    with pytest.raises(ValueError, match="not a valid target"):
+        await writer.set("far")
+    assert (await writer.locate())["setpoint"] == new_value
+
+
+def test_writable_in_plan(RE, motion_node: SECoPNodeDevice):  # noqa: N803
+    writer: SECoPWritableDevice = motion_node.writer
+    switch: SECoPWritableDevice = motion_node.switch
+    RE.waiting_hook = ProgressBarManager()
+
+    def plan():
+        yield from bps.abs_set(switch.duration, 0.1, wait=True)
+        yield from bps.abs_set(switch.fail, False, wait=True)
+
+        yield from bps.mv(writer, 7.0, switch, {"on": True, "level": 20.0})
+
+        assert (yield from bps.rd(writer)) == 7.0
+        assert (yield from bps.rd(switch)) == {"on": True, "level": 20.0}
+
+    RE(plan())
+
+
+@pytest.fixture
+async def switch(motion_node_no_re: SECoPNodeDevice):
+    switch: SECoPWritableDevice = motion_node_no_re.switch
+    await switch.duration.set(0.1)
+    await switch.fail.set(False)
+    yield switch
+    # leave the shared node at rest for the next test
+    await switch.duration.set(0.1)
+    await switch.fail.set(False)
+    await switch.set({"on": False, "level": 0.0})
+
+
+async def test_struct_writable_waits_while_busy(switch: SECoPWritableDevice):
+    # a struct target is only changed through set(): read-only members only
+    assert not hasattr(switch, "target")
+    assert isinstance(switch.target_on, SignalR)
+    assert not isinstance(switch.target_on, SignalW)
+
+    await switch.duration.set(0.3)
+    target = {"on": True, "level": 42.0}
+
+    before = time.monotonic()
+    await switch.set(target)
+    elapsed = time.monotonic() - before
+
+    # the module was BUSY for 'duration', although it cannot be stopped
+    assert elapsed >= 0.25
+    assert await _status(switch) == (IDLE, "at target")
+    assert await switch.locate() == {"setpoint": target, "readback": target}
+    assert await switch.value_level.get_value() == 42.0
+
+    with pytest.raises(ValueError, match="missing struct members"):
+        await switch.set({"on": True})
+
+
+async def test_struct_writable_timeout(switch: SECoPWritableDevice):
+    await switch.duration.set(1)
+
+    with pytest.raises(asyncio.TimeoutError):
+        await switch.set({"on": True, "level": 1.0}, timeout=0.2)
+
+
+async def test_struct_writable_error_state_fails(switch: SECoPWritableDevice):
+    await switch.fail.set(True)
+
+    with pytest.raises(RuntimeError, match="ERROR/DISABLED"):
+        await switch.set({"on": True, "level": 1.0})
+
+
+async def test_struct_writable_with_declared_target_signal(motion_sim):
+    """Device classes generated before struct/tuple targets became set()-only
+    declare a write-only 'target' signal."""
+
+    class OldSwitch(SECoPWritableDevice):
+        target: A[SignalW[np.ndarray], ParameterType()]
+
+    old_switch = OldSwitch(f"{motion_sim.uri}:switch")
+    with pytest.raises(TypeError, match="regenerate the device classes"):
+        await old_switch.connect()
 
 
 async def test_communicator(motion_node_no_re: SECoPNodeDevice):

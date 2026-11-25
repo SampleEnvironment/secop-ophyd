@@ -385,8 +385,10 @@ class SECoPDeviceConnector(DeviceConnector):
 
         _check_drivable_class(device, self.module, parameter_dict)
 
-        # the target of a composite Drivable is only changed through set()
-        set_only_target = isinstance(device, SECoPCompositeMoveableDevice)
+        # a struct/tuple target is only changed through set()
+        set_only_target = isinstance(device, SECoPWritableDevice) and (
+            "target" in _composite_target_params(parameter_dict)
+        )
 
         # remove ignored signals
         parameters = [
@@ -963,12 +965,12 @@ class SECoPMovableMock(InstantMovableMock):
         await super().connect(device)
 
 
-class SECoPCompositeMovableMock(DeviceMock["SECoPCompositeMoveableDevice"]):
-    """Mock behaviour for SECoP Drivable modules with a struct/tuple 'value' or
-    'target': start IDLE. `SECoPCompositeMoveableDevice.set()` itself moves the
-    mocked member signals to the target instantly."""
+class SECoPWritableMock(DeviceMock["SECoPWritableDevice"]):
+    """Mock behaviour for SECoP Writable modules, and for Drivable modules with
+    a struct/tuple 'value' or 'target': start IDLE. `SECoPWritableDevice.set()`
+    itself moves the mocked signals to the target instantly."""
 
-    async def connect(self, device: "SECoPCompositeMoveableDevice") -> None:
+    async def connect(self, device: "SECoPWritableDevice") -> None:
         missing = [
             param for param in ("target", "value") if not device._param_signals(param)
         ]
@@ -976,9 +978,9 @@ class SECoPCompositeMovableMock(DeviceMock["SECoPCompositeMoveableDevice"]):
             missing.append("status_0")
         if missing:
             raise AttributeError(
-                f"{device.name}: a Drivable connected in mock mode needs annotated "
-                f"{missing}: without a SEC node description only annotated "
-                f"signals exist"
+                f"{device.name}: a {type(device).__name__} connected in mock mode "
+                f"needs annotated {missing}: without a SEC node description only "
+                f"annotated signals exist"
             )
         _set_mock_status_idle(device)
 
@@ -1148,12 +1150,6 @@ class SECoPTriggerableDevice(SECoPReadableDevice, Stoppable):
         await self._client.exec_command(self._module, "stop")
 
 
-class SECoPWritableDevice(SECoPReadableDevice):
-    hinted_signals: list[str] = ["target", "value"]
-
-    pass
-
-
 async def _wait_for_move(
     status: SignalR,
     module: str,
@@ -1223,11 +1219,9 @@ class SECoPMovableLogic(MovableLogic[Any]):
         )
 
 
-class SECoPDrivableBase(SECoPReadableDevice):
-    """Common base of the device classes for SECoP modules with the interface
-    class "Drivable": `SECoPMoveableDevice` and `SECoPCompositeMoveableDevice`.
-    Which of the two a module gets depends on the datatypes of its 'target'
-    and 'value' parameters, see `class_from_interface`."""
+class SECoPWritableBase(SECoPReadableDevice):
+    """Common base of all device classes for SECoP modules with a 'target':
+    the interface classes "Writable" and "Drivable"."""
 
     hinted_signals: list[str] = ["target", "value"]
     mandatory_parameters: list[str] = SECoPReadableDevice.mandatory_parameters + [
@@ -1246,6 +1240,13 @@ class SECoPDrivableBase(SECoPReadableDevice):
         await super()._assign_interface_formats()
 
         self._assign_hinted_format("target", self._param_signals("target"))
+
+
+class SECoPDrivableBase(SECoPWritableBase):
+    """Common base of the device classes for SECoP modules with the interface
+    class "Drivable": `SECoPMoveableDevice` and `SECoPCompositeMoveableDevice`.
+    Which of the two a module gets depends on the datatypes of its 'target'
+    and 'value' parameters, see `class_from_interface`."""
 
 
 class SECoPMoveableDevice(SECoPDrivableBase, StandardMovable[SignalDatatypeT]):
@@ -1370,14 +1371,18 @@ def _python_to_secop(
 T = TypeVar("T")
 
 
-class SECoPCompositeMoveableDevice(
-    SECoPDrivableBase, Locatable[T], Checkable[T], Stoppable, Generic[T]
-):
+class SECoPWritableDevice(SECoPWritableBase, Locatable[T], Checkable[T], Generic[T]):
     """
-    Movable SECoP device, corresponding to a SECoP module with the interface
-    class "Drivable" whose 'target' and/or 'value' is a struct or tuple.
+    Settable SECoP device, corresponding to a SECoP module with the interface
+    class "Writable": a module with a 'target' but without a 'stop' command.
 
-    The position is one value in ``set()`` and ``locate()``, but several data
+    ``set()`` writes 'target' and waits until the module is not BUSY. For a
+    module whose value follows the target at once that is immediately; a
+    Writable that needs time to reach its target reports BUSY meanwhile.
+    ``locate()`` returns the setpoint ('target') and readback ('value').
+
+    'target' and 'value' may be of any SECoP datatype. For a struct or tuple,
+    the position is one value in ``set()`` and ``locate()``, but several data
     keys in ``read()`` and ``describe()``, because an event can only hold
     scalars and arrays:
 
@@ -1387,30 +1392,15 @@ class SECoPCompositeMoveableDevice(
       ``target_<member>`` and ``value_<member>`` (``_0``, ``_1``, ... for a
       tuple). ``locate()["readback"]["x"]`` is the value of ``value_x``.
 
-    ``set()`` is the only way to change the target: there is no writable
-    'target' Signal, and a move reports no progress updates.
+    ``set()`` is the only way to change a struct/tuple target: there is no
+    writable 'target' Signal for it. An atomic 'target' is also a ``SignalRW``,
+    whose ``set()`` only writes the parameter, without waiting.
 
-    The type parameter is the type of the target, e.g. a ``TypedDict`` in a
-    generated device class.
+    The type parameter is the type of the target, e.g. ``float``, or a
+    ``TypedDict`` in a generated device class.
     """
 
-    _mock_class: type[DeviceMock] = SECoPCompositeMovableMock
-
-    def __init__(
-        self,
-        sri: str = "",  # SECoP resource identifier host:port:optional[module]
-        name: str = "",
-        connector: SECoPDeviceConnector | None = None,
-        loglevel=logging.INFO,
-        logdir: str | None = None,
-    ):
-        # None: not stopped; else the 'success' argument of the last stop()
-        self._stop_success: bool | None = None
-        self._move_task: asyncio.Task | None = None
-
-        super().__init__(
-            sri=sri, name=name, connector=connector, loglevel=loglevel, logdir=logdir
-        )
+    _mock_class: type[DeviceMock] = SECoPWritableMock
 
     def _description(self, param: str) -> dict[str, Any]:
         if self._module is None:
@@ -1438,22 +1428,8 @@ class SECoPCompositeMoveableDevice(
 
     @AsyncStatus.wrap
     async def set(self, value: T, timeout: float | None = None) -> None:
-        """Move to the given target and wait until the module has left BUSY."""
-        self._stop_success = None
-        self._move_task = asyncio.create_task(self._move(value, timeout))
-        try:
-            await self._move_task
-        except asyncio.CancelledError:
-            # cancelled by stop(): how the move ends is decided below.
-            # Otherwise (e.g. the plan was aborted) pass the cancellation on.
-            if self._stop_success is None:
-                raise
-        finally:
-            self._move_task = None
-
-        stop_success, self._stop_success = self._stop_success, None
-        if stop_success is False:
-            raise RuntimeError(f"Device {self.name} was stopped.")
+        """Set the target and wait until the module is not BUSY."""
+        await self._move(value, timeout)
 
     async def _move(self, value: T, timeout: float | None) -> None:
         if self._mock is not None:
@@ -1531,6 +1507,56 @@ class SECoPCompositeMoveableDevice(
             readback=_secop_to_python(self._datatype("value"), value.value),
         )
 
+
+class SECoPCompositeMoveableDevice(
+    SECoPDrivableBase, SECoPWritableDevice[T], Stoppable
+):
+    """
+    Movable SECoP device, corresponding to a SECoP module with the interface
+    class "Drivable" whose 'target' and/or 'value' is a struct or tuple.
+
+    Behaves like `SECoPWritableDevice` for a struct/tuple, and can be stopped:
+    ``set()`` takes the whole target as a dict or tuple and is the only way to
+    change it, ``locate()`` returns setpoint and readback in the same form,
+    and ``read()`` has one data key per member. A move reports no progress
+    updates.
+    """
+
+    def __init__(
+        self,
+        sri: str = "",  # SECoP resource identifier host:port:optional[module]
+        name: str = "",
+        connector: SECoPDeviceConnector | None = None,
+        loglevel=logging.INFO,
+        logdir: str | None = None,
+    ):
+        # None: not stopped; else the 'success' argument of the last stop()
+        self._stop_success: bool | None = None
+        self._move_task: asyncio.Task | None = None
+
+        super().__init__(
+            sri=sri, name=name, connector=connector, loglevel=loglevel, logdir=logdir
+        )
+
+    @AsyncStatus.wrap
+    async def set(self, value: T, timeout: float | None = None) -> None:
+        """Move to the given target and wait until the module has left BUSY."""
+        self._stop_success = None
+        self._move_task = asyncio.create_task(self._move(value, timeout))
+        try:
+            await self._move_task
+        except asyncio.CancelledError:
+            # cancelled by stop(): how the move ends is decided below.
+            # Otherwise (e.g. the plan was aborted) pass the cancellation on.
+            if self._stop_success is None:
+                raise
+        finally:
+            self._move_task = None
+
+        stop_success, self._stop_success = self._stop_success, None
+        if stop_success is False:
+            raise RuntimeError(f"Device {self.name} was stopped.")
+
     async def stop(self, success: bool = False) -> None:
         """Stop the module and end a running ``set()``: successfully if
         ``success``, else with a RuntimeError."""
@@ -1542,7 +1568,7 @@ class SECoPCompositeMoveableDevice(
             self._move_task.cancel()
 
 
-def _composite_drivable_params(parameters: Mapping[str, Any]) -> list[str]:
+def _composite_target_params(parameters: Mapping[str, Any]) -> list[str]:
     """Which of 'target' and 'value' are struct/tuple parameters."""
     return [
         param
@@ -1558,7 +1584,7 @@ def _check_drivable_class(
 ) -> None:
     """A Drivable's device class depends on the datatypes of 'target' and
     'value', which a directly instantiated device cannot know in advance."""
-    composite = _composite_drivable_params(parameters)
+    composite = _composite_target_params(parameters)
 
     if isinstance(device, SECoPMoveableDevice) and composite:
         raise TypeError(
@@ -1566,6 +1592,19 @@ def _check_drivable_class(
             f"{SECoPMoveableDevice.__name__} does not support: use "
             f"{SECoPCompositeMoveableDevice.__name__} for this module "
             f"(regenerate the device classes if this one was generated)"
+        )
+
+    if (
+        isinstance(device, SECoPWritableDevice)
+        and "target" in composite
+        and "target" in dict(device.children())
+    ):
+        # declared by a device class generated before struct/tuple targets
+        # became set()-only
+        raise TypeError(
+            f"'target' of module '{module}' is a struct/tuple and only changed "
+            f"through set(), but {type(device).__name__} declares a 'target' "
+            f"signal: regenerate the device classes"
         )
 
     if isinstance(device, SECoPCompositeMoveableDevice) and not composite:
@@ -1598,7 +1637,7 @@ def class_from_interface(
     if (
         ophyd_class is SECoPMoveableDevice
         and parameters is not None
-        and _composite_drivable_params(parameters)
+        and _composite_target_params(parameters)
     ):
         ophyd_class = SECoPCompositeMoveableDevice  # type: ignore
 

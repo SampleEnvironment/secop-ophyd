@@ -148,6 +148,14 @@ async def test_mock_commands(motion_sim, tmp_path, logger):
         await asyncio.wait_for(module.wait_for_idle(), 5)
         assert await module.status_0.get_value() == "IDLE"
     await node.writer.target.set(1.0)
+
+    # a Writable is set like a Drivable, and arrives instantly
+    await asyncio.wait_for(node.writer.set(2.0), 5)
+    assert await node.writer.locate() == {"setpoint": 2.0, "readback": 2.0}
+
+    state = {"on": True, "level": 5.0}
+    await asyncio.wait_for(node.switch.set(state), 5)
+    assert await node.switch.locate() == {"setpoint": state, "readback": state}
     assert set(await node.read())
 
     await node.detector.stop()

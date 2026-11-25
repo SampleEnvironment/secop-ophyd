@@ -1185,11 +1185,24 @@ async def test_gen_composite_movable_classes(
         "    mode: Faststructmover_Target_Mode_Enum\n"
     ) in code
 
+    # a Writable is typed the same way
+    assert "class Instantwritable(SECoPWritableDevice[float]):" in code
+    assert "class Slowswitch(SECoPWritableDevice[Slowswitch_Target]):" in code
+    assert (
+        "class Slowswitch_Target(TypedDict):\n"
+        '    """target of `Slowswitch`."""\n'
+        "\n"
+        "    on: bool\n"
+        "    level: float\n"
+    ) in code
+
     struct_cls = import_generated(clean_generated_file, "Motion_frappy_demo")
     hints = inspect.get_annotations(struct_cls.Faststructmover)
     assert "target" not in hints
     assert {"target_x", "target_y", "target_mode", "value_x"} <= set(hints)
     assert "target" in inspect.get_annotations(struct_cls.Fastmover)
+    assert "target" not in inspect.get_annotations(struct_cls.Slowswitch)
+    assert "target" in inspect.get_annotations(struct_cls.Instantwritable)
 
 
 async def test_gen_composite_movable_type_checks(

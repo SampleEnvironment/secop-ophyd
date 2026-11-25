@@ -198,7 +198,7 @@ Read single values:
 Setting Signals
 ~~~~~~~~~~~~~~~
 
-There's an important distinction when setting values on movable devices (SECoP modules with the ``Drivable`` interface class):
+There's an important distinction when setting values on settable devices (SECoP modules with the ``Writable`` or ``Drivable`` interface class):
 
 **Module-level vs Signal-level Setting**
 
@@ -235,15 +235,17 @@ For a movable device like a temperature controller, you can set the target it sh
 
 .. note::
 
-   For ``Drivable`` modules, prefer module-level ``set()`` to ensure operations complete before proceeding. For simple parameter updates on ``Readable`` or ``Writable`` modules, use signal-level ``set()``.
+   For ``Writable`` and ``Drivable`` modules, prefer module-level ``set()`` to ensure operations complete before proceeding. A ``Writable`` (:class:`~secop_ophyd.SECoPDevices.SECoPWritableDevice`) is set the same way as a ``Drivable``, but has no ``stop()``. For other parameters, use signal-level ``set()``.
 
-Movable Devices with a Struct or Tuple Target
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Devices with a Struct or Tuple Target
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-A ``Drivable`` module whose ``target`` or ``value`` is a SECoP struct or tuple
-is a :class:`~secop_ophyd.SECoPDevices.SECoPCompositeMoveableDevice`. The
-class is chosen automatically when the node is connected and when device
-classes are generated.
+The ``target`` and ``value`` of a ``Writable`` or ``Drivable`` module may be a
+SECoP struct or tuple. Such a ``Drivable`` is a
+:class:`~secop_ophyd.SECoPDevices.SECoPCompositeMoveableDevice`; the class is
+chosen automatically when the node is connected and when device classes are
+generated. A ``Writable`` is a
+:class:`~secop_ophyd.SECoPDevices.SECoPWritableDevice` for every datatype.
 
 Its position has two forms, because a Bluesky event can only hold scalars and
 arrays:
@@ -267,8 +269,8 @@ arrays:
     # the same readback, member by member
     await device.stage.value_x.get_value()  # 1.0
 
-``set()`` is the only way to change the target: there is no signal-level
-``target.set()``, and the member signals are read-only. In a generated device
+``set()`` is the only way to change a struct or tuple target: there is no
+signal-level ``target.set()``, and the member signals are read-only. In a generated device
 class the target is typed with a ``TypedDict`` (or a ``tuple[...]``), so a type
 checker reports a missing member or a wrong member type.
 
