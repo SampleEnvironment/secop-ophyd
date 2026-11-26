@@ -9,16 +9,19 @@ import pytest
 from frappy.datatypes import ArrayOf, FloatRange, StringType
 from ophyd_async.core import SignalR, SignalRW, StrictEnum, SubsetEnum
 
-from secop_ophyd.GenNodeCode import get_type_prop
-from secop_ophyd.SECoPDevices import (
+from secop_ophyd.datatypes import (
+    SECoPdtype,
+    get_type_prop,
+    module_property_signals,
+    property_dtype_and_value,
+)
+from secop_ophyd.devices import (
     ParameterMemberType,
     ParameterType,
     SECoPMoveableDevice,
     SECoPNodeDevice,
     SECoPReadableDevice,
 )
-from secop_ophyd.SECoPSignal import module_property_signals, property_dtype_and_value
-from secop_ophyd.util import SECoPdtype
 
 
 async def test_repeated_connect(cryo_sim):

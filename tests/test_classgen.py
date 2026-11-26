@@ -10,9 +10,9 @@ from pathlib import Path
 from frappy.datatypes import StructOf
 from ophyd_async.core import SignalR, init_devices
 
-from secop_ophyd.GenNodeCode import (
+from secop_ophyd.codegen import GenNodeCode
+from secop_ophyd.codegen.model import (
     CommandAttribute,
-    GenNodeCode,
     Method,
     ModuleAttribute,
     ModuleClass,
@@ -22,7 +22,7 @@ from secop_ophyd.GenNodeCode import (
     TypedDictClass,
     TypedDictMember,
 )
-from secop_ophyd.SECoPDevices import (
+from secop_ophyd.devices import (
     ParameterType,
     PropertyType,
     SECoPCompositeMoveableDevice,
@@ -100,7 +100,7 @@ def test_build_command_signature_unravels_struct_argument():
     to None. A trailing 'wait_for_idle' keyword-only param is always added."""
     from frappy.datatypes import BoolType, CommandType, IntRange
 
-    from secop_ophyd.util import build_command_signature
+    from secop_ophyd.datatypes import build_command_signature
 
     cmd_datatype = CommandType(
         argument=StructOf(a=IntRange(), b=BoolType(), optional=["b"]), result=None
@@ -121,7 +121,7 @@ def test_build_command_signature_enum_argument():
     from frappy.datatypes import CommandType, EnumType
     from ophyd_async.core import StrictEnum
 
-    from secop_ophyd.util import build_command_signature
+    from secop_ophyd.datatypes import build_command_signature
 
     cmd_datatype = CommandType(argument=EnumType(LOW=0, HIGH=1), result=None)
     sig = build_command_signature(cmd_datatype)
@@ -138,7 +138,7 @@ def test_build_command_signature_enum_result():
     from frappy.datatypes import CommandType, EnumType
     from ophyd_async.core import StrictEnum
 
-    from secop_ophyd.util import build_command_signature
+    from secop_ophyd.datatypes import build_command_signature
 
     cmd_datatype = CommandType(argument=None, result=EnumType(OFF=0, ON=1))
     sig = build_command_signature(cmd_datatype)
@@ -155,7 +155,7 @@ def test_build_command_signature_enum_struct_member():
     from frappy.datatypes import CommandType, EnumType, IntRange
     from ophyd_async.core import StrictEnum
 
-    from secop_ophyd.util import build_command_signature
+    from secop_ophyd.datatypes import build_command_signature
 
     cmd_datatype = CommandType(
         argument=StructOf(preset=EnumType(preset_01=1, preset_02=2), other=IntRange()),
@@ -180,7 +180,7 @@ def test_build_command_signature_reuses_annotated_enum_argument():
     from frappy.datatypes import CommandType, EnumType
     from ophyd_async.core import StrictEnum
 
-    from secop_ophyd.util import build_command_signature
+    from secop_ophyd.datatypes import build_command_signature
 
     class SomeGeneratedArgEnum(StrictEnum):
         LOW = "low"
@@ -209,7 +209,7 @@ def test_build_command_signature_reuses_annotated_enum_result():
     from frappy.datatypes import CommandType, EnumType
     from ophyd_async.core import StrictEnum
 
-    from secop_ophyd.util import build_command_signature
+    from secop_ophyd.datatypes import build_command_signature
 
     class SomeGeneratedResultEnum(StrictEnum):
         OK = "ok"
@@ -236,7 +236,7 @@ def test_build_command_signature_ignores_annotated_signature_for_struct():
     from frappy.datatypes import CommandType, EnumType
     from ophyd_async.core import StrictEnum
 
-    from secop_ophyd.util import build_command_signature
+    from secop_ophyd.datatypes import build_command_signature
 
     class SomeGeneratedArgEnum(StrictEnum):
         LOW = "low"
@@ -269,7 +269,7 @@ def test_build_command_signature_no_reuse_when_no_annotation():
     from frappy.datatypes import CommandType, EnumType
     from ophyd_async.core import StrictEnum
 
-    from secop_ophyd.util import build_command_signature
+    from secop_ophyd.datatypes import build_command_signature
 
     cmd_datatype = CommandType(argument=EnumType(LOW=0, HIGH=1), result=None)
     sig = build_command_signature(cmd_datatype)
@@ -289,7 +289,7 @@ def test_command_backend_preserves_annotated_enum_end_to_end():
     from frappy.datatypes import CommandType, EnumType
     from ophyd_async.core import StrictEnum
 
-    from secop_ophyd.SECoPSignal import SECoPCommandBackend
+    from secop_ophyd.signals import SECoPCommandBackend
     from secop_ophyd.util import Path as SECoPPath
 
     class SomeGeneratedArgEnum(StrictEnum):

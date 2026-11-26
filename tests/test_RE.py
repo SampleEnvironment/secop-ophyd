@@ -4,7 +4,7 @@ import warnings
 import bluesky.plan_stubs as bps
 from bluesky.plans import count
 
-from secop_ophyd.SECoPDevices import SECoPNodeDevice
+from secop_ophyd.devices import SECoPNodeDevice
 
 warnings.filterwarnings(
     "ignore",

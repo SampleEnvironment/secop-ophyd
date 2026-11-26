@@ -10,14 +10,9 @@ import numpy as np
 import pytest
 from ophyd_async.core import Command, TriggerableCommand
 
-from secop_ophyd.SECoPDevices import (
-    BUSY,
-    ERROR,
-    IDLE,
-    SECoPMoveableDevice,
-    SECoPNodeDevice,
-)
-from secop_ophyd.SECoPDevices import _status_code as _code_of
+from secop_ophyd.devices import SECoPMoveableDevice, SECoPNodeDevice
+from secop_ophyd.devices.readable import BUSY, ERROR, IDLE
+from secop_ophyd.devices.readable import _status_code as _code_of
 
 SPEED = 20.0  # mm/s
 

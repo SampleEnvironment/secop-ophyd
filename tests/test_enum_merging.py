@@ -1,9 +1,9 @@
 """Test enum merging logic for StrictEnum vs SupersetEnum."""
 
-from secop_ophyd.GenNodeCode import (
+from secop_ophyd.codegen import GenNodeCode
+from secop_ophyd.codegen.model import (
     EnumClass,
     EnumMember,
-    GenNodeCode,
     ModuleClass,
     ParameterAttribute,
 )
@@ -70,7 +70,7 @@ def test_different_enums_use_superset(clean_generated_file):
     )
 
     # Add module classes with these enums
-    from secop_ophyd.GenNodeCode import ModuleClass
+    from secop_ophyd.codegen.model import ModuleClass
 
     mod1 = ModuleClass(name="Module1", bases=["Device"], enums=[enum1])
     mod2 = ModuleClass(name="Module2", bases=["Device"], enums=[enum2])
@@ -102,7 +102,7 @@ def test_single_enum_uses_strict(clean_generated_file):
         ],
     )
 
-    from secop_ophyd.GenNodeCode import ModuleClass
+    from secop_ophyd.codegen.model import ModuleClass
 
     mod1 = ModuleClass(name="Module1", bases=["Device"], enums=[enum1])
 

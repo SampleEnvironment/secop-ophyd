@@ -38,7 +38,7 @@ First, we set up the Bluesky Run Engine with standard callbacks:
     from bluesky.log import config_bluesky_logging
 
     from ophyd_async.core import init_devices
-    from secop_ophyd.SECoPDevices import SECoPNodeDevice
+    from secop_ophyd.devices import SECoPNodeDevice
 
     # Configure logging
     config_bluesky_logging(level='WARNING')
@@ -60,7 +60,7 @@ First, we set up the Bluesky Run Engine with standard callbacks:
 Connecting to SECoP Nodes
 --------------------------
 
-The :class:`~secop_ophyd.SECoPDevices.SECoPNodeDevice` automatically builds the device tree
+The :class:`~secop_ophyd.devices.node.SECoPNodeDevice` automatically builds the device tree
 from the node's description upon connection:
 
 .. code-block:: python

@@ -70,6 +70,9 @@ autodoc2_output_dir = "_api"
 # Don't document private things
 autodoc2_hidden_objects = {"private", "dunder", "inherited"}
 
+# Modules kept only so that old import paths keep working
+autodoc2_skip_module_regexes = [r"secop_ophyd\.(SECoPDevices|SECoPSignal|GenNodeCode)"]
+
 # MyST parser extensions
 myst_enable_extensions = ["colon_fence", "fieldlist"]
 

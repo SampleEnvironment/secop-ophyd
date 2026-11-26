@@ -37,7 +37,7 @@ Here's a minimal example to get you started:
 
     from bluesky import RunEngine
     from ophyd_async.core import init_devices
-    from secop_ophyd.SECoPDevices import SECoPNodeDevice
+    from secop_ophyd.devices import SECoPNodeDevice
 
     # Create a run engine
     RE = RunEngine({})
@@ -60,7 +60,7 @@ A **SEC node** can represent any number of hardware devices or services. Each no
 SECoPNodeDevice
 ~~~~~~~~~~~~~~~
 
-The :class:`~secop_ophyd.SECoPDevices.SECoPNodeDevice` class is the main entry point for creating
+The :class:`~secop_ophyd.devices.node.SECoPNodeDevice` class is the main entry point for creating
 ophyd-async devices from SECoP nodes. It:
 
 - Connects to a SECoP node via IP address and port

@@ -3,12 +3,12 @@ import numpy as np
 import pytest
 from ophyd_async.core import SignalR, SignalW
 
-from secop_ophyd.SECoPDevices import (
+from secop_ophyd.datatypes import IncompatibleSECoPDatatype
+from secop_ophyd.devices import (
     SECoPCompositeMoveableDevice,
     SECoPNodeDevice,
     SECoPReadableDevice,
 )
-from secop_ophyd.util import IncompatibleSECoPDatatype
 
 
 async def test_nested_connect(nested_struct_sim, nested_node_no_re: SECoPNodeDevice):

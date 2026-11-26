@@ -16,7 +16,7 @@ from frappy.datatypes import (
 from ophyd_async.core import init_devices
 
 from secop_ophyd.AsyncFrappyClient import AsyncSecopClient
-from secop_ophyd.SECoPDevices import SECoPDevice, SECoPNodeDevice
+from secop_ophyd.devices import SECoPDevice, SECoPNodeDevice
 from tests.util import SecNode
 
 

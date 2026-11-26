@@ -17,7 +17,7 @@ from bluesky_tiled_plugins import TiledWriter
 from tiled.client import from_uri
 from tiled.server import SimpleTiledServer
 
-from secop_ophyd.SECoPDevices import AcquisitionGoal, SECoPNodeDevice
+from secop_ophyd.devices import AcquisitionGoal, SECoPNodeDevice
 
 NUM_EVENTS = 3
 

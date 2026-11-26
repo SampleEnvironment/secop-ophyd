@@ -18,7 +18,7 @@ Connect to a SECoP node using its IP address and port:
 .. code-block:: python
 
     from ophyd_async.core import init_devices
-    from secop_ophyd.SECoPDevices import SECoPNodeDevice
+    from secop_ophyd.devices import SECoPNodeDevice
 
     with init_devices():
         device = SECoPNodeDevice('192.168.1.100:10767')
@@ -53,7 +53,7 @@ By default, devices use the SECoP node's ``equipment_id`` property as their name
 Connection Parameters
 ~~~~~~~~~~~~~~~~~~~~~
 
-The :class:`~secop_ophyd.SECoPDevices.SECoPNodeDevice` constructor accepts the following parameters:
+The :class:`~secop_ophyd.devices.node.SECoPNodeDevice` constructor accepts the following parameters:
 
 .. code-block:: python
 
@@ -235,17 +235,17 @@ For a movable device like a temperature controller, you can set the target it sh
 
 .. note::
 
-   For ``Writable`` and ``Drivable`` modules, prefer module-level ``set()`` to ensure operations complete before proceeding. A ``Writable`` (:class:`~secop_ophyd.SECoPDevices.SECoPWritableDevice`) is set the same way as a ``Drivable``, but has no ``stop()``. For other parameters, use signal-level ``set()``.
+   For ``Writable`` and ``Drivable`` modules, prefer module-level ``set()`` to ensure operations complete before proceeding. A ``Writable`` (:class:`~secop_ophyd.devices.writable.SECoPWritableDevice`) is set the same way as a ``Drivable``, but has no ``stop()``. For other parameters, use signal-level ``set()``.
 
 Devices with a Struct or Tuple Target
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The ``target`` and ``value`` of a ``Writable`` or ``Drivable`` module may be a
 SECoP struct or tuple. Such a ``Drivable`` is a
-:class:`~secop_ophyd.SECoPDevices.SECoPCompositeMoveableDevice`; the class is
+:class:`~secop_ophyd.devices.drivable.SECoPCompositeMoveableDevice`; the class is
 chosen automatically when the node is connected and when device classes are
 generated. A ``Writable`` is a
-:class:`~secop_ophyd.SECoPDevices.SECoPWritableDevice` for every datatype.
+:class:`~secop_ophyd.devices.writable.SECoPWritableDevice` for every datatype.
 
 Its position has two forms, because a Bluesky event can only hold scalars and
 arrays:
@@ -285,7 +285,7 @@ Acquisitions
 
 A module with the interface class ``Acquisition`` (or the legacy
 ``Triggerable``) is a
-:class:`~secop_ophyd.SECoPDevices.SECoPAcquisitionDevice`. One acquisition
+:class:`~secop_ophyd.devices.acquisition.control.SECoPAcquisitionDevice`. One acquisition
 cycle runs from the module's ``go`` command until its status leaves ``BUSY``.
 It can be used in step scans and as a flyer.
 
@@ -300,7 +300,7 @@ also returns the result of ``get_data``:
     RE(count([device.detector], num=5))
 
 As a flyer, ``prepare()`` takes an
-:class:`~secop_ophyd.SECoPDevices.AcquisitionGoal` (or ``None``). It writes
+:class:`~secop_ophyd.devices.acquisition.channel.AcquisitionGoal` (or ``None``). It writes
 ``goal`` and ``goal_enable`` and runs the module's own ``prepare`` command, if
 the module has one. ``kickoff()`` sends ``go`` and ``complete()`` waits until
 the cycle has ended. ``prepare()`` must come before every ``kickoff()``.
@@ -308,7 +308,7 @@ the cycle has ended. ``prepare()`` must come before every ``kickoff()``.
 .. code-block:: python
 
     import bluesky.plan_stubs as bps
-    from secop_ophyd.SECoPDevices import AcquisitionGoal
+    from secop_ophyd.devices import AcquisitionGoal
 
     def fly(det):
         yield from bps.open_run()
@@ -351,9 +351,9 @@ its ``acquisition_channels`` property, for example
 ``{"t": "timer", "monitor": "monitor"}``.
 
 The controller is a
-:class:`~secop_ophyd.SECoPDevices.SECoPAcquisitionControllerDevice`. It is used
+:class:`~secop_ophyd.devices.acquisition.control.SECoPAcquisitionControllerDevice`. It is used
 like a single-module acquisition. Its channels are
-:class:`~secop_ophyd.SECoPDevices.SECoPAcquisitionChannelDevice` child devices
+:class:`~secop_ophyd.devices.acquisition.channel.SECoPAcquisitionChannelDevice` child devices
 of the controller, named by their role, and are not module devices of the node:
 
 .. code-block:: python
@@ -482,7 +482,7 @@ and the class will be derived from ``SupersetEnum`` instead of ``StrictEnum``.
 
     from numpy import ndarray
 
-    from secop_ophyd.SECoPDevices import ParameterType as ParamT, PropertyType as PropT, SECoPMoveableDevice, SECoPNodeDevice
+    from secop_ophyd.devices import ParameterType as ParamT, PropertyType as PropT, SECoPMoveableDevice, SECoPNodeDevice
 
 
     class Cryostat_Mode_Enum(StrictEnum):

@@ -13,19 +13,18 @@ from bluesky.protocols import EventPageCollectable, Flyable, Pausable, Preparabl
 from ophyd_async.core import Device, TriggerableCommand, set_mock_value
 
 from secop_ophyd.AsyncFrappyClient import AsyncSecopClient
-from secop_ophyd.GenNodeCode import GenNodeCode
-from secop_ophyd.SECoPDevices import (
-    IDLE,
+from secop_ophyd.codegen import GenNodeCode
+from secop_ophyd.devices import (
     AcquisitionGoal,
     SECoPAcquisitionChannelDevice,
     SECoPAcquisitionControllerDevice,
     SECoPAcquisitionDevice,
     SECoPNodeDevice,
     SECoPTriggerableDevice,
-    _ReadingBuffer,
-    _status_code,
-    channel_attr_name,
 )
+from secop_ophyd.devices.acquisition.channel import _ReadingBuffer
+from secop_ophyd.devices.connector import channel_attr_name
+from secop_ophyd.devices.readable import IDLE, _status_code
 from tests.util import import_generated
 
 # defaults of the test node's FastAcquisition modules

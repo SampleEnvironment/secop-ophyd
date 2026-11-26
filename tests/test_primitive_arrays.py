@@ -5,7 +5,7 @@ from bluesky import RunEngine
 from bluesky.plans import count
 from ophyd_async.core import SignalR
 
-from secop_ophyd.SECoPDevices import SECoPNodeDevice, SECoPReadableDevice
+from secop_ophyd.devices import SECoPNodeDevice, SECoPReadableDevice
 
 
 def test_primitive_arrays(
