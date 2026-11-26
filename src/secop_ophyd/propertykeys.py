@@ -28,6 +28,7 @@ MEANING = "meaning"
 # IMPLEMENTOR = "implementor"
 IMPLEMENTATION = "implementation"
 FEATURES = "features"
+ACQUISITION_CHANNELS = "acquisition_channels"
 
 
 # Accessible Properties

@@ -341,6 +341,41 @@ RunEngine pauses, the device stops a cycle that it started itself. On resume,
 the RunEngine runs the plan again from its last checkpoint, which starts a new
 cycle.
 
+Controllers and Channels
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+An acquisition can also be split over several modules: an
+``AcquisitionController`` runs the cycles, and ``AcquisitionChannel`` modules
+each hold one measured quantity. The controller lists its channels by role in
+its ``acquisition_channels`` property, for example
+``{"t": "timer", "monitor": "monitor"}``.
+
+The controller is a
+:class:`~secop_ophyd.SECoPDevices.SECoPAcquisitionControllerDevice`. It is used
+like a single-module acquisition. Its channels are
+:class:`~secop_ophyd.SECoPDevices.SECoPAcquisitionChannelDevice` child devices
+of the controller, named by their role, and are not module devices of the node:
+
+.. code-block:: python
+
+    control = device.control
+    control.t                 # the channel module 'timer'
+    control.channels          # {"t": control.t, "monitor": control.monitor}
+
+    # a step scan records the 'value' of every channel
+    RE(count([control], num=5))
+
+    # prepare() takes the goals by role
+    RE(fly(control, {"t": AcquisitionGoal(goal=10, enable=True)}))
+
+``collect()`` writes one stream per channel, named after the channel
+(``<node>-control-t``, ``<node>-control-monitor``). Each stream holds the
+``get_data`` result or the buffered updates of that channel, as described
+above. A role that is not a valid Python name, or that is already used on the
+controller, gets cleaned up: the role ``read`` becomes ``control.read_``. A
+warning names the attribute. A channel that no controller lists stays a module
+device of the node.
+
 .. note::
 
    A SECoP command whose name is also a bluesky method gets a trailing
