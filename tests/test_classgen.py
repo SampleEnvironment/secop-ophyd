@@ -1171,22 +1171,22 @@ async def test_gen_composite_movable_classes(
     await motion_node_no_re.class_from_instance(clean_generated_file)
     code = (clean_generated_file / "Motion_frappy_demo.py").read_text()
 
-    assert "class Fastmover(SECoPMoveableDevice[float]):" in code
+    assert "class FastMover(SECoPMoveableDevice[float]):" in code
     assert (
-        "class Faststructmover(SECoPCompositeMoveableDevice[Faststructmover_Target]):"
+        "class FastStructMover(SECoPCompositeMoveableDevice[FastStructMover_Target]):"
         in code
     )
     assert (
-        "class Fasttuplemover(SECoPCompositeMoveableDevice[tuple[float, float]]):"
+        "class FastTupleMover(SECoPCompositeMoveableDevice[tuple[float, float]]):"
         in code
     )
     assert (
-        "class Faststructmover_Target(TypedDict):\n"
-        '    """target of `Faststructmover`."""\n'
+        "class FastStructMover_Target(TypedDict):\n"
+        '    """target of `FastStructMover`."""\n'
         "\n"
         "    x: float\n"
         "    y: float\n"
-        "    mode: Faststructmover_Target_Mode_Enum\n"
+        "    mode: FastStructMover_Target_Mode_Enum\n"
     ) in code
 
     # a Writable is typed the same way
@@ -1194,23 +1194,23 @@ async def test_gen_composite_movable_classes(
     assert 'target_x: A[SignalR[float], ParamMemberT("target", "x")' in code
     assert 'target_0: A[SignalR[float], ParamMemberT("target", "0")' in code
 
-    assert "class Instantwritable(SECoPWritableDevice[float]):" in code
-    assert "class Slowswitch(SECoPWritableDevice[Slowswitch_Target]):" in code
+    assert "class InstantWritable(SECoPWritableDevice[float]):" in code
+    assert "class SlowSwitch(SECoPWritableDevice[SlowSwitch_Target]):" in code
     assert (
-        "class Slowswitch_Target(TypedDict):\n"
-        '    """target of `Slowswitch`."""\n'
+        "class SlowSwitch_Target(TypedDict):\n"
+        '    """target of `SlowSwitch`."""\n'
         "\n"
         "    on: bool\n"
         "    level: float\n"
     ) in code
 
     struct_cls = import_generated(clean_generated_file, "Motion_frappy_demo")
-    hints = inspect.get_annotations(struct_cls.Faststructmover)
+    hints = inspect.get_annotations(struct_cls.FastStructMover)
     assert "target" not in hints
     assert {"target_x", "target_y", "target_mode", "value_x"} <= set(hints)
-    assert "target" in inspect.get_annotations(struct_cls.Fastmover)
-    assert "target" not in inspect.get_annotations(struct_cls.Slowswitch)
-    assert "target" in inspect.get_annotations(struct_cls.Instantwritable)
+    assert "target" in inspect.get_annotations(struct_cls.FastMover)
+    assert "target" not in inspect.get_annotations(struct_cls.SlowSwitch)
+    assert "target" in inspect.get_annotations(struct_cls.InstantWritable)
 
 
 async def test_gen_composite_movable_type_checks(
@@ -1220,7 +1220,7 @@ async def test_gen_composite_movable_type_checks(
     await motion_node_no_re.class_from_instance(str(tmp_path / "devs"))
     (tmp_path / "check.py").write_text(
         "from devs.Motion_frappy_demo import (\n"
-        "    Faststructmover_Target_Mode_Enum as Mode,\n"
+        "    FastStructMover_Target_Mode_Enum as Mode,\n"
         "    Motion_frappy_demo,\n"
         ")\n"
         'node = Motion_frappy_demo("localhost:1")\n'
@@ -1253,7 +1253,7 @@ async def test_gen_composite_movable_type_checks(
     errors = {int(line.split(":")[1]): line for line in error_lines}
     assert sorted(errors) == [7, 8, 10, 12], result.stdout + result.stderr
     assert 'Missing key "mode"' in errors[7]
-    assert "Faststructmover_Target" in errors[8]
+    assert "FastStructMover_Target" in errors[8]
     assert "tuple[float, float]" in errors[10]
 
 

@@ -20,6 +20,10 @@ Device Classes
 
 .. autodoc2-object:: secop_ophyd.SECoPDevices.SECoPAcquisitionDevice
 
+.. autodoc2-object:: secop_ophyd.SECoPDevices.SECoPAcquisitionControllerDevice
+
+.. autodoc2-object:: secop_ophyd.SECoPDevices.SECoPAcquisitionChannelDevice
+
 .. autodoc2-object:: secop_ophyd.SECoPDevices.AcquisitionGoal
 
 .. autodoc2-object:: secop_ophyd.SECoPDevices.SECoPWritableDevice

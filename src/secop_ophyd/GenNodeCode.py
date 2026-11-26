@@ -14,16 +14,20 @@ from frappy.datatypes import CommandType, DataType, EnumType, StructOf, TupleOf
 from jinja2 import Environment, PackageLoader, select_autoescape
 from ophyd_async.core import SignalR, SignalRW, SignalW
 from ophyd_async.core import StandardReadableFormat as Format
+from ophyd_async.core._device import DEVICE_RESERVED_ATTRS
 
 from secop_ophyd.SECoPDevices import (
     IGNORED_PROPS,
+    AcquisitionChannelType,
     ParameterMemberType,
     ParameterType,
     PropertyType,
     SECoPCompositeMoveableDevice,
     SECoPMoveableDevice,
     SECoPWritableDevice,
+    acquisition_channels,
     class_from_interface,
+    clean_identifier,
     command_attr_name,
 )
 from secop_ophyd.SECoPSignal import (
@@ -36,10 +40,35 @@ from secop_ophyd.util import (
     build_command_signature,
     classify_datatype,
     command_dtype_to_annotation_str,
+    command_result_python_type,
     get_composite_members,
     optional_struct_members,
+    python_type_to_str,
     secop_enum_name_to_python,
 )
+
+
+def _upper_first(word: str) -> str:
+    """``word`` as part of a class name: a CamelCase word keeps its case
+    (``FastController``), any other is capitalized (``OPHYD`` -> ``Ophyd``)."""
+    if word.islower() or word.isupper():
+        return word.capitalize()
+    return word[:1].upper() + word[1:]
+
+
+def _class_description(module_descriptions: list[tuple[str, str]]) -> str:
+    """Docstring of a module class: the description of its module, or -- for
+    a class of several modules with different descriptions -- the description
+    of each module."""
+    descriptions = {description for _, description in module_descriptions}
+    if len(descriptions) == 1:
+        return module_descriptions[0][1]
+    lines = ["Class of the modules:", ""]
+    for module, description in module_descriptions:
+        first, *rest = (description or "").split("\n")
+        lines.append(f"- {module}: {first}".rstrip())
+        lines.extend(f"  {line}".rstrip() for line in rest)
+    return "\n".join(lines)
 
 
 def internalize_name(name: str) -> str:
@@ -120,6 +149,17 @@ class ModuleAttribute:
 
     name: str
     type: str
+
+
+@dataclass
+class ChannelAttribute:
+    """A channel device of an acquisition controller: ``name`` (from its
+    role), ``type`` (its module class) and the annotation naming its role and
+    module."""
+
+    name: str
+    type: str
+    annotation: str
 
 
 @dataclass
@@ -213,6 +253,10 @@ class ModuleClass:
     description: str = ""
     enums: list[EnumClass] = field(default_factory=list)  # Enum classes for this module
     typed_dicts: list[TypedDictClass] = field(default_factory=list)
+    # channel devices of an acquisition controller
+    channels: list[ChannelAttribute] = field(default_factory=list)
+    # (module name, description) of every module of this class
+    module_descriptions: list[tuple[str, str]] = field(default_factory=list)
 
 
 @dataclass
@@ -284,6 +328,11 @@ class GenNodeCode:
         self.add_import("secop_ophyd.SECoPDevices", "SECoPCommunicatorDevice")
         self.add_import("secop_ophyd.SECoPDevices", "SECoPReadableDevice")
         self.add_import("secop_ophyd.SECoPDevices", "SECoPAcquisitionDevice")
+        self.add_import("secop_ophyd.SECoPDevices", "SECoPAcquisitionControllerDevice")
+        self.add_import("secop_ophyd.SECoPDevices", "SECoPAcquisitionChannelDevice")
+        self.add_import(
+            "secop_ophyd.SECoPDevices", "AcquisitionChannelType as ChannelT"
+        )
         self.add_import("secop_ophyd.SECoPDevices", "SECoPWritableDevice")
         self.add_import("secop_ophyd.SECoPDevices", "SECoPMoveableDevice")
         self.add_import("secop_ophyd.SECoPDevices", "SECoPCompositeMoveableDevice")
@@ -343,6 +392,8 @@ class GenNodeCode:
         enum_classes: list[EnumClass] | None = None,
         commands: list[CommandAttribute] | None = None,
         typed_dicts: list[TypedDictClass] | None = None,
+        channels: list[ChannelAttribute] | None = None,
+        module_name: str | None = None,
     ):
         """Add a module class to be generated.
 
@@ -361,6 +412,12 @@ class GenNodeCode:
             (cls for cls in self.module_classes if cls.name == module_cls), None
         )
         if existing_class:
+            if module_name is not None:
+                existing_class.module_descriptions.append((module_name, description))
+                existing_class.description = _class_description(
+                    existing_class.module_descriptions
+                )
+
             # Optional properties (e.g. 'meaning', 'group') may be set on only
             # some instances: annotate only those that all instances have,
             # auto_fill_signals adds the rest at connect
@@ -389,6 +446,10 @@ class GenNodeCode:
             description=description,
             enums=enum_classes or [],
             typed_dicts=typed_dicts or [],
+            channels=channels or [],
+            module_descriptions=(
+                [] if module_name is None else [(module_name, description)]
+            ),
         )
         self.module_classes.append(mod_cls)
 
@@ -461,7 +522,19 @@ class GenNodeCode:
         node_module_attrs: list[ModuleAttribute] = []
         node_property_attrs: list[PropertyAttribute] = []
 
-        for modname, moddescr in modules.items():
+        # the channels of acquisition controllers are child devices of their
+        # controller, not module devices of the node: generate their classes
+        # first, the controller classes refer to them
+        channel_modules = {
+            channel
+            for moddescr in modules.values()
+            for channel in acquisition_channels(moddescr).values()
+        }
+        module_class_names: dict[str, str] = {}
+
+        for modname, moddescr in sorted(
+            modules.items(), key=lambda item: item[0] not in channel_modules
+        ):
             #  separate accessibles into command and parameters
             parameters = {}
             commands = {}
@@ -508,7 +581,17 @@ class GenNodeCode:
                 module_class.replace(" ", "_").replace("-", "_").split("_")
             )
 
-            module_class = "".join(word.capitalize() for word in module_class_list)
+            # keep the case inside CamelCase words: FastController stays one
+            module_class = "".join(_upper_first(word) for word in module_class_list)
+
+            # a controller class declares its channels, which differ between
+            # controllers of one implementation: one class per controller
+            controller_channels = acquisition_channels(properties)
+            if controller_channels:
+                module_class += "".join(
+                    _upper_first(word) for word in modname.replace("-", "_").split("_")
+                )
+            module_class_names[modname] = module_class
 
             # Module enum classes
             module_enum_classes = []
@@ -552,7 +635,7 @@ class GenNodeCode:
                         arg_type = enum_cls.name
 
                 return_type = (
-                    command_dtype_to_annotation_str(res_dt)
+                    python_type_to_str(command_result_python_type(res_dt))
                     if res_dt is not None
                     else None
                 )
@@ -809,21 +892,47 @@ class GenNodeCode:
                     for base in module_bases
                 ]
 
+            # channel devices of an acquisition controller, named by role
+            taken = (
+                {param.name for param in mod_parameters}
+                | {prop.name for prop in module_properties}
+                | {cmd.name for cmd in mod_commands}
+            )
+            mod_channels: list[ChannelAttribute] = []
+            for role, channel_module in controller_channels.items():
+                attr_name = clean_identifier(role)
+                while attr_name in DEVICE_RESERVED_ATTRS or attr_name in taken:
+                    attr_name += "_"
+                taken.add(attr_name)
+                mod_channels.append(
+                    ChannelAttribute(
+                        name=attr_name,
+                        type=module_class_names[channel_module],
+                        annotation=repr(AcquisitionChannelType(role, channel_module)),
+                    )
+                )
+
             self.add_mod_class(
                 module_cls=module_class,
                 bases=module_bases,
                 parameters=mod_parameters,
                 properties=module_properties,
                 cmd_plans=command_plans,
-                description=properties.get("description", ""),
+                description=self._normalize_description(
+                    properties.get("description", "")
+                ),
                 enum_classes=module_enum_classes,
                 commands=mod_commands,
                 typed_dicts=module_typed_dicts,
+                module_name=modname,
+                channels=mod_channels,
             )
 
             # Add to node attributes
-            # Type the None explicitly as str | None to match other entries
-            node_module_attrs.append(ModuleAttribute(name=modname, type=module_class))
+            if modname not in channel_modules:
+                node_module_attrs.append(
+                    ModuleAttribute(name=modname, type=module_class)
+                )
 
         # Process module properties
         for prop_name, property_value in node_properties.items():
@@ -864,6 +973,8 @@ class GenNodeCode:
         self.add_import("secop_ophyd.SECoPDevices", "SECoPWritableDevice")
         self.add_import("secop_ophyd.SECoPDevices", "SECoPMoveableDevice")
         self.add_import("secop_ophyd.SECoPDevices", "SECoPAcquisitionDevice")
+        self.add_import("secop_ophyd.SECoPDevices", "SECoPAcquisitionControllerDevice")
+        self.add_import("secop_ophyd.SECoPDevices", "SECoPAcquisitionChannelDevice")
 
     def generate_code(self) -> str:
         """Generate Python code using Jinja2 template.

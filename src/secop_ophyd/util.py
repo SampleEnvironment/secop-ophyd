@@ -854,6 +854,23 @@ def command_dtype_to_python_type(datatype: DataType) -> type:
     return COMMAND_DTYPE_MAPPING[datatype.__class__]
 
 
+def is_numeric_array(datatype: DataType | None) -> bool:
+    """Whether ``datatype`` is a (possibly nested) array of numbers or bools."""
+    if not isinstance(datatype, ArrayOf):
+        return False
+    while isinstance(datatype, ArrayOf):
+        datatype = datatype.members
+    return isinstance(datatype, (FloatRange, IntRange, ScaledInteger, BoolType))
+
+
+def command_result_python_type(datatype: DataType) -> type:
+    """Map a SECoP command result datatype to the python type the command
+    returns: a numpy array for an array of numbers, as for a parameter."""
+    if is_numeric_array(datatype):
+        return np.ndarray
+    return command_dtype_to_python_type(datatype)
+
+
 def _dynamic_enum_class(enum_dt: EnumType, context_name: str) -> type[StrictEnum]:
     """Dynamically build a StrictEnum subclass with the real SECoP member
     names/values, for a command signature annotation built at pure-runtime
@@ -997,7 +1014,7 @@ def build_command_signature(
         return_annotation = reused or _dynamic_enum_class(res_dt, "result")
     else:
         return_annotation = (
-            command_dtype_to_python_type(res_dt) if res_dt is not None else None
+            command_result_python_type(res_dt) if res_dt is not None else None
         )
     return inspect.Signature(params, return_annotation=return_annotation)
 

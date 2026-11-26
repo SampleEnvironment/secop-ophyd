@@ -47,7 +47,7 @@ class {{ td.name }}(TypedDict):
 {# Module classes section #}
 {% for module_cls in module_classes %}
 class {{ module_cls.name }}({{ module_cls.bases | join(', ') }}):
-    """{{ module_cls.description or 'Generated module class' }}"""
+    """{{ (module_cls.description or 'Generated module class') | indent(4) }}"""
 {%- if module_cls.properties %}
 
     # Module Properties
@@ -104,6 +104,13 @@ class {{ module_cls.name }}({{ module_cls.bases | join(', ') }}):
     """{{ doc_lines | join('\n\n    ') }}
     """
 {%- endif %}
+{%- endfor %}
+{%- endif %}
+{%- if module_cls.channels %}
+
+    # Acquisition Channels
+{%- for ch in module_cls.channels %}
+    {{ ch.name }}: A[{{ ch.type }}, {{ ch.annotation }}]
 {%- endfor %}
 {%- endif %}
 {%- if module_cls.methods %}
