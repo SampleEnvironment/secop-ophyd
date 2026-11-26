@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from enum import Enum
 from functools import cached_property
 from logging import Logger
-from typing import Any, Dict, Generic, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Dict, Generic, TypeVar, cast
 
 import bluesky.plan_stubs as bps
 import numpy as np
@@ -61,7 +61,11 @@ from ophyd_async.core._utils import Callback
 
 from secop_ophyd.AsyncFrappyClient import AsyncSecopClient
 from secop_ophyd.logs import setup_logging
-from secop_ophyd.propertykeys import EQUIPMENT_ID, INTERFACE_CLASSES
+from secop_ophyd.propertykeys import (
+    ACQUISITION_CHANNELS,
+    EQUIPMENT_ID,
+    INTERFACE_CLASSES,
+)
 from secop_ophyd.SECoPSignal import (
     AttributeType,
     SECoPBackend,
@@ -138,6 +142,23 @@ def command_attr_name(command: str) -> str:
     """Attribute name of a SECoP command on its device: with a trailing
     underscore if the name is used by a bluesky protocol (e.g. 'prepare')."""
     return f"{command}_" if command in DEVICE_RESERVED_ATTRS else command
+
+
+def acquisition_channels(module_properties: Mapping[str, Any]) -> dict[str, str]:
+    """Role -> module name of the channels of an acquisition controller, from
+    its module properties (empty for any other module)."""
+    if "AcquisitionController" not in module_properties.get(INTERFACE_CLASSES, []):
+        return {}
+    return dict(module_properties.get(ACQUISITION_CHANNELS) or {})
+
+
+def controller_channel_modules(modules: Mapping[str, Any]) -> set[str]:
+    """The modules of a node that are channels of an acquisition controller."""
+    return {
+        channel
+        for module in modules.values()
+        for channel in acquisition_channels(module["properties"]).values()
+    }
 
 
 def clean_identifier(anystring):
@@ -332,8 +353,10 @@ class SECoPDeviceConnector(DeviceConnector):
         self.filler = DeviceFiller(
             device=device,
             signal_backend_factory=SECoPBackend[Any],
+            # child devices are modules of the node (the modules of a node, the
+            # channels of an acquisition controller)
             device_connector_factory=lambda: SECoPDeviceConnector(
-                self.sri, self._auto_fill_signals, self.loglevel, self.logdir
+                self.node_id, self._auto_fill_signals, self.loglevel, self.logdir
             ),
             command_backend_factory=SECoPCommandBackend,
         )
@@ -349,10 +372,11 @@ class SECoPDeviceConnector(DeviceConnector):
         for attr_name, child in device.children():
             if isinstance(child, Command):
                 child._connector = SECoPCommandConnector(child._connector.backend)
-            elif isinstance(child, SECoPDevice):
+            elif isinstance(child, SECoPDevice) and child._module is None:
                 # an annotated module device knows its module from its
                 # attribute name; needed for mock mode, where no node
-                # description assigns it
+                # description assigns it. A channel of an acquisition
+                # controller got its module from its annotation.
                 child.set_module(attr_name.rstrip("_"))
 
     async def connect_mock(self, device: Device, mock: LazyMock):
@@ -589,6 +613,40 @@ class SECoPDeviceConnector(DeviceConnector):
                     cmd_datatype, cmd_path, self.client, wait_for_idle_fn
                 )
 
+        if isinstance(device, SECoPAcquisitionControllerDevice):
+            self._fill_channels(device, not_filled)
+
+    def _fill_channels(
+        self, device: "SECoPAcquisitionControllerDevice", not_filled: set[str]
+    ) -> None:
+        """Fill the channels of an acquisition controller as its child
+        devices, named by their role."""
+        assert self.module is not None
+        roles = acquisition_channels(self.client.modules[self.module]["properties"])
+
+        for role, channel_module in roles.items():
+            if channel_module not in self.client.modules:
+                raise RuntimeError(
+                    f"Channel '{channel_module}' (role '{role}') of controller "
+                    f"'{self.module}' is not provided by SEC node {self.node_id}"
+                )
+            attr_name = channel_attr_name(role, device, not_filled)
+            declared = attr_name in not_filled
+            if not (self._auto_fill_signals or declared):
+                continue
+            module = self.client.modules[channel_module]
+            channel_class = class_from_interface(
+                module["properties"], module["parameters"]
+            )
+            # a declared channel is looked up by its name without trailing
+            # underscores, a new one is created under its attribute name
+            self.filler.fill_child_device(
+                attr_name.rstrip("_") if declared else attr_name, channel_class
+            )
+            channel: SECoPDevice = getattr(device, attr_name)
+            channel.set_module(channel_module)
+            channel._acquisition_role = role
+
     def _fill_node(self, device: Device):
         """Fill module devices and node properties from the node description."""
         from secop_ophyd.GenNodeCode import get_type_prop
@@ -598,7 +656,13 @@ class SECoPDeviceConnector(DeviceConnector):
 
         not_filled = {unfilled for unfilled, _ in device.children()}
 
+        # the channels of acquisition controllers are child devices of their
+        # controller, not module devices of the node
+        channel_modules = controller_channel_modules(modules)
+
         for module_name in modules.keys():
+            if module_name in channel_modules:
+                continue
             if self._auto_fill_signals or module_name in not_filled:
                 module_properties = modules[module_name]["properties"]
                 device_sub_class = class_from_interface(
@@ -700,6 +764,9 @@ class SECoPDevice(StandardReadable):
             level=loglevel,
             log_dir=logdir,
         )
+
+        # role of an acquisition channel on its controller
+        self._acquisition_role: str | None = None
 
         self._module = None
         if len(sri.split(":")) > 2:
@@ -1334,68 +1401,22 @@ class _ReadingBuffer:
         self.take(self._len)
 
 
-@dataclass
-class SECoPAcquisitionLogic(FlyableLogic[AcquisitionGoal | None, None]):
-    """Fly logic of a SECoP acquisition: ``prepare`` sets the goal and runs the
-    module's 'prepare' command, ``kickoff`` sends 'go', and ``complete`` waits
-    until the cycle has ended."""
-
-    device: "SECoPAcquisitionDevice"
-
-    async def on_prepare(self, value: AcquisitionGoal | None) -> None:
-        await self.device._prepare_cycle(value)
-
-    async def on_kickoff(self, ctx: None) -> None:
-        await self.device._start_cycle(buffer=True)
-
-    async def on_complete(self, ctx: None) -> None:
-        await self.device._finish_cycle()
-
-    async def on_stage(self) -> None:
-        self.device._clear_buffers()
-
-    async def on_unstage(self) -> None:
-        await self.device._abort_cycle()
-
-
-class SECoPAcquisitionDevice(
-    SECoPReadableDevice,
-    StandardFlyable[AcquisitionGoal | None, None],
-    EventPageCollectable,
-    Stoppable,
-    Pausable,
-):
+class SECoPAcquisitionChannelDevice(SECoPReadableDevice):
     """
-    SECoP device for a module with the interface class "Acquisition": a data
-    acquisition with a single channel, in one module. The legacy interface
-    class "Triggerable" maps here too.
+    SECoP device for a module with the interface class "AcquisitionChannel":
+    one measured quantity of a data acquisition, whose cycles its
+    `SECoPAcquisitionControllerDevice` runs. A channel listed by a controller
+    is a child device of that controller, named by its role.
 
-    One acquisition cycle runs from the 'go' command until 'status' leaves
-    BUSY. It can be run
+    ``read()`` gives its 'value', and the result of 'get_data' if the module
+    has that command. While its controller flies, the channel buffers every
+    update of 'value' (unless it has 'get_data'), for the controller's
+    ``collect_pages()``.
 
-    - step by step: ``trigger()`` runs one cycle, and ``read()`` then gives
-      its result: the 'value' at the end of the cycle, and the result of
-      'get_data' if the module has that command.
-    - as a flyer: ``prepare(AcquisitionGoal(...) | None)`` sets 'goal' and
-      'goal_enable' and runs the module's 'prepare' command (if it has one),
-      ``kickoff()`` sends 'go' and ``complete()`` waits until the cycle has
-      ended.
-
-    ``collect_pages()`` hands over the data of the cycles run as a flyer, in a
-    stream named after the device:
-
-    - with a 'get_data' command: the result of 'get_data'.
-    - without one: every update of 'value' the SEC node sent from
-      ``kickoff()`` to ``complete()``, buffered here.
-
-    ``stop()`` ends a running cycle. A RunEngine pause stops a cycle that
-    ``trigger()`` or ``kickoff()`` started: on resume, the RunEngine runs the
-    plan again from its last checkpoint, which starts a new cycle.
+    `SECoPAcquisitionDevice` is a controller and a channel in one module.
     """
 
     hinted_signals: list[str] = ["value"]
-
-    go: TriggerableCommand
 
     def __init__(
         self,
@@ -1405,18 +1426,6 @@ class SECoPAcquisitionDevice(
         loglevel=logging.INFO,
         logdir: str | None = None,
     ):
-        """Initialize SECoPAcquisitionDevice
-
-        :param sri: SECoP resource identifier ``host:port:module``
-        :param name: name of the device
-        """
-
-        # read by wait_for_idle()
-        self._success = True
-        self._stopped = False
-
-        # a cycle started by trigger()/kickoff() is running
-        self._acquiring = False
         # the result of 'get_data' was collected after its cycle ended
         self._data_collected = False
 
@@ -1428,22 +1437,10 @@ class SECoPAcquisitionDevice(
             sri=sri, name=name, connector=connector, loglevel=loglevel, logdir=logdir
         )
 
-    @cached_property
-    def flyable_logic(self) -> SECoPAcquisitionLogic:
-        return SECoPAcquisitionLogic(device=self)
-
-    # --- SEC node access -------------------------------------------------
-
     @property
     def _secclient(self) -> AsyncSecopClient | None:
         """None in mock mode, where there is no SEC node to talk to."""
         return None if self._mock is not None else self._client
-
-    def _has_command(self, command: str) -> bool:
-        if self._secclient is None:
-            # mock mode: commands are no-ops, as if the module had them all
-            return True
-        return command in self._client.modules[self._module]["commands"]
 
     @property
     def _get_data(self) -> Command | None:
@@ -1451,124 +1448,46 @@ class SECoPAcquisitionDevice(
         command = getattr(self, "get_data", None)
         return command if isinstance(command, Command) else None
 
-    @property
-    def _has_get_data(self) -> bool:
-        return self._get_data is not None
+    async def _apply_goal(self, value: AcquisitionGoal) -> None:
+        """Write 'goal' and 'goal_enable'."""
+        if value.goal is not None:
+            goal = getattr(self, "goal", None)
+            if not isinstance(goal, SignalW):
+                raise ValueError(f"{self.name} has no writable 'goal' parameter")
+            await goal.set(value.goal)
 
-    async def _exec(self, command: str) -> None:
-        if self._secclient is not None:
-            await self._secclient.exec_command(self._module, command)
+        if value.enable is not None:
+            goal_enable = getattr(self, "goal_enable", None)
+            if isinstance(goal_enable, SignalW):
+                await goal_enable.set(value.enable)
+            elif not value.enable:
+                raise ValueError(
+                    f"{self.name} has no writable 'goal_enable' parameter: "
+                    f"its goal is always active"
+                )
 
-    async def _wait_while_busy(self, action: str) -> None:
-        """Wait until the module has left BUSY, raise if it is in ERROR or
-        DISABLED then."""
-        stat_code = await _wait_while_busy(
-            self.status_0, cast(str, self._module), None, self._secclient
-        )
-        if _is_failed(stat_code):
-            self._success = False
-            text = ""
-            if isinstance(status_1 := getattr(self, "status_1", None), SignalR):
-                text = f": {await status_1.get_value()}"
-            self._logger.error(f"Module {self.name} --> ERROR/DISABLED{text}")
-            raise RuntimeError(
-                f"{action} of {self.name} failed: module entered ERROR/DISABLED "
-                f"state{text}"
-            )
+    # --- one cycle, as seen by the channel ---------------------------------
 
-    # --- acquisition cycle -----------------------------------------------
-
-    async def _prepare_cycle(self, value: AcquisitionGoal | None) -> None:
-        if value is not None:
-            if value.goal is not None:
-                goal = getattr(self, "goal", None)
-                if not isinstance(goal, SignalW):
-                    raise ValueError(f"{self.name} has no writable 'goal' parameter")
-                await goal.set(value.goal)
-
-            if value.enable is not None:
-                goal_enable = getattr(self, "goal_enable", None)
-                if isinstance(goal_enable, SignalW):
-                    await goal_enable.set(value.enable)
-                elif not value.enable:
-                    raise ValueError(
-                        f"{self.name} has no writable 'goal_enable' parameter: "
-                        f"its goal is always active"
-                    )
-
-        if self._has_command("prepare"):
-            self._logger.info(f"Preparing {self.name}")
-            await self._exec("prepare")
-            await self._wait_while_busy("Preparing")
-
-    async def _start_cycle(self, buffer: bool) -> None:
-        """Send 'go'. With ``buffer``, buffer the updates of 'value' from now
-        on (unless the module has 'get_data')."""
-        self._logger.info(f"Starting an acquisition cycle of {self.name}")
-        self._success = True
-        self._stopped = False
+    def _cycle_started(self, buffer: bool) -> None:
+        """A cycle starts. With ``buffer``, buffer the updates of 'value' from
+        now on (unless the module has 'get_data')."""
         self._data_collected = False
-        if buffer and not self._has_get_data:
+        if buffer and self._get_data is None:
             self._start_buffering()
-        self._acquiring = True
-        try:
-            await self.go.execute()
-        except BaseException:
-            self._acquiring = False
-            self._stop_buffering()
-            raise
 
-    async def _finish_cycle(self) -> None:
-        """Wait until the cycle has ended, then fetch the final 'value'."""
+    async def _cycle_ended(self) -> None:
+        """The cycle has ended: fetch the final 'value' and stop buffering."""
         try:
-            await self._wait_while_busy("Acquisition")
             # the update of the final value may only arrive after the status
             # update: ask for it, so read() and the buffer have the result
             if self._secclient is not None:
                 await self._secclient.get_parameter(
                     self._module, "value", trycache=False
                 )
-            self._logger.info(f"Acquisition cycle of {self.name} done")
         finally:
-            self._acquiring = False
             self._stop_buffering()
 
-    async def _abort_cycle(self) -> None:
-        """Stop a cycle that trigger()/kickoff() started and is still
-        running."""
-        self._stop_buffering()
-        if self._acquiring:
-            await self.stop()
-
-    def trigger(self) -> AsyncStatus:
-        """Run one acquisition cycle: send 'go' and wait until it has ended."""
-        return AsyncStatus(self._trigger())
-
-    async def _trigger(self) -> None:
-        await self._start_cycle(buffer=False)
-        await self._finish_cycle()
-
-    async def stop(self, *, success: bool = False) -> None:
-        """End a running cycle with the module's 'stop' command."""
-        self._stopped = True
-        if not self._has_command("stop"):
-            self._logger.warning(f"{self.name} has no 'stop' command")
-            return
-        self._logger.info(f"Stopping {self.name}")
-        await self._exec("stop")
-
-    async def pause(self) -> None:
-        """RunEngine pause: stop a cycle that trigger()/kickoff() started. The
-        RunEngine resumes by running the plan again from its last checkpoint,
-        which starts a new cycle, so a cycle held over the pause would not be
-        continued but mix data from before and after the pause."""
-        if self._acquiring:
-            await self.stop()
-
-    async def resume(self) -> None:
-        """RunEngine resume: nothing to do, the plan starts a new cycle."""
-
-    # --- buffering and collecting ----------------------------------------
+    # --- buffering -------------------------------------------------------
 
     def _collected_signals(self) -> list[SignalR]:
         """'value', or its members if it is a struct/tuple: buffered and
@@ -1610,19 +1529,10 @@ class SECoPAcquisitionDevice(
         for buffer in self._buffers.values():
             buffer.clear()
 
+    # --- get_data --------------------------------------------------------
+
     def _get_data_key(self) -> str:
         return f"{self.name}-get_data"
-
-    async def describe_collect(self) -> dict[str, dict[str, DataKey]]:
-        """One stream, named after the device: the result of 'get_data', or
-        the updates of 'value'."""
-        data_keys: dict[str, DataKey] = {}
-        if (get_data := self._get_data) is not None:
-            data_keys[self._get_data_key()] = await self._get_data_datakey(get_data)
-        else:
-            for signal in self._collected_signals():
-                data_keys.update(await signal.describe())
-        return {self.name: data_keys}
 
     async def _get_data_reading(self, get_data: Command) -> Reading:
         """Run 'get_data': its result, timestamped by the SEC node."""
@@ -1643,20 +1553,6 @@ class SECoPAcquisitionDevice(
             value=np.asarray(result), timestamp=qualifiers.get("t", ttime.time())
         )
 
-    async def read(self) -> dict[str, Reading]:
-        """The readings of the module, and the result of 'get_data' if the
-        module has that command."""
-        reading = await super().read()
-        if (get_data := self._get_data) is not None:
-            reading[self._get_data_key()] = await self._get_data_reading(get_data)
-        return reading
-
-    async def describe(self) -> dict[str, DataKey]:
-        description = await super().describe()
-        if (get_data := self._get_data) is not None:
-            description[self._get_data_key()] = await self._get_data_datakey(get_data)
-        return description
-
     async def _get_data_datakey(self, get_data: Command) -> DataKey:
         backend = getattr(get_data._connector, "_init_backend", None)
         res_type: SECoPdtype | None = getattr(backend, "_res_type", None)
@@ -1671,38 +1567,423 @@ class SECoPAcquisitionDevice(
         )
         return describedict_to_datakey({**res_type.get_datakey(), "source": source})
 
-    async def collect_pages(self) -> AsyncIterator[PartialEventPage]:
-        """The data collected since the last call, as one event page."""
+    async def read(self) -> dict[str, Reading]:
+        """The readings of the module, and the result of 'get_data' if the
+        module has that command."""
+        reading = await super().read()
+        if (get_data := self._get_data) is not None:
+            reading[self._get_data_key()] = await self._get_data_reading(get_data)
+        return reading
+
+    async def describe(self) -> dict[str, DataKey]:
+        description = await super().describe()
+        if (get_data := self._get_data) is not None:
+            description[self._get_data_key()] = await self._get_data_datakey(get_data)
+        return description
+
+    # --- collecting ------------------------------------------------------
+
+    async def _describe_stream(self) -> dict[str, DataKey]:
+        """The data keys of the channel's collected stream: the result of
+        'get_data', or the updates of 'value'."""
+        if (get_data := self._get_data) is not None:
+            return {self._get_data_key(): await self._get_data_datakey(get_data)}
+        data_keys: dict[str, DataKey] = {}
+        for signal in self._collected_signals():
+            data_keys.update(await signal.describe())
+        return data_keys
+
+    async def _collect_page(self, cycle_running: bool) -> PartialEventPage | None:
+        """The data collected since the last call, or None if there is none."""
         if (get_data := self._get_data) is not None:
             if self._data_collected:
                 # the result of this cycle was already handed over
-                return
+                return None
             # collected before its cycle ended: collect it again later
-            self._data_collected = not self._acquiring
+            self._data_collected = not cycle_running
             reading = await self._get_data_reading(get_data)
             key = self._get_data_key()
-            yield PartialEventPage(
+            return PartialEventPage(
                 data={key: [reading["value"]]},
                 timestamps={key: [reading["timestamp"]]},
                 time=[reading["timestamp"]],
             )
-            return
 
-        buffers = [
-            self._buffers.get(signal.name) for signal in self._collected_signals()
-        ]
+        signals = self._collected_signals()
+        buffers = [self._buffers.get(signal.name) for signal in signals]
         # the members of a struct/tuple 'value' all update together
         count = min((len(buffer) if buffer else 0) for buffer in buffers)
         if count == 0:
-            return
+            return None
         data: dict[str, list[Any]] = {}
         timestamps: dict[str, list[Any]] = {}
         time: list[float] = []
-        for signal, buffer in zip(self._collected_signals(), buffers, strict=True):
+        for signal, buffer in zip(signals, buffers, strict=True):
             assert buffer is not None
             data[signal.name], timestamps[signal.name] = buffer.take(count)
             time = time or timestamps[signal.name]
-        yield PartialEventPage(data=data, timestamps=timestamps, time=time)
+        return PartialEventPage(data=data, timestamps=timestamps, time=time)
+
+
+PrepareT_ = TypeVar("PrepareT_")
+
+
+@dataclass
+class SECoPAcquisitionLogic(FlyableLogic[PrepareT_, None]):
+    """Fly logic of a SECoP acquisition: ``prepare`` sets the goals and runs
+    the controller's 'prepare' command, ``kickoff`` sends 'go', and
+    ``complete`` waits until the cycle has ended."""
+
+    device: "_AcquisitionControl[PrepareT_]"
+
+    async def on_prepare(self, value: PrepareT_) -> None:
+        await self.device._prepare_cycle(value)
+
+    async def on_kickoff(self, ctx: None) -> None:
+        await self.device._start_cycle(buffer=True)
+
+    async def on_complete(self, ctx: None) -> None:
+        await self.device._finish_cycle()
+
+    async def on_stage(self) -> None:
+        for channel in self.device._acquisition_channels():
+            channel._clear_buffers()
+
+    async def on_unstage(self) -> None:
+        await self.device._abort_cycle()
+
+
+class _AcquisitionControl(
+    StandardFlyable[PrepareT_, None],
+    EventPageCollectable,
+    Stoppable,
+    Pausable,
+    Generic[PrepareT_],
+):
+    """The control of acquisition cycles: the controller side of
+    `SECoPAcquisitionControllerDevice` and `SECoPAcquisitionDevice`.
+
+    One acquisition cycle runs from the 'go' command until 'status' leaves
+    BUSY. It can be run
+
+    - step by step: ``trigger()`` runs one cycle, and ``read()`` then gives
+      the result of each channel: its 'value' at the end of the cycle, and
+      the result of 'get_data' if it has that command.
+    - as a flyer: ``prepare()`` sets the goals and runs the module's 'prepare'
+      command (if it has one), ``kickoff()`` sends 'go' and ``complete()``
+      waits until the cycle has ended.
+
+    ``collect_pages()`` hands over the data of the cycles run as a flyer, one
+    stream per channel, named after the channel:
+
+    - for a channel with a 'get_data' command: the result of 'get_data'.
+    - for one without: every update of 'value' the SEC node sent from
+      ``kickoff()`` to ``complete()``, buffered by the channel.
+
+    ``stop()`` ends a running cycle. A RunEngine pause stops a cycle that
+    ``trigger()`` or ``kickoff()`` started: on resume, the RunEngine runs the
+    plan again from its last checkpoint, which starts a new cycle.
+    """
+
+    go: TriggerableCommand
+
+    if TYPE_CHECKING:
+        # provided by SECoPDevice; not annotated at runtime, where the
+        # DeviceFiller would take a Signal annotation for a declared child
+        _client: AsyncSecopClient
+        _module: str | None
+        _logger: Logger
+        status_0: SignalR
+
+    # a cycle started by trigger()/kickoff() is running
+    _acquiring = False
+    # read by wait_for_idle()
+    _success = True
+    _stopped = False
+
+    @abstractmethod
+    def _acquisition_channels(self) -> list[SECoPAcquisitionChannelDevice]:
+        """The channels of the acquisition."""
+
+    @abstractmethod
+    async def _apply_goals(self, value: PrepareT_) -> None:
+        """Write the goals given to ``prepare()`` to the channels."""
+
+    @cached_property
+    def flyable_logic(self) -> SECoPAcquisitionLogic[PrepareT_]:
+        return SECoPAcquisitionLogic(device=self)
+
+    # --- SEC node access -------------------------------------------------
+
+    @property
+    def _node_client(self) -> AsyncSecopClient | None:
+        """None in mock mode, where there is no SEC node to talk to."""
+        return None if self._mock is not None else self._client
+
+    def _has_command(self, command: str) -> bool:
+        if self._node_client is None:
+            # mock mode: commands are no-ops, as if the module had them all
+            return True
+        return command in self._client.modules[self._module]["commands"]
+
+    async def _exec(self, command: str) -> None:
+        if (client := self._node_client) is not None:
+            await client.exec_command(self._module, command)
+
+    async def _wait_while_busy(self, action: str) -> None:
+        """Wait until the module has left BUSY, raise if it is in ERROR or
+        DISABLED then."""
+        stat_code = await _wait_while_busy(
+            self.status_0, cast(str, self._module), None, self._node_client
+        )
+        if _is_failed(stat_code):
+            self._success = False
+            text = ""
+            if isinstance(status_1 := getattr(self, "status_1", None), SignalR):
+                text = f": {await status_1.get_value()}"
+            self._logger.error(f"Module {self.name} --> ERROR/DISABLED{text}")
+            raise RuntimeError(
+                f"{action} of {self.name} failed: module entered ERROR/DISABLED "
+                f"state{text}"
+            )
+
+    # --- acquisition cycle -----------------------------------------------
+
+    async def _prepare_cycle(self, value: PrepareT_) -> None:
+        await self._apply_goals(value)
+        if self._has_command("prepare"):
+            self._logger.info(f"Preparing {self.name}")
+            await self._exec("prepare")
+            await self._wait_while_busy("Preparing")
+
+    async def _start_cycle(self, buffer: bool) -> None:
+        """Send 'go'. With ``buffer``, the channels buffer the updates of
+        their 'value' from now on."""
+        self._logger.info(f"Starting an acquisition cycle of {self.name}")
+        self._success = True
+        self._stopped = False
+        channels = self._acquisition_channels()
+        for channel in channels:
+            channel._cycle_started(buffer)
+        self._acquiring = True
+        try:
+            await self.go.execute()
+        except BaseException:
+            self._acquiring = False
+            for channel in channels:
+                channel._stop_buffering()
+            raise
+
+    async def _finish_cycle(self) -> None:
+        """Wait until the cycle has ended, then fetch the final values."""
+        channels = self._acquisition_channels()
+        try:
+            await self._wait_while_busy("Acquisition")
+        finally:
+            self._acquiring = False
+            for result in await asyncio.gather(
+                *(channel._cycle_ended() for channel in channels),
+                return_exceptions=True,
+            ):
+                if isinstance(result, BaseException):
+                    raise result
+        self._logger.info(f"Acquisition cycle of {self.name} done")
+
+    async def _abort_cycle(self) -> None:
+        """Stop a cycle that trigger()/kickoff() started and is still
+        running."""
+        for channel in self._acquisition_channels():
+            channel._stop_buffering()
+        if self._acquiring:
+            await self.stop()
+
+    def trigger(self) -> AsyncStatus:
+        """Run one acquisition cycle: send 'go' and wait until it has ended."""
+        return AsyncStatus(self._trigger())
+
+    async def _trigger(self) -> None:
+        await self._start_cycle(buffer=False)
+        await self._finish_cycle()
+
+    async def stop(self, *, success: bool = False) -> None:
+        """End a running cycle with the module's 'stop' command."""
+        self._stopped = True
+        if not self._has_command("stop"):
+            self._logger.warning(f"{self.name} has no 'stop' command")
+            return
+        self._logger.info(f"Stopping {self.name}")
+        await self._exec("stop")
+
+    async def pause(self) -> None:
+        """RunEngine pause: stop a cycle that trigger()/kickoff() started. The
+        RunEngine resumes by running the plan again from its last checkpoint,
+        which starts a new cycle, so a cycle held over the pause would not be
+        continued but mix data from before and after the pause."""
+        if self._acquiring:
+            await self.stop()
+
+    async def resume(self) -> None:
+        """RunEngine resume: nothing to do, the plan starts a new cycle."""
+
+    # --- collecting ------------------------------------------------------
+
+    async def describe_collect(self) -> dict[str, dict[str, DataKey]]:
+        """One stream per channel, named after the channel."""
+        return {
+            channel.name: await channel._describe_stream()
+            for channel in self._acquisition_channels()
+        }
+
+    async def collect_pages(self) -> AsyncIterator[PartialEventPage]:
+        """The data collected since the last call: one event page per channel
+        that has new data."""
+        for channel in self._acquisition_channels():
+            page = await channel._collect_page(cycle_running=self._acquiring)
+            if page is not None:
+                yield page
+
+
+class SECoPAcquisitionDevice(
+    _AcquisitionControl[AcquisitionGoal | None], SECoPAcquisitionChannelDevice
+):
+    """
+    SECoP device for a module with the interface class "Acquisition": a data
+    acquisition with a single channel, in one module. The legacy interface
+    class "Triggerable" maps here too.
+
+    It runs like a `SECoPAcquisitionControllerDevice` whose only channel is the
+    module itself: ``trigger()`` runs one cycle, and ``read()`` then gives
+    'value' (and the result of 'get_data'). ``prepare()`` takes an
+    `AcquisitionGoal` (or None), and ``collect_pages()`` hands over one stream,
+    named after the device.
+    """
+
+    def _acquisition_channels(self) -> list[SECoPAcquisitionChannelDevice]:
+        return [self]
+
+    async def _apply_goals(self, value: AcquisitionGoal | None) -> None:
+        if value is not None:
+            await self._apply_goal(value)
+
+
+class AcquisitionChannelType:
+    """Annotation for the channel devices of an acquisition controller: the
+    role of the channel and the SECoP module it is."""
+
+    def __init__(self, role: str, module: str) -> None:
+        self.role = role
+        self.module = module
+
+    def __repr__(self) -> str:
+        """Return repr suitable for code generation in annotations."""
+        return f"ChannelT({self.role!r}, {self.module!r})"
+
+    def __call__(self, parent: Device, child: Device):
+        if isinstance(child, SECoPDevice):
+            child.set_module(self.module)
+            child._acquisition_role = self.role
+
+
+class SECoPAcquisitionControllerDevice(
+    _AcquisitionControl[Mapping[str, AcquisitionGoal] | None], SECoPDevice
+):
+    """
+    SECoP device for a module with the interface class "AcquisitionController":
+    the control of a data acquisition whose measured quantities are separate
+    "AcquisitionChannel" modules.
+
+    The channels listed in the module property 'acquisition_channels' are child
+    devices of the controller, named by their role there (``control.t`` for
+    the role "t"), and are no module devices of the node. ``channels`` maps
+    each role to its channel device.
+
+    ``trigger()`` runs one cycle, and ``read()`` then gives the result of every
+    channel. ``prepare()`` takes the goals of the channels by role
+    (``{"t": AcquisitionGoal(goal=10, enable=True)}``) or None, and
+    ``collect_pages()`` hands over one stream per channel, named after the
+    channel. See `_AcquisitionControl` for the details of a cycle.
+    """
+
+    hinted_signals: list[str] = []
+    mandatory_parameters: list[str] = ["status"]
+
+    # mocked: start IDLE
+    _mock_class: type[DeviceMock] = SECoPReadableMock
+
+    def __init__(
+        self,
+        sri: str = "",  # SECoP resource identifier host:port:optional[module]
+        name: str = "",
+        connector: SECoPDeviceConnector | None = None,
+        loglevel=logging.INFO,
+        logdir: str | None = None,
+    ):
+        self.status_0: SignalR
+
+        super().__init__(
+            sri=sri, name=name, connector=connector, loglevel=loglevel, logdir=logdir
+        )
+
+    # wait until the controller is no longer BUSY
+    wait_for_idle = SECoPReadableDevice.wait_for_idle
+
+    @property
+    def channels(self) -> dict[str, SECoPAcquisitionChannelDevice]:
+        """The channel devices by role."""
+        return {
+            child._acquisition_role: child
+            for _, child in self.children()
+            if isinstance(child, SECoPAcquisitionChannelDevice)
+            and child._acquisition_role is not None
+        }
+
+    def _acquisition_channels(self) -> list[SECoPAcquisitionChannelDevice]:
+        return list(self.channels.values())
+
+    async def _apply_goals(self, value: Mapping[str, AcquisitionGoal] | None) -> None:
+        if value is None:
+            return
+        channels = self.channels
+        unknown = set(value) - set(channels)
+        if unknown:
+            raise ValueError(
+                f"{self.name} has no channels with the roles {sorted(unknown)} "
+                f"(roles: {sorted(channels)})"
+            )
+        await asyncio.gather(
+            *(channels[role]._apply_goal(goal) for role, goal in value.items())
+        )
+
+    async def _assign_interface_formats(self):
+        # the channels' readings are the controller's readings; skip channels
+        # registered by an earlier (mock) connect
+        channels = [
+            channel
+            for channel in self._acquisition_channels()
+            if channel.read not in self._read_funcs
+        ]
+        self.add_readables(channels, StandardReadableFormat.CHILD)
+
+
+def channel_attr_name(role: str, device: Device, declared: set[str]) -> str:
+    """Attribute name of the channel with the role ``role`` on its controller
+    ``device``: the role as a Python identifier, with trailing underscores if
+    it is used by a bluesky protocol or another attribute of the controller.
+    ``declared`` are the annotated (not yet filled) children of ``device``."""
+    name = clean_identifier(role)
+    if name in declared:
+        return name
+    attr_name = name
+    while attr_name in DEVICE_RESERVED_ATTRS or hasattr(device, attr_name):
+        attr_name += "_"
+        if attr_name in declared:
+            break
+    if attr_name != name:
+        warnings.warn(
+            f"Channel role '{role}' of {device.name} is also an attribute of the "
+            f"controller: its channel device is '{attr_name}'"
+        )
+    return attr_name
 
 
 # The interface class "Triggerable" was the working name of "Acquisition"
@@ -2228,6 +2509,8 @@ def _status_code(status_sig: SignalR, status: str) -> int:
 
 IF_CLASSES = {
     "Acquisition": SECoPAcquisitionDevice,
+    "AcquisitionController": SECoPAcquisitionControllerDevice,
+    "AcquisitionChannel": SECoPAcquisitionChannelDevice,
     "Triggerable": SECoPAcquisitionDevice,
     "Drivable": SECoPMoveableDevice,
     "Writable": SECoPWritableDevice,

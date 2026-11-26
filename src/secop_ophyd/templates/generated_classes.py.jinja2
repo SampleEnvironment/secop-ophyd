@@ -106,6 +106,13 @@ class {{ module_cls.name }}({{ module_cls.bases | join(', ') }}):
 {%- endif %}
 {%- endfor %}
 {%- endif %}
+{%- if module_cls.channels %}
+
+    # Acquisition Channels
+{%- for ch in module_cls.channels %}
+    {{ ch.name }}: A[{{ ch.type }}, {{ ch.annotation }}]
+{%- endfor %}
+{%- endif %}
 {%- if module_cls.methods %}
 
     # SECoP Commands wrapped as Bluesky Plans:

@@ -10,18 +10,21 @@ import numpy as np
 import pytest
 from bluesky.plans import count
 from bluesky.protocols import EventPageCollectable, Flyable, Pausable, Preparable
-from ophyd_async.core import TriggerableCommand, set_mock_value
+from ophyd_async.core import Device, TriggerableCommand, set_mock_value
 
 from secop_ophyd.AsyncFrappyClient import AsyncSecopClient
 from secop_ophyd.GenNodeCode import GenNodeCode
 from secop_ophyd.SECoPDevices import (
     IDLE,
     AcquisitionGoal,
+    SECoPAcquisitionChannelDevice,
+    SECoPAcquisitionControllerDevice,
     SECoPAcquisitionDevice,
     SECoPNodeDevice,
     SECoPTriggerableDevice,
     _ReadingBuffer,
     _status_code,
+    channel_attr_name,
 )
 from tests.util import import_generated
 
@@ -295,6 +298,122 @@ def test_fly_plan(RE, acquisition_node):  # noqa: N803
     assert _counts(page["data"]["acq-counter-value"], last=4)
 
 
+@pytest.fixture
+async def control(acquisition_node_no_re: SECoPNodeDevice):
+    control: SECoPAcquisitionControllerDevice = acquisition_node_no_re.control
+    await _reset_controller(control)
+    yield control
+    await _reset_controller(control)
+
+
+async def _reset_controller(control) -> None:
+    await control.stop()
+    await control.fail.set(False)
+    await control.limit.set(LIMIT)
+    for channel in control.channels.values():
+        await channel.goal_enable.set(False)
+
+
+async def test_controller_and_channels(acquisition_node_no_re):
+    node = acquisition_node_no_re
+    control = node.control
+    assert type(control) is SECoPAcquisitionControllerDevice
+    for protocol in (Flyable, Preparable, EventPageCollectable, Pausable):
+        assert isinstance(control, protocol)
+
+    # the channels are children of their controller, named by role
+    assert set(control.channels) == {"t", "monitor"}
+    assert control.channels["t"] is control.t
+    assert type(control.t) is SECoPAcquisitionChannelDevice
+    assert control.t._module == "timer"
+    assert control.t.name == f"{node.name}-control-t"
+    assert control.channels["monitor"]._module == "monitor"
+    assert node.spectrum_control.channels["spectrum"]._module == "spectrum_channel"
+
+    # ... and no module devices of the node
+    children = dict(node.children())
+    for channel_module in ("timer", "monitor", "spectrum_channel"):
+        assert channel_module not in children
+    # a channel of no controller stays one
+    assert type(node.lone_channel) is SECoPAcquisitionChannelDevice
+
+
+async def test_controller_trigger(control: SECoPAcquisitionControllerDevice):
+    await control.limit.set(3)
+
+    await asyncio.wait_for(control.trigger(), 5)
+
+    reading = await control.read()
+    assert {key: r["value"] for key, r in reading.items()} == {
+        control.t.value.name: 3,
+        control.monitor.value.name: 3,
+    }
+
+
+async def test_controller_trigger_failed(control: SECoPAcquisitionControllerDevice):
+    await control.fail.set(True)
+
+    with pytest.raises(RuntimeError, match="acquisition failed"):
+        await asyncio.wait_for(control.trigger(), 5)
+
+
+async def test_controller_fly(control: SECoPAcquisitionControllerDevice):
+    await control.stage()
+    try:
+        await control.prepare({"t": AcquisitionGoal(goal=4, enable=True)})
+        assert await control.t.goal.get_value() == 4
+        await control.kickoff()
+        await asyncio.wait_for(control.complete(), 5)
+        pages = [page async for page in control.collect_pages()]
+    finally:
+        await control.unstage()
+
+    description = await control.describe_collect()
+    assert set(description) == {control.t.name, control.monitor.name}
+    by_key = {key: values for page in pages for key, values in page["data"].items()}
+    assert set(by_key) == {control.t.value.name, control.monitor.value.name}
+    for values in by_key.values():
+        assert _counts(values, last=4)
+
+
+async def test_controller_prepare_unknown_role(
+    control: SECoPAcquisitionControllerDevice,
+):
+    with pytest.raises(ValueError, match=r"no channels with the roles \['x'\]"):
+        await control.prepare({"x": AcquisitionGoal(goal=1)})
+
+
+async def test_controller_unstage_stops_running_cycle(
+    control: SECoPAcquisitionControllerDevice,
+):
+    await control.limit.set(1000)
+    await control.stage()
+    await control.prepare(None)
+    await control.kickoff()
+
+    await control.unstage()
+
+    assert (await control.status_1.get_value(cached=False)) == "stopped"
+
+
+def test_channel_attr_name():
+    class Controller(Device):
+        def __init__(self):
+            self.status = 1
+            super().__init__(name="ctrl")
+
+    controller = Controller()
+    assert channel_attr_name("t", controller, set()) == "t"
+    assert channel_attr_name("1st channel", controller, set()) == "_1st_channel"
+    # an annotated channel keeps its name
+    assert channel_attr_name("status", controller, {"status"}) == "status"
+    # clashes with an attribute or a bluesky protocol method get underscores
+    with pytest.warns(UserWarning, match="'status_'"):
+        assert channel_attr_name("status", controller, set()) == "status_"
+    with pytest.warns(UserWarning, match="'read_'"):
+        assert channel_attr_name("read", controller, set()) == "read_"
+
+
 async def test_generated_acquisition(acquisition_sim, tmp_path, logger):
     client = AsyncSecopClient(
         host="localhost", port=str(acquisition_sim.port), log=logger
@@ -315,6 +434,15 @@ async def test_generated_acquisition(acquisition_sim, tmp_path, logger):
     # SECoP 'prepare' must not shadow bluesky's prepare()
     assert "prepare_: TriggerableCommand" in source
     assert "get_data: Command" in source
+    # the channels of a controller are its children, named by role
+    assert "(SECoPAcquisitionControllerDevice)" in source
+    assert 't: A[Fastchannel, ChannelT("t", "timer")]' in source
+    assert 'spectrum: A[Spectrumchannel, ChannelT("spectrum", "spectrum_channel")]' in (
+        source
+    )
+    node_source = source[source.index(f"class {node_cls.name}(") :]
+    assert "    timer:" not in node_source
+    assert "    lone_channel: Fastchannel" in node_source
 
     generated = getattr(import_generated(tmp_path, node_cls.name), node_cls.name)
 
@@ -334,14 +462,36 @@ async def test_generated_acquisition(acquisition_sim, tmp_path, logger):
     await counter.unstage()
     assert page["data"]["acq-counter-value"] == [1, 2, 3]
 
+    # a mocked controller: its channels come from the annotations
+    control = node.control
+    assert set(control.channels) == {"t", "monitor"}
+    assert control.channels["t"] is control.t
+    assert control.t._module == "timer"
+    await asyncio.wait_for(control.trigger(), 5)
+    await control.stage()
+    await control.prepare({"t": AcquisitionGoal(goal=2, enable=True)})
+    await control.kickoff()
+    set_mock_value(control.t.value, 1)
+    set_mock_value(control.monitor.value, 7)
+    await asyncio.wait_for(control.complete(), 5)
+    pages = [page async for page in control.collect_pages()]
+    await control.unstage()
+    assert [page["data"] for page in pages] == [
+        {"acq-control-t-value": [1]},
+        {"acq-control-monitor-value": [7]},
+    ]
+
     # a real connect with the generated classes
     real = generated(acquisition_sim.uri, name="acq")
     await asyncio.wait_for(real.connect(), 10)
     try:
         assert isinstance(real.counter.prepare_, TriggerableCommand)
         await asyncio.wait_for(real.counter.trigger(), 5)
+        assert real.control.channels["t"] is real.control.t
+        await asyncio.wait_for(real.control.trigger(), 5)
     finally:
         await real.counter.stop()
+        await real.control.stop()
 
 
 def test_reading_buffer_grows():
