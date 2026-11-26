@@ -24,6 +24,7 @@ from secop_ophyd.SECoPDevices import (
     SECoPMoveableDevice,
     SECoPWritableDevice,
     class_from_interface,
+    command_attr_name,
 )
 from secop_ophyd.SECoPSignal import (
     module_property_signals,
@@ -282,7 +283,7 @@ class GenNodeCode:
         self.add_import("secop_ophyd.SECoPDevices", "SECoPDevice")
         self.add_import("secop_ophyd.SECoPDevices", "SECoPCommunicatorDevice")
         self.add_import("secop_ophyd.SECoPDevices", "SECoPReadableDevice")
-        self.add_import("secop_ophyd.SECoPDevices", "SECoPTriggerableDevice")
+        self.add_import("secop_ophyd.SECoPDevices", "SECoPAcquisitionDevice")
         self.add_import("secop_ophyd.SECoPDevices", "SECoPWritableDevice")
         self.add_import("secop_ophyd.SECoPDevices", "SECoPMoveableDevice")
         self.add_import("secop_ophyd.SECoPDevices", "SECoPCompositeMoveableDevice")
@@ -594,7 +595,7 @@ class GenNodeCode:
 
                 mod_commands.append(
                     CommandAttribute(
-                        name=command,
+                        name=command_attr_name(command),
                         command_type=(
                             "TriggerableCommand" if is_triggerable else "Command"
                         ),
@@ -862,7 +863,7 @@ class GenNodeCode:
         self.add_import("secop_ophyd.SECoPDevices", "SECoPReadableDevice")
         self.add_import("secop_ophyd.SECoPDevices", "SECoPWritableDevice")
         self.add_import("secop_ophyd.SECoPDevices", "SECoPMoveableDevice")
-        self.add_import("secop_ophyd.SECoPDevices", "SECoPTriggerableDevice")
+        self.add_import("secop_ophyd.SECoPDevices", "SECoPAcquisitionDevice")
 
     def generate_code(self) -> str:
         """Generate Python code using Jinja2 template.

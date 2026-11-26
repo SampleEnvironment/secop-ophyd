@@ -280,6 +280,73 @@ checker reports a missing member or a wrong member type.
    Plans that calculate with positions, such as ``mvr``, ``scan`` or
    ``rel_scan``, cannot be used with a struct or tuple target.
 
+Acquisitions
+------------
+
+A module with the interface class ``Acquisition`` (or the legacy
+``Triggerable``) is a
+:class:`~secop_ophyd.SECoPDevices.SECoPAcquisitionDevice`. One acquisition
+cycle runs from the module's ``go`` command until its status leaves ``BUSY``.
+It can be used in step scans and as a flyer.
+
+In a step scan, ``trigger()`` runs one cycle and ``read()`` returns the
+``value`` at its end:
+
+.. code-block:: python
+
+    from bluesky.plans import count
+
+    RE(count([device.detector], num=5))
+
+As a flyer, ``prepare()`` takes an
+:class:`~secop_ophyd.SECoPDevices.AcquisitionGoal` (or ``None``). It writes
+``goal`` and ``goal_enable`` and runs the module's own ``prepare`` command, if
+the module has one. ``kickoff()`` sends ``go`` and ``complete()`` waits until
+the cycle has ended. ``prepare()`` must come before every ``kickoff()``.
+
+.. code-block:: python
+
+    import bluesky.plan_stubs as bps
+    from secop_ophyd.SECoPDevices import AcquisitionGoal
+
+    def fly(det):
+        yield from bps.open_run()
+        yield from bps.stage(det)
+        # end the cycle when 'value' reaches 1000
+        yield from bps.prepare(det, AcquisitionGoal(goal=1000, enable=True), wait=True)
+        yield from bps.kickoff(det, wait=True)
+        yield from bps.complete(det, wait=True)
+        yield from bps.collect(det)
+        yield from bps.unstage(det)
+        yield from bps.close_run()
+
+    RE(fly(device.detector))
+
+``collect()`` writes the data of the cycle into a stream named after the device:
+
+- If the module has a ``get_data`` command, the stream holds its result.
+  ``get_data`` may return an ordinary SECoP array, not only the ``matrix``
+  datatype the specification asks for.
+- Otherwise the device buffers every update of ``value`` the SEC node sends
+  between ``kickoff()`` and ``complete()``, and the stream holds them all. How
+  many updates there are depends on the node: some send intermediate values
+  while acquiring, others only the final one.
+
+``collect()`` can also run while the cycle is still running. Each call hands
+over the data gathered since the previous one.
+
+``stop()`` ends a running cycle with the module's ``stop`` command. When the
+RunEngine pauses, the device stops a cycle that it started itself. On resume,
+the RunEngine runs the plan again from its last checkpoint, which starts a new
+cycle.
+
+.. note::
+
+   A SECoP command whose name is also a bluesky method gets a trailing
+   underscore: the ``prepare`` command of an acquisition is
+   ``device.detector.prepare_``, since ``device.detector.prepare()`` is the
+   bluesky ``prepare``.
+
 Using SECoP Commands
 --------------------
 

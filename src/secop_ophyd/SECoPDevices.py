@@ -4,7 +4,7 @@ import re
 import time as ttime
 import warnings
 from abc import abstractmethod
-from collections.abc import Mapping, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
 from functools import cached_property
@@ -15,8 +15,12 @@ import bluesky.plan_stubs as bps
 import numpy as np
 from bluesky.protocols import (
     Checkable,
+    DataKey,
+    EventPageCollectable,
     Locatable,
     Location,
+    PartialEventPage,
+    Pausable,
     Reading,
     Stoppable,
     Subscribable,
@@ -32,6 +36,7 @@ from ophyd_async.core import (
     DeviceConnector,
     DeviceFiller,
     DeviceMock,
+    FlyableLogic,
     InstantMovableMock,
     LazyMock,
     MovableLogic,
@@ -40,6 +45,7 @@ from ophyd_async.core import (
     SignalR,
     SignalRW,
     SignalW,
+    StandardFlyable,
     StandardMovable,
     StandardReadable,
     StandardReadableFormat,
@@ -50,6 +56,7 @@ from ophyd_async.core import (
     wait_for_value,
     walk_devices,
 )
+from ophyd_async.core._device import DEVICE_RESERVED_ATTRS
 from ophyd_async.core._utils import Callback
 
 from secop_ophyd.AsyncFrappyClient import AsyncSecopClient
@@ -60,6 +67,7 @@ from secop_ophyd.SECoPSignal import (
     SECoPBackend,
     SECoPCommandBackend,
     SECoPCommandConnector,
+    describedict_to_datakey,
     module_property_signals,
 )
 from secop_ophyd.util import (
@@ -124,6 +132,12 @@ STATUS_CODES = {
 IGNORED_PROPS = ["_plotly"]
 
 TILED_MAX_NAME_LENGTH = 63
+
+
+def command_attr_name(command: str) -> str:
+    """Attribute name of a SECoP command on its device: with a trailing
+    underscore if the name is used by a bluesky protocol (e.g. 'prepare')."""
+    return f"{command}_" if command in DEVICE_RESERVED_ATTRS else command
 
 
 def clean_identifier(anystring):
@@ -539,7 +553,7 @@ class SECoPDeviceConnector(DeviceConnector):
         # Fill Commands
         command_dict = self.client.modules[self.module]["commands"]
 
-        # "stop" is skipped: the Drivable and Triggerable device classes
+        # "stop" is skipped: the Drivable and Acquisition device classes
         # already implement Stoppable.stop() (a real bound method), so
         # exposing a raw command device at the same bare name would
         # silently shadow it.
@@ -552,7 +566,11 @@ class SECoPDeviceConnector(DeviceConnector):
         wait_for_idle_fn = getattr(device, "wait_for_idle", None)
 
         for command_name in commands:
-            if self._auto_fill_signals or command_name in not_filled:
+            # a command named like a bluesky protocol method (e.g. 'prepare')
+            # gets a trailing underscore, as the DeviceFiller does for signals
+            attr_name = command_attr_name(command_name)
+            declared = attr_name in not_filled
+            if self._auto_fill_signals or declared:
                 cmd_datatype: CommandType = command_dict[command_name]["datatype"]
                 command_type = (
                     TriggerableCommand
@@ -560,7 +578,11 @@ class SECoPDeviceConnector(DeviceConnector):
                     else Command
                 )
 
-                cmd_backend = self.filler.fill_child_command(command_name, command_type)
+                # a declared command is looked up by its name without the
+                # underscore, a new one is created under its attribute name
+                cmd_backend = self.filler.fill_child_command(
+                    command_name if declared else attr_name, command_type
+                )
 
                 cmd_path = Path(parameter_name=command_name, module_name=self.module)
                 cmd_backend.init_command_from_introspection(
@@ -1137,10 +1159,237 @@ class SECoPReadableDevice(SECoPDevice, Triggerable, Subscribable):
         self.value.clear_sub(function=function)
 
 
-class SECoPTriggerableDevice(SECoPReadableDevice, Stoppable):
+def _remaining(deadline: float | None) -> float | None:
+    """Seconds left until ``deadline`` (a ``time.monotonic()`` value)."""
+    return None if deadline is None else max(0.0, deadline - ttime.monotonic())
+
+
+def _is_failed(stat_code: int) -> bool:
+    """ERROR or DISABLED"""
+    return stat_code >= ERROR or stat_code < IDLE
+
+
+async def _wait_while_busy(
+    status: SignalR,
+    module: str,
+    timeout: float | None,
+    secclient: AsyncSecopClient | None,
+) -> int:
+    """Wait until the module's status has left BUSY and return the status code
+    it is in then.
+
+    Call it only *after* the action that makes the module BUSY (a 'target'
+    write, a 'go' command, ...) has been answered: the resting state is already
+    "not busy", so waiting from before the action would end at once.
+
+    ``secclient`` is None in mock mode, where there is no SEC node to ask.
     """
-    Standard triggerable SECoP device, corresponding to a SECoP module with the0s
-    interface class "Triggerable"
+    deadline = None if timeout is None else ttime.monotonic() + timeout
+
+    def _left_busy(stat_name) -> bool:
+        stat_code = _status_code(status, stat_name)
+        return not (BUSY <= stat_code < ERROR)
+
+    # ask the SEC node for the status, so we don't wait on a stale, cached
+    # value: the node may send the BUSY update after its reply to the action.
+    # The reply updates the cache that 'status' reads from.
+    if secclient is not None:
+        async with asyncio.timeout(timeout):
+            await secclient.get_parameter(module, "status", trycache=False)
+
+    # wait_for_value's own timeout names the signal and its last value
+    await wait_for_value(status, _left_busy, timeout=_remaining(deadline))
+
+    return _status_code(status, await status.get_value())
+
+
+async def _wait_for_move(
+    status: SignalR,
+    module: str,
+    logger: Logger,
+    new_position: Any,
+    timeout: float | None,
+    secclient: AsyncSecopClient | None,
+) -> None:
+    """Wait until a move started by writing 'target' has finished: the module's
+    status has left BUSY. Raises if it ended in ERROR/DISABLED.
+
+    ``secclient`` is None in mock mode, where there is no SEC node to ask.
+    """
+    stat_code = await _wait_while_busy(status, module, timeout, secclient)
+
+    if _is_failed(stat_code):
+        logger.error(f"Module {module} --> ERROR/DISABLED")
+        raise RuntimeError(
+            f"Move of {module} to {new_position} failed: module "
+            "entered ERROR/DISABLED state"
+        )
+
+    logger.info(f"Reached target, module {module} --> IDLE")
+
+
+@dataclass(frozen=True)
+class AcquisitionGoal:
+    """When an acquisition channel ends a cycle: the value given to
+    `SECoPAcquisitionDevice.prepare`.
+
+    :param goal: written to the 'goal' parameter: the cycle ends when 'value'
+        reaches it. None leaves 'goal' unchanged.
+    :param enable: written to the 'goal_enable' parameter: whether the goal
+        ends the cycle at all. None leaves 'goal_enable' unchanged. A module
+        with a 'goal' but no 'goal_enable' always has its goal active.
+    """
+
+    goal: Any = None
+    enable: bool | None = None
+
+
+class _ReadingBuffer:
+    """The readings of one signal, kept in numpy arrays that double in size
+    when full.
+
+    Numeric (and bool) values of one shape go into one array, so buffering
+    many updates neither allocates per update nor holds a Python object each.
+    Once a value does not fit the array (another shape, or a type that cannot
+    be cast to it without loss) and for all other values (strings, enums),
+    the buffer holds a list instead.
+    """
+
+    def __init__(self, capacity: int = 64) -> None:
+        self._capacity = capacity
+        self._len = 0
+        self._timestamps = np.empty(capacity)
+        self._values: np.ndarray | None = None
+        self._objects: list[Any] | None = None
+
+    def __len__(self) -> int:
+        return self._len
+
+    @property
+    def last_timestamp(self) -> float | None:
+        return float(self._timestamps[self._len - 1]) if self._len else None
+
+    def _grow(self) -> None:
+        size = 2 * len(self._timestamps)
+        timestamps = np.empty(size)
+        timestamps[: self._len] = self._timestamps[: self._len]
+        self._timestamps = timestamps
+        if self._values is not None:
+            values = np.empty((size, *self._values.shape[1:]), self._values.dtype)
+            values[: self._len] = self._values[: self._len]
+            self._values = values
+
+    def append(self, value: Any, timestamp: float) -> None:
+        if self._len == len(self._timestamps):
+            self._grow()
+        self._timestamps[self._len] = timestamp
+
+        if self._objects is None:
+            array = np.asarray(value)
+            if self._values is None and self._len == 0 and array.dtype.kind in "biuf":
+                self._values = np.empty(
+                    (len(self._timestamps), *array.shape), array.dtype
+                )
+            if (
+                self._values is not None
+                and array.shape == self._values.shape[1:]
+                and np.can_cast(array.dtype, self._values.dtype, "same_kind")
+            ):
+                self._values[self._len] = array
+                self._len += 1
+                return
+            # does not fit (or never fitted) an array: keep a list from now on
+            self._objects = (
+                [] if self._values is None else list(self._values[: self._len])
+            )
+            self._values = None
+
+        self._objects.append(value)
+        self._len += 1
+
+    def take(self, count: int) -> tuple[list[Any], list[float]]:
+        """Remove the first ``count`` readings and return their values and
+        timestamps."""
+        count = min(count, self._len)
+        timestamps = self._timestamps[:count].tolist()
+        rest = self._len - count
+
+        values: list[Any]
+        if self._objects is not None:
+            values = self._objects[:count]
+            del self._objects[:count]
+        elif self._values is not None:
+            taken = self._values[:count]
+            # scalars as Python numbers, arrays as one ndarray per reading
+            values = taken.tolist() if taken.ndim == 1 else list(taken.copy())
+            self._values[:rest] = self._values[count : self._len]
+        else:
+            values = []
+
+        self._timestamps[:rest] = self._timestamps[count : self._len]
+        self._len = rest
+        return values, timestamps
+
+    def clear(self) -> None:
+        self.take(self._len)
+
+
+@dataclass
+class SECoPAcquisitionLogic(FlyableLogic[AcquisitionGoal | None, None]):
+    """Fly logic of a SECoP acquisition: ``prepare`` sets the goal and runs the
+    module's 'prepare' command, ``kickoff`` sends 'go', and ``complete`` waits
+    until the cycle has ended."""
+
+    device: "SECoPAcquisitionDevice"
+
+    async def on_prepare(self, value: AcquisitionGoal | None) -> None:
+        await self.device._prepare_cycle(value)
+
+    async def on_kickoff(self, ctx: None) -> None:
+        await self.device._start_cycle(buffer=True)
+
+    async def on_complete(self, ctx: None) -> None:
+        await self.device._finish_cycle()
+
+    async def on_stage(self) -> None:
+        self.device._clear_buffers()
+
+    async def on_unstage(self) -> None:
+        await self.device._abort_cycle()
+
+
+class SECoPAcquisitionDevice(
+    SECoPReadableDevice,
+    StandardFlyable[AcquisitionGoal | None, None],
+    EventPageCollectable,
+    Stoppable,
+    Pausable,
+):
+    """
+    SECoP device for a module with the interface class "Acquisition": a data
+    acquisition with a single channel, in one module. The legacy interface
+    class "Triggerable" maps here too.
+
+    One acquisition cycle runs from the 'go' command until 'status' leaves
+    BUSY. It can be run
+
+    - step by step: ``trigger()`` runs one cycle, and ``read()`` then gives
+      its result (the 'value' at the end of the cycle).
+    - as a flyer: ``prepare(AcquisitionGoal(...) | None)`` sets 'goal' and
+      'goal_enable' and runs the module's 'prepare' command (if it has one),
+      ``kickoff()`` sends 'go' and ``complete()`` waits until the cycle has
+      ended.
+
+    ``collect_pages()`` hands over the data of the cycles run as a flyer, in a
+    stream named after the device:
+
+    - with a 'get_data' command: the result of 'get_data'.
+    - without one: every update of 'value' the SEC node sent from
+      ``kickoff()`` to ``complete()``, buffered here.
+
+    ``stop()`` ends a running cycle. A RunEngine pause stops a cycle that
+    ``trigger()`` or ``kickoff()`` started: on resume, the RunEngine runs the
+    plan again from its last checkpoint, which starts a new cycle.
     """
 
     hinted_signals: list[str] = ["value"]
@@ -1155,78 +1404,274 @@ class SECoPTriggerableDevice(SECoPReadableDevice, Stoppable):
         loglevel=logging.INFO,
         logdir: str | None = None,
     ):
-        """Initialize SECoPTriggerableDevice
+        """Initialize SECoPAcquisitionDevice
 
-        :param secclient: SECoP client providing communication to the SEC Node
-        :type secclient: AsyncSecopClient
-        :param module_name: ame of the SEC Node module that is represented by
-            this device
-        :type module_name: str
+        :param sri: SECoP resource identifier ``host:port:module``
+        :param name: name of the device
         """
 
+        # read by wait_for_idle()
         self._success = True
         self._stopped = False
+
+        # a cycle started by trigger()/kickoff() is running
+        self._acquiring = False
+        # the result of 'get_data' was collected after its cycle ended
+        self._data_collected = False
+
+        # signal name -> buffered updates
+        self._buffers: dict[str, _ReadingBuffer] = {}
+        self._subscriptions: list[tuple[SignalR, Callback]] = []
 
         super().__init__(
             sri=sri, name=name, connector=connector, loglevel=loglevel, logdir=logdir
         )
 
+    @cached_property
+    def flyable_logic(self) -> SECoPAcquisitionLogic:
+        return SECoPAcquisitionLogic(device=self)
+
+    # --- SEC node access -------------------------------------------------
+
+    @property
+    def _secclient(self) -> AsyncSecopClient | None:
+        """None in mock mode, where there is no SEC node to talk to."""
+        return None if self._mock is not None else self._client
+
+    def _has_command(self, command: str) -> bool:
+        if self._secclient is None:
+            # mock mode: commands are no-ops, as if the module had them all
+            return True
+        return command in self._client.modules[self._module]["commands"]
+
+    @property
+    def _get_data(self) -> Command | None:
+        """The module's 'get_data' command, if it has one."""
+        command = getattr(self, "get_data", None)
+        return command if isinstance(command, Command) else None
+
+    @property
+    def _has_get_data(self) -> bool:
+        return self._get_data is not None
+
+    async def _exec(self, command: str) -> None:
+        if self._secclient is not None:
+            await self._secclient.exec_command(self._module, command)
+
+    async def _wait_while_busy(self, action: str) -> None:
+        """Wait until the module has left BUSY, raise if it is in ERROR or
+        DISABLED then."""
+        stat_code = await _wait_while_busy(
+            self.status_0, cast(str, self._module), None, self._secclient
+        )
+        if _is_failed(stat_code):
+            self._success = False
+            text = ""
+            if isinstance(status_1 := getattr(self, "status_1", None), SignalR):
+                text = f": {await status_1.get_value()}"
+            self._logger.error(f"Module {self.name} --> ERROR/DISABLED{text}")
+            raise RuntimeError(
+                f"{action} of {self.name} failed: module entered ERROR/DISABLED "
+                f"state{text}"
+            )
+
+    # --- acquisition cycle -----------------------------------------------
+
+    async def _prepare_cycle(self, value: AcquisitionGoal | None) -> None:
+        if value is not None:
+            if value.goal is not None:
+                goal = getattr(self, "goal", None)
+                if not isinstance(goal, SignalW):
+                    raise ValueError(f"{self.name} has no writable 'goal' parameter")
+                await goal.set(value.goal)
+
+            if value.enable is not None:
+                goal_enable = getattr(self, "goal_enable", None)
+                if isinstance(goal_enable, SignalW):
+                    await goal_enable.set(value.enable)
+                elif not value.enable:
+                    raise ValueError(
+                        f"{self.name} has no writable 'goal_enable' parameter: "
+                        f"its goal is always active"
+                    )
+
+        if self._has_command("prepare"):
+            self._logger.info(f"Preparing {self.name}")
+            await self._exec("prepare")
+            await self._wait_while_busy("Preparing")
+
+    async def _start_cycle(self, buffer: bool) -> None:
+        """Send 'go'. With ``buffer``, buffer the updates of 'value' from now
+        on (unless the module has 'get_data')."""
+        self._logger.info(f"Starting an acquisition cycle of {self.name}")
+        self._success = True
+        self._stopped = False
+        self._data_collected = False
+        if buffer and not self._has_get_data:
+            self._start_buffering()
+        self._acquiring = True
+        try:
+            await self.go.execute()
+        except BaseException:
+            self._acquiring = False
+            self._stop_buffering()
+            raise
+
+    async def _finish_cycle(self) -> None:
+        """Wait until the cycle has ended, then fetch the final 'value'."""
+        try:
+            await self._wait_while_busy("Acquisition")
+            # the update of the final value may only arrive after the status
+            # update: ask for it, so read() and the buffer have the result
+            if self._secclient is not None:
+                await self._secclient.get_parameter(
+                    self._module, "value", trycache=False
+                )
+            self._logger.info(f"Acquisition cycle of {self.name} done")
+        finally:
+            self._acquiring = False
+            self._stop_buffering()
+
+    async def _abort_cycle(self) -> None:
+        """Stop a cycle that trigger()/kickoff() started and is still
+        running."""
+        self._stop_buffering()
+        if self._acquiring:
+            await self.stop()
+
+    def trigger(self) -> AsyncStatus:
+        """Run one acquisition cycle: send 'go' and wait until it has ended."""
+        return AsyncStatus(self._trigger())
+
+    async def _trigger(self) -> None:
+        await self._start_cycle(buffer=False)
+        await self._finish_cycle()
+
     async def stop(self, *, success: bool = False) -> None:
-        """Abort a running measurement via the module's ``stop`` command."""
-        if self._mock is not None:
-            # mock mode: no SEC node to send 'stop' to
+        """End a running cycle with the module's 'stop' command."""
+        self._stopped = True
+        if not self._has_command("stop"):
+            self._logger.warning(f"{self.name} has no 'stop' command")
             return
         self._logger.info(f"Stopping {self.name}")
-        await self._client.exec_command(self._module, "stop")
+        await self._exec("stop")
 
+    async def pause(self) -> None:
+        """RunEngine pause: stop a cycle that trigger()/kickoff() started. The
+        RunEngine resumes by running the plan again from its last checkpoint,
+        which starts a new cycle, so a cycle held over the pause would not be
+        continued but mix data from before and after the pause."""
+        if self._acquiring:
+            await self.stop()
 
-def _remaining(deadline: float | None) -> float | None:
-    """Seconds left until ``deadline`` (a ``time.monotonic()`` value)."""
-    return None if deadline is None else max(0.0, deadline - ttime.monotonic())
+    async def resume(self) -> None:
+        """RunEngine resume: nothing to do, the plan starts a new cycle."""
 
+    # --- buffering and collecting ----------------------------------------
 
-async def _wait_for_move(
-    status: SignalR,
-    module: str,
-    logger: Logger,
-    new_position: Any,
-    timeout: float | None,
-    secclient: AsyncSecopClient | None,
-) -> None:
-    """Wait until a move started by writing 'target' has finished: the module's
-    status has left BUSY. Raises if it ended in ERROR/DISABLED.
+    def _collected_signals(self) -> list[SignalR]:
+        """'value', or its members if it is a struct/tuple: buffered and
+        collected together, one row per update."""
+        if isinstance(value := getattr(self, "value", None), SignalR):
+            return [value]
+        return self._split_signals("value")
 
-    Start watching 'status' only *after* 'target' was written -- the resting
-    (pre-move) state is already "not busy", so watching from before the write
-    would match immediately instead of waiting for a real move.
+    def _start_buffering(self) -> None:
+        self._stop_buffering()
+        for signal in self._collected_signals():
+            buffer = self._buffers.setdefault(signal.name, _ReadingBuffer())
+            # the reading given at once on subscribing is from before the cycle
+            subscribed = [False]
 
-    ``secclient`` is None in mock mode, where there is no SEC node to ask.
-    """
-    deadline = None if timeout is None else ttime.monotonic() + timeout
+            def on_reading(
+                reading: dict[str, Reading],
+                buffer: _ReadingBuffer = buffer,
+                subscribed: list[bool] = subscribed,
+            ) -> None:
+                if not subscribed[0]:
+                    return
+                for update in reading.values():
+                    last = buffer.last_timestamp
+                    # the reply to an explicit read can repeat an update
+                    if last is None or update["timestamp"] > last:
+                        buffer.append(update["value"], update["timestamp"])
 
-    def _left_busy(stat_name) -> bool:
-        stat_code = _status_code(status, stat_name)
-        return not (BUSY <= stat_code < ERROR)
+            signal.subscribe_reading(on_reading)
+            subscribed[0] = True
+            self._subscriptions.append((signal, on_reading))
 
-    # ask the SEC node for the status, so we don't wait on a stale, pre-move
-    # cached value: the node may send the BUSY update after its reply to the
-    # target write. The reply updates the cache that 'status' reads from.
-    if secclient is not None:
-        async with asyncio.timeout(timeout):
-            await secclient.get_parameter(module, "status", trycache=False)
+    def _stop_buffering(self) -> None:
+        for signal, callback in self._subscriptions:
+            signal.clear_sub(callback)
+        self._subscriptions.clear()
 
-    # wait_for_value's own timeout names the signal and its last value
-    await wait_for_value(status, _left_busy, timeout=_remaining(deadline))
+    def _clear_buffers(self) -> None:
+        for buffer in self._buffers.values():
+            buffer.clear()
 
-    stat_code = _status_code(status, await status.get_value())
-    if stat_code >= ERROR or stat_code < IDLE:
-        logger.error(f"Module {module} --> ERROR/DISABLED")
-        raise RuntimeError(
-            f"Move of {module} to {new_position} failed: module "
-            "entered ERROR/DISABLED state"
+    def _get_data_key(self) -> str:
+        return f"{self.name}-get_data"
+
+    async def describe_collect(self) -> dict[str, dict[str, DataKey]]:
+        """One stream, named after the device: the result of 'get_data', or
+        the updates of 'value'."""
+        data_keys: dict[str, DataKey] = {}
+        if (get_data := self._get_data) is not None:
+            data_keys[self._get_data_key()] = await self._get_data_datakey(get_data)
+        else:
+            for signal in self._collected_signals():
+                data_keys.update(await signal.describe())
+        return {self.name: data_keys}
+
+    async def _get_data_datakey(self, get_data: Command) -> DataKey:
+        backend = getattr(get_data._connector, "_init_backend", None)
+        res_type: SECoPdtype | None = getattr(backend, "_res_type", None)
+        if self._secclient is None or res_type is None:
+            # mock mode: the result datatype is not known
+            return DataKey(dtype="array", shape=[None], source=self._get_data_key())
+        # the shape of an array result is only known from a result
+        result, _ = await self._secclient.exec_command(self._module, "get_data")
+        res_type.update_dtype(result)
+        source = (
+            f"{self._secclient.uri}:{self._secclient.nodename}:{self._module}:get_data"
         )
+        return describedict_to_datakey({**res_type.get_datakey(), "source": source})
 
-    logger.info(f"Reached target, module {module} --> IDLE")
+    async def collect_pages(self) -> AsyncIterator[PartialEventPage]:
+        """The data collected since the last call, as one event page."""
+        if (get_data := self._get_data) is not None:
+            if self._data_collected:
+                # the result of this cycle was already handed over
+                return
+            # collected before its cycle ended: collect it again later
+            self._data_collected = not self._acquiring
+            result = np.asarray(await get_data.execute())
+            now = ttime.time()
+            key = self._get_data_key()
+            yield PartialEventPage(
+                data={key: [result]}, timestamps={key: [now]}, time=[now]
+            )
+            return
+
+        buffers = [
+            self._buffers.get(signal.name) for signal in self._collected_signals()
+        ]
+        # the members of a struct/tuple 'value' all update together
+        count = min((len(buffer) if buffer else 0) for buffer in buffers)
+        if count == 0:
+            return
+        data: dict[str, list[Any]] = {}
+        timestamps: dict[str, list[Any]] = {}
+        time: list[float] = []
+        for signal, buffer in zip(self._collected_signals(), buffers, strict=True):
+            assert buffer is not None
+            data[signal.name], timestamps[signal.name] = buffer.take(count)
+            time = time or timestamps[signal.name]
+        yield PartialEventPage(data=data, timestamps=timestamps, time=time)
+
+
+# The interface class "Triggerable" was the working name of "Acquisition"
+SECoPTriggerableDevice = SECoPAcquisitionDevice
 
 
 @dataclass
@@ -1747,7 +2192,8 @@ def _status_code(status_sig: SignalR, status: str) -> int:
 
 
 IF_CLASSES = {
-    "Triggerable": SECoPTriggerableDevice,
+    "Acquisition": SECoPAcquisitionDevice,
+    "Triggerable": SECoPAcquisitionDevice,
     "Drivable": SECoPMoveableDevice,
     "Writable": SECoPWritableDevice,
     "Readable": SECoPReadableDevice,

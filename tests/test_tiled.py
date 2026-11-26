@@ -9,6 +9,7 @@ what was stored against the event documents the RunEngine emitted.
 
 from collections import defaultdict
 
+import bluesky.plan_stubs as bps
 import numpy as np
 import pytest
 from bluesky.plans import count
@@ -16,7 +17,7 @@ from bluesky_tiled_plugins import TiledWriter
 from tiled.client import from_uri
 from tiled.server import SimpleTiledServer
 
-from secop_ophyd.SECoPDevices import SECoPNodeDevice
+from secop_ophyd.SECoPDevices import AcquisitionGoal, SECoPNodeDevice
 
 NUM_EVENTS = 3
 
@@ -132,3 +133,45 @@ def test_tiled_drivable_with_config(cryo_node: SECoPNodeDevice, run_to_tiled):
     for key, desc in config["data_keys"].items():
         assert key in cfg_data
         assert desc["dtype"] in ("number", "integer", "string", "boolean", "array")
+
+
+def _fly(det, goal):
+    yield from bps.open_run()
+    yield from bps.stage(det)
+    yield from bps.prepare(det, goal, wait=True)
+    yield from bps.kickoff(det, wait=True)
+    yield from bps.complete(det, wait=True)
+    yield from bps.collect(det)
+    yield from bps.unstage(det)
+    yield from bps.close_run()
+
+
+@pytest.mark.parametrize(
+    "module, key, expected",
+    [
+        # without get_data: every update of 'value' of the cycle
+        ("counter", "acq-counter-value", np.arange(1, 4)),
+        # with get_data: its result
+        ("spectrum", "acq-spectrum-get_data", [[3, 3, 3, 3]]),
+    ],
+)
+def test_tiled_acquisition_fly(
+    RE,
+    acquisition_node: SECoPNodeDevice,
+    run_to_tiled,
+    module,
+    key,
+    expected,  # noqa: N803
+):
+    """The collected stream of an acquisition flown in a plan."""
+    det = getattr(acquisition_node, module)
+    try:
+        run, _ = run_to_tiled(_fly(det, AcquisitionGoal(goal=3, enable=True)))
+        assert run.metadata["stop"]["exit_status"] == "success"
+        stored = run[det.name][key].read()
+        if module == "counter" and stored[0] == 0:
+            # the reset to 0 at 'go', sent if the last cycle did not end at 0
+            stored = stored[1:]
+        np.testing.assert_array_equal(stored, expected)
+    finally:
+        RE(bps.mv(det.goal_enable, False))
