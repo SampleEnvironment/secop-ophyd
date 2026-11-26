@@ -3,7 +3,7 @@ import warnings
 import pytest
 from ophyd_async.core import Device, soft_signal_rw, walk_devices
 
-from secop_ophyd.SECoPDevices import TILED_MAX_NAME_LENGTH, warn_on_long_device_names
+from secop_ophyd.devices.base import TILED_MAX_NAME_LENGTH, warn_on_long_device_names
 
 
 class _ChildDevice(Device):

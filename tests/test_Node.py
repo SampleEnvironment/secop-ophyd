@@ -3,7 +3,7 @@ import asyncio
 
 from ophyd_async.core import AsyncStatus, SignalR, init_devices, observe_value
 
-from secop_ophyd.SECoPDevices import SECoPMoveableDevice, SECoPNodeDevice
+from secop_ophyd.devices import SECoPMoveableDevice, SECoPNodeDevice
 
 
 async def test_node_structure(cryo_sim, cryo_node_no_re: SECoPNodeDevice):

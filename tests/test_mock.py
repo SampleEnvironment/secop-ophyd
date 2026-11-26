@@ -11,10 +11,10 @@ import pytest
 from ophyd_async.core import SignalR, SignalRW, get_mock, get_mock_put, set_mock_value
 
 from secop_ophyd.AsyncFrappyClient import AsyncSecopClient
-from secop_ophyd.GenNodeCode import GenNodeCode
-from secop_ophyd.SECoPDevices import ParameterMemberType as ParamMemberT
-from secop_ophyd.SECoPDevices import ParameterType as ParamT
-from secop_ophyd.SECoPDevices import SECoPWritableDevice
+from secop_ophyd.codegen import GenNodeCode
+from secop_ophyd.devices import ParameterMemberType as ParamMemberT
+from secop_ophyd.devices import ParameterType as ParamT
+from secop_ophyd.devices import SECoPWritableDevice
 from tests.util import import_generated
 
 UNREACHABLE = "localhost:1"

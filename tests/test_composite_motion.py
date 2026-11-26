@@ -15,20 +15,16 @@ from frappy.client import get_datatype
 from frappy.datatypes import FloatRange, StructOf
 from ophyd_async.core import SignalR, SignalW, StandardMovable
 
-from secop_ophyd.SECoPDevices import (
-    BUSY,
-    ERROR,
-    IDLE,
+from secop_ophyd.devices import (
     SECoPCompositeMoveableDevice,
     SECoPDrivableBase,
     SECoPMoveableDevice,
     SECoPNodeDevice,
-    _python_to_secop,
-)
-from secop_ophyd.SECoPDevices import _status_code as _code_of
-from secop_ophyd.SECoPDevices import (
     class_from_interface,
 )
+from secop_ophyd.devices.readable import BUSY, ERROR, IDLE
+from secop_ophyd.devices.readable import _status_code as _code_of
+from secop_ophyd.devices.writable import _python_to_secop
 
 SPEED = 20.0  # mm/s
 

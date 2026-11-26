@@ -6,7 +6,7 @@ import pytest
 from frappy.errors import ImpossibleError
 from ophyd_async.core import Command, TriggerableCommand
 
-from secop_ophyd.SECoPDevices import (
+from secop_ophyd.devices import (
     SECoPMoveableDevice,
     SECoPNodeDevice,
     SECoPReadableDevice,

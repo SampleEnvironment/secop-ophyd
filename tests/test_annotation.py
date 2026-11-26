@@ -3,7 +3,7 @@
 
 from ophyd_async.core import SignalR, init_devices
 
-from secop_ophyd.SECoPDevices import SECoPMoveableDevice, SECoPNodeDevice
+from secop_ophyd.devices import SECoPMoveableDevice, SECoPNodeDevice
 
 
 async def test_subset_signals_annotation(cryo_sim):
@@ -14,7 +14,7 @@ async def test_subset_signals_annotation(cryo_sim):
     from ophyd_async.core import StandardReadableFormat as Format
     from ophyd_async.core import StrictEnum
 
-    from secop_ophyd.SECoPDevices import ParameterMemberType, ParameterType
+    from secop_ophyd.devices import ParameterMemberType, ParameterType
 
     class Cryostat_Mode_Enum(StrictEnum):
         """mode enum for `Cryostat`."""
@@ -68,7 +68,7 @@ async def test_enum_annotation(fresh_cryo_sim):
     from ophyd_async.core import StandardReadableFormat as Format
     from ophyd_async.core import StrictEnum
 
-    from secop_ophyd.SECoPDevices import (
+    from secop_ophyd.devices import (
         ParameterMemberType,
         ParameterType,
         PropertyType,

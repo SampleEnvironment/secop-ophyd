@@ -14,7 +14,7 @@ from frappy.datatypes import (
 )
 from frappy.lib.enum import EnumMember
 
-from secop_ophyd.util import (
+from secop_ophyd.datatypes import (
     CompositeKind,
     SECoPdtype,
     SECoPReading,

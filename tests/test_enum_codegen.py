@@ -1,9 +1,9 @@
 """Test full code generation with enums."""
 
-from secop_ophyd.GenNodeCode import (
+from secop_ophyd.codegen import GenNodeCode
+from secop_ophyd.codegen.model import (
     EnumClass,
     EnumMember,
-    GenNodeCode,
     ModuleClass,
     ParameterAttribute,
 )

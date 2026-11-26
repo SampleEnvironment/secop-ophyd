@@ -13,18 +13,15 @@ from bluesky.protocols import Checkable, Locatable, Movable, Stoppable
 from bluesky.utils import ProgressBarManager
 from ophyd_async.core import Command, SignalR, SignalW, TriggerableCommand
 
-from secop_ophyd.SECoPDevices import (
-    BUSY,
-    ERROR,
-    IDLE,
+from secop_ophyd.devices import (
     ParameterType,
     SECoPCommunicatorDevice,
     SECoPMoveableDevice,
     SECoPNodeDevice,
     SECoPTriggerableDevice,
     SECoPWritableDevice,
-    _status_code,
 )
+from secop_ophyd.devices.readable import BUSY, ERROR, IDLE, _status_code
 
 
 async def _status(dev) -> tuple[int, str]:
