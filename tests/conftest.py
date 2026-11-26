@@ -117,6 +117,12 @@ def motion_sim(sec_node_workdir):
         yield node
 
 
+@pytest.fixture(scope="session")
+def acquisition_sim(sec_node_workdir):
+    with _running_node("acquisition_cfg.py", "acquisition", sec_node_workdir) as node:
+        yield node
+
+
 @pytest.fixture
 def fresh_cryo_sim(sec_node_workdir):
     """A private cryo node, for tests that restart it or change its state."""
@@ -218,6 +224,22 @@ async def motion_node_no_re(motion_sim):
     async with init_devices():
         motion = SECoPNodeDevice(sec_node_uri=motion_sim.uri)
     return motion
+
+
+@pytest.fixture()
+async def acquisition_node_no_re(acquisition_sim):
+    async with init_devices():
+        acquisition = SECoPNodeDevice(sec_node_uri=acquisition_sim.uri)
+    return acquisition
+
+
+@pytest.fixture()
+def acquisition_node(RE, acquisition_sim):  # noqa: N803
+    with init_devices():
+        acquisition = SECoPNodeDevice(sec_node_uri=acquisition_sim.uri)
+    # short names: tiled limits data keys to 63 characters
+    acquisition.set_name("acq")
+    return acquisition
 
 
 @pytest.fixture()
