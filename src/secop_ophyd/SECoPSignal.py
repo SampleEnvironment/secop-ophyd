@@ -51,6 +51,7 @@ from secop_ophyd.util import (
     SECoPReading,
     build_command_signature,
     deep_get,
+    is_numeric_array,
 )
 
 atomic_dtypes = (
@@ -419,6 +420,9 @@ class SECoPCommandBackend(CommandBackend[Any, Any]):
         )
 
         result = None if self._res_type is None else self._res_type.secop2val(res)
+        if is_numeric_array(self.raw_result):
+            # as for a parameter: an array of numbers is a numpy array
+            result = np.asarray(result)
 
         if wait_for_idle:
             if self._wait_for_idle_fn is None:

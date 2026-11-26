@@ -139,12 +139,17 @@ def test_tiled_drivable_with_config(cryo_node: SECoPNodeDevice, run_to_tiled):
 
 GOAL = 3
 
-# (layout, data source) -> module of the acquisition test node
+# (layout, data source) -> (module of the acquisition test node, role of the
+# channel whose goal ends the cycle; None for a single-module acquisition)
 ACQUISITIONS = {
     # one Acquisition module, collecting the updates of 'value'
-    ("unified", "value"): "counter",
+    ("unified", "value"): ("counter", None),
     # one Acquisition module with a 'get_data' command
-    ("unified", "get_data"): "spectrum",
+    ("unified", "get_data"): ("spectrum", None),
+    # a controller with two channels, collecting the updates of their 'value'
+    ("split", "value"): ("control", "t"),
+    # a controller with a channel with a 'get_data' command
+    ("split", "get_data"): ("spectrum_control", "spectrum"),
 }
 
 
@@ -228,45 +233,59 @@ def test_tiled_acquisition(
     source,
     mode,
 ):
-    """An acquisition of GOAL counts, run step by step (trigger/read) or as a
-    flyer (kickoff/complete/collect): its data lands in tiled and reads back
-    the same."""
-    det = getattr(acquisition_node, ACQUISITIONS[layout, source])
+    """An acquisition of GOAL counts -- a single module, or a controller with
+    its channels -- run step by step (trigger/read) or as a flyer
+    (kickoff/complete/collect): its data lands in tiled and reads back the
+    same."""
+    module, role = ACQUISITIONS[layout, source]
+    det = getattr(acquisition_node, module)
     goal = AcquisitionGoal(goal=GOAL, enable=True)
-    plan = _step(det, goal) if mode == "step" else _fly(det, goal)
+    prepare_value: AcquisitionGoal | dict[str, AcquisitionGoal]
+    if role is None:
+        channels = [det]
+        goal_channel = det
+        prepare_value = goal
+    else:
+        channels = list(det.channels.values())
+        goal_channel = det.channels[role]
+        prepare_value = {role: goal}
+    plan = _step(det, prepare_value) if mode == "step" else _fly(det, prepare_value)
 
     try:
         run, emitted = run_streams_to_tiled(plan)
     finally:
-        RE(bps.mv(det.goal_enable, False))
+        RE(bps.mv(goal_channel.goal_enable, False))
 
     assert run.metadata["stop"]["exit_status"] == "success"
     stored = _read_back(run, emitted)
-
-    value_key = det.value.name
-    get_data_key = f"{det.name}-get_data"
     spectrum = np.full(4, GOAL)
 
     if mode == "step":
-        # one event per cycle: the final value (and spectrum) of each
+        # one event per cycle: the final value (and spectrum) of each channel
         assert set(stored) == {"primary"}
         primary = stored["primary"]
-        np.testing.assert_array_equal(primary[value_key], [GOAL] * NUM_EVENTS)
-        if source == "get_data":
+        for channel in channels:
+            get_data_key = f"{channel.name}-get_data"
             np.testing.assert_array_equal(
-                primary[get_data_key], [spectrum] * NUM_EVENTS
+                primary[channel.value.name], [GOAL] * NUM_EVENTS
             )
-        else:
-            assert get_data_key not in primary
+            if source == "get_data":
+                np.testing.assert_array_equal(
+                    primary[get_data_key], [spectrum] * NUM_EVENTS
+                )
+            else:
+                assert get_data_key not in primary
     else:
-        # a stream named after the device
-        assert set(stored) == {det.name}
-        collected = stored[det.name]
-        if source == "get_data":
-            # the result of 'get_data' at the end of the cycle
-            assert set(collected) == {get_data_key}
-            np.testing.assert_array_equal(collected[get_data_key], [spectrum])
-        else:
-            # every update of 'value' during the cycle
-            assert set(collected) == {value_key}
-            _assert_counts(collected[value_key])
+        # a stream per channel, named after the channel
+        assert set(stored) == {channel.name for channel in channels}
+        for channel in channels:
+            collected = stored[channel.name]
+            get_data_key = f"{channel.name}-get_data"
+            if source == "get_data":
+                # the result of 'get_data' at the end of the cycle
+                assert set(collected) == {get_data_key}
+                np.testing.assert_array_equal(collected[get_data_key], [spectrum])
+            else:
+                # every update of 'value' during the cycle
+                assert set(collected) == {channel.value.name}
+                _assert_counts(collected[channel.value.name])
