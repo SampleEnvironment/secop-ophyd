@@ -40,10 +40,35 @@ from secop_ophyd.util import (
     build_command_signature,
     classify_datatype,
     command_dtype_to_annotation_str,
+    command_result_python_type,
     get_composite_members,
     optional_struct_members,
+    python_type_to_str,
     secop_enum_name_to_python,
 )
+
+
+def _upper_first(word: str) -> str:
+    """``word`` as part of a class name: a CamelCase word keeps its case
+    (``FastController``), any other is capitalized (``OPHYD`` -> ``Ophyd``)."""
+    if word.islower() or word.isupper():
+        return word.capitalize()
+    return word[:1].upper() + word[1:]
+
+
+def _class_description(module_descriptions: list[tuple[str, str]]) -> str:
+    """Docstring of a module class: the description of its module, or -- for
+    a class of several modules with different descriptions -- the description
+    of each module."""
+    descriptions = {description for _, description in module_descriptions}
+    if len(descriptions) == 1:
+        return module_descriptions[0][1]
+    lines = ["Class of the modules:", ""]
+    for module, description in module_descriptions:
+        first, *rest = (description or "").split("\n")
+        lines.append(f"- {module}: {first}".rstrip())
+        lines.extend(f"  {line}".rstrip() for line in rest)
+    return "\n".join(lines)
 
 
 def internalize_name(name: str) -> str:
@@ -230,6 +255,8 @@ class ModuleClass:
     typed_dicts: list[TypedDictClass] = field(default_factory=list)
     # channel devices of an acquisition controller
     channels: list[ChannelAttribute] = field(default_factory=list)
+    # (module name, description) of every module of this class
+    module_descriptions: list[tuple[str, str]] = field(default_factory=list)
 
 
 @dataclass
@@ -366,6 +393,7 @@ class GenNodeCode:
         commands: list[CommandAttribute] | None = None,
         typed_dicts: list[TypedDictClass] | None = None,
         channels: list[ChannelAttribute] | None = None,
+        module_name: str | None = None,
     ):
         """Add a module class to be generated.
 
@@ -384,6 +412,12 @@ class GenNodeCode:
             (cls for cls in self.module_classes if cls.name == module_cls), None
         )
         if existing_class:
+            if module_name is not None:
+                existing_class.module_descriptions.append((module_name, description))
+                existing_class.description = _class_description(
+                    existing_class.module_descriptions
+                )
+
             # Optional properties (e.g. 'meaning', 'group') may be set on only
             # some instances: annotate only those that all instances have,
             # auto_fill_signals adds the rest at connect
@@ -413,6 +447,9 @@ class GenNodeCode:
             enums=enum_classes or [],
             typed_dicts=typed_dicts or [],
             channels=channels or [],
+            module_descriptions=(
+                [] if module_name is None else [(module_name, description)]
+            ),
         )
         self.module_classes.append(mod_cls)
 
@@ -544,14 +581,15 @@ class GenNodeCode:
                 module_class.replace(" ", "_").replace("-", "_").split("_")
             )
 
-            module_class = "".join(word.capitalize() for word in module_class_list)
+            # keep the case inside CamelCase words: FastController stays one
+            module_class = "".join(_upper_first(word) for word in module_class_list)
 
             # a controller class declares its channels, which differ between
             # controllers of one implementation: one class per controller
             controller_channels = acquisition_channels(properties)
             if controller_channels:
                 module_class += "".join(
-                    word.capitalize() for word in modname.replace("-", "_").split("_")
+                    _upper_first(word) for word in modname.replace("-", "_").split("_")
                 )
             module_class_names[modname] = module_class
 
@@ -597,7 +635,7 @@ class GenNodeCode:
                         arg_type = enum_cls.name
 
                 return_type = (
-                    command_dtype_to_annotation_str(res_dt)
+                    python_type_to_str(command_result_python_type(res_dt))
                     if res_dt is not None
                     else None
                 )
@@ -880,10 +918,13 @@ class GenNodeCode:
                 parameters=mod_parameters,
                 properties=module_properties,
                 cmd_plans=command_plans,
-                description=properties.get("description", ""),
+                description=self._normalize_description(
+                    properties.get("description", "")
+                ),
                 enum_classes=module_enum_classes,
                 commands=mod_commands,
                 typed_dicts=module_typed_dicts,
+                module_name=modname,
                 channels=mod_channels,
             )
 

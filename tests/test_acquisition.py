@@ -260,6 +260,11 @@ async def test_fly_get_data(spectrum: SECoPAcquisitionDevice):
     (page,) = pages
     (data,) = page["data"][key]
     np.testing.assert_array_equal(data, [3, 3, 3, 3])
+
+    # the command itself returns a numpy array, like a parameter
+    result = await spectrum.get_data.execute()
+    assert isinstance(result, np.ndarray)
+    np.testing.assert_array_equal(result, [3, 3, 3, 3])
     # with get_data, nothing is buffered
     assert all(len(buffer) == 0 for buffer in spectrum._buffers.values())
 
@@ -433,16 +438,26 @@ async def test_generated_acquisition(acquisition_sim, tmp_path, logger):
     assert "(SECoPAcquisitionDevice)" in source
     # SECoP 'prepare' must not shadow bluesky's prepare()
     assert "prepare_: TriggerableCommand" in source
-    assert "get_data: Command" in source
+    # numeric array results are numpy arrays
+    assert "get_data: Command[[], ndarray]" in source
+    # a class of several modules lists the description of each
+    shared = source[source.index("class FastChannel(") :]
+    shared = shared[: shared.index("# Module Properties")]
+    assert "Class of the modules:" in shared
+    assert "- timer: time channel of 'control'" in shared
+    assert "- monitor: monitor channel of 'control'" in shared
+    assert "- lone_channel: channel of no controller" in shared
+    # CamelCase implementation names keep their case
+    assert "class FastAcquisition(SECoPAcquisitionDevice):" in source
     # the channels of a controller are its children, named by role
     assert "(SECoPAcquisitionControllerDevice)" in source
-    assert 't: A[Fastchannel, ChannelT("t", "timer")]' in source
-    assert 'spectrum: A[Spectrumchannel, ChannelT("spectrum", "spectrum_channel")]' in (
+    assert 't: A[FastChannel, ChannelT("t", "timer")]' in source
+    assert 'spectrum: A[SpectrumChannel, ChannelT("spectrum", "spectrum_channel")]' in (
         source
     )
     node_source = source[source.index(f"class {node_cls.name}(") :]
     assert "    timer:" not in node_source
-    assert "    lone_channel: Fastchannel" in node_source
+    assert "    lone_channel: FastChannel" in node_source
 
     generated = getattr(import_generated(tmp_path, node_cls.name), node_cls.name)
 
