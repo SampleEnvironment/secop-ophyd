@@ -1374,7 +1374,8 @@ class SECoPAcquisitionDevice(
     BUSY. It can be run
 
     - step by step: ``trigger()`` runs one cycle, and ``read()`` then gives
-      its result (the 'value' at the end of the cycle).
+      its result: the 'value' at the end of the cycle, and the result of
+      'get_data' if the module has that command.
     - as a flyer: ``prepare(AcquisitionGoal(...) | None)`` sets 'goal' and
       'goal_enable' and runs the module's 'prepare' command (if it has one),
       ``kickoff()`` sends 'go' and ``complete()`` waits until the cycle has
@@ -1623,6 +1624,39 @@ class SECoPAcquisitionDevice(
                 data_keys.update(await signal.describe())
         return {self.name: data_keys}
 
+    async def _get_data_reading(self, get_data: Command) -> Reading:
+        """Run 'get_data': its result, timestamped by the SEC node."""
+        if self._secclient is None:
+            # mock mode: the mocked command
+            return Reading(
+                value=np.asarray(await get_data.execute()), timestamp=ttime.time()
+            )
+        backend = getattr(get_data._connector, "_init_backend", None)
+        res_type: SECoPdtype | None = getattr(backend, "_res_type", None)
+        result, qualifiers = await self._secclient.exec_command(
+            self._module, "get_data"
+        )
+        if res_type is not None:
+            res_type.update_dtype(result)
+            result = res_type.secop2val(result)
+        return Reading(
+            value=np.asarray(result), timestamp=qualifiers.get("t", ttime.time())
+        )
+
+    async def read(self) -> dict[str, Reading]:
+        """The readings of the module, and the result of 'get_data' if the
+        module has that command."""
+        reading = await super().read()
+        if (get_data := self._get_data) is not None:
+            reading[self._get_data_key()] = await self._get_data_reading(get_data)
+        return reading
+
+    async def describe(self) -> dict[str, DataKey]:
+        description = await super().describe()
+        if (get_data := self._get_data) is not None:
+            description[self._get_data_key()] = await self._get_data_datakey(get_data)
+        return description
+
     async def _get_data_datakey(self, get_data: Command) -> DataKey:
         backend = getattr(get_data._connector, "_init_backend", None)
         res_type: SECoPdtype | None = getattr(backend, "_res_type", None)
@@ -1645,11 +1679,12 @@ class SECoPAcquisitionDevice(
                 return
             # collected before its cycle ended: collect it again later
             self._data_collected = not self._acquiring
-            result = np.asarray(await get_data.execute())
-            now = ttime.time()
+            reading = await self._get_data_reading(get_data)
             key = self._get_data_key()
             yield PartialEventPage(
-                data={key: [result]}, timestamps={key: [now]}, time=[now]
+                data={key: [reading["value"]]},
+                timestamps={key: [reading["timestamp"]]},
+                time=[reading["timestamp"]],
             )
             return
 

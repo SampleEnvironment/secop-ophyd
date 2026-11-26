@@ -135,6 +135,47 @@ def test_tiled_drivable_with_config(cryo_node: SECoPNodeDevice, run_to_tiled):
         assert desc["dtype"] in ("number", "integer", "string", "boolean", "array")
 
 
+# --- acquisitions, end to end ----------------------------------------------
+
+GOAL = 3
+
+# (layout, data source) -> module of the acquisition test node
+ACQUISITIONS = {
+    # one Acquisition module, collecting the updates of 'value'
+    ("unified", "value"): "counter",
+    # one Acquisition module with a 'get_data' command
+    ("unified", "get_data"): "spectrum",
+}
+
+
+@pytest.fixture
+def run_streams_to_tiled(RE, tiled_client):  # noqa: N803
+    """Run a plan with TiledWriter subscribed; return (tiled run, data the
+    RunEngine emitted as {stream: {data key: [values]}}), from events and event
+    pages alike."""
+
+    def _run(plan):
+        streams: dict[str, str] = {}
+        emitted: dict[str, dict[str, list]] = defaultdict(lambda: defaultdict(list))
+
+        def collect(name, doc):
+            if name == "descriptor":
+                streams[doc["uid"]] = doc["name"]
+            elif name == "event":
+                for key, val in doc["data"].items():
+                    emitted[streams[doc["descriptor"]]][key].append(val)
+            elif name == "event_page":
+                for key, vals in doc["data"].items():
+                    emitted[streams[doc["descriptor"]]][key].extend(vals)
+
+        RE.subscribe(TiledWriter(tiled_client))
+        RE.subscribe(collect)
+        (uid,) = RE(plan)
+        return tiled_client[uid], emitted
+
+    return _run
+
+
 def _fly(det, goal):
     yield from bps.open_run()
     yield from bps.stage(det)
@@ -146,32 +187,86 @@ def _fly(det, goal):
     yield from bps.close_run()
 
 
-@pytest.mark.parametrize(
-    "module, key, expected",
-    [
-        # without get_data: every update of 'value' of the cycle
-        ("counter", "acq-counter-value", np.arange(1, 4)),
-        # with get_data: its result
-        ("spectrum", "acq-spectrum-get_data", [[3, 3, 3, 3]]),
-    ],
-)
-def test_tiled_acquisition_fly(
-    RE,
+def _step(det, goal):
+    yield from bps.prepare(det, goal, wait=True)
+    yield from count([det], num=NUM_EVENTS)
+
+
+def _read_back(run, emitted: dict[str, dict[str, list]]) -> dict[str, dict]:
+    """Read every emitted data key back from tiled and compare it, value by
+    value, with what the RunEngine emitted."""
+    stored: dict[str, dict] = {}
+    for stream, keys in emitted.items():
+        assert stream in run, f"stream {stream} missing in tiled"
+        stored[stream] = {}
+        for key, values in keys.items():
+            data = stored[stream][key] = run[stream][key].read()
+            assert len(data) == len(values), key
+            for stored_val, emitted_val in zip(data, values):
+                np.testing.assert_array_equal(
+                    stored_val, np.asarray(emitted_val), err_msg=key
+                )
+    return stored
+
+
+def _assert_counts(values) -> None:
+    """The updates of 'value' of one cycle: 1, 2, ..., GOAL, after the reset
+    to 0 at 'go' (only sent if the previous cycle did not end at 0 too)."""
+    values = list(values)
+    if values[:1] == [0]:
+        values = values[1:]
+    assert values == list(range(1, GOAL + 1))
+
+
+@pytest.mark.parametrize("mode", ["step", "fly"])
+@pytest.mark.parametrize("layout, source", list(ACQUISITIONS))
+def test_tiled_acquisition(
+    RE,  # noqa: N803
     acquisition_node: SECoPNodeDevice,
-    run_to_tiled,
-    module,
-    key,
-    expected,  # noqa: N803
+    run_streams_to_tiled,
+    layout,
+    source,
+    mode,
 ):
-    """The collected stream of an acquisition flown in a plan."""
-    det = getattr(acquisition_node, module)
+    """An acquisition of GOAL counts, run step by step (trigger/read) or as a
+    flyer (kickoff/complete/collect): its data lands in tiled and reads back
+    the same."""
+    det = getattr(acquisition_node, ACQUISITIONS[layout, source])
+    goal = AcquisitionGoal(goal=GOAL, enable=True)
+    plan = _step(det, goal) if mode == "step" else _fly(det, goal)
+
     try:
-        run, _ = run_to_tiled(_fly(det, AcquisitionGoal(goal=3, enable=True)))
-        assert run.metadata["stop"]["exit_status"] == "success"
-        stored = run[det.name][key].read()
-        if module == "counter" and stored[0] == 0:
-            # the reset to 0 at 'go', sent if the last cycle did not end at 0
-            stored = stored[1:]
-        np.testing.assert_array_equal(stored, expected)
+        run, emitted = run_streams_to_tiled(plan)
     finally:
         RE(bps.mv(det.goal_enable, False))
+
+    assert run.metadata["stop"]["exit_status"] == "success"
+    stored = _read_back(run, emitted)
+
+    value_key = det.value.name
+    get_data_key = f"{det.name}-get_data"
+    spectrum = np.full(4, GOAL)
+
+    if mode == "step":
+        # one event per cycle: the final value (and spectrum) of each
+        assert set(stored) == {"primary"}
+        primary = stored["primary"]
+        np.testing.assert_array_equal(primary[value_key], [GOAL] * NUM_EVENTS)
+        if source == "get_data":
+            np.testing.assert_array_equal(
+                primary[get_data_key], [spectrum] * NUM_EVENTS
+            )
+        else:
+            assert get_data_key not in primary
+    else:
+        # a stream named after the device
+        assert set(stored) == {det.name}
+        collected = stored[det.name]
+        if source == "get_data":
+            # the result of 'get_data' at the end of the cycle
+            assert set(collected) == {get_data_key}
+            np.testing.assert_array_equal(collected[get_data_key], [spectrum])
+        else:
+            # every update of 'value' during the cycle
+            assert set(collected) == {value_key}
+            _assert_counts(collected[value_key])

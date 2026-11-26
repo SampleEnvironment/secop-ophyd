@@ -290,7 +290,8 @@ cycle runs from the module's ``go`` command until its status leaves ``BUSY``.
 It can be used in step scans and as a flyer.
 
 In a step scan, ``trigger()`` runs one cycle and ``read()`` returns the
-``value`` at its end:
+``value`` at its end. For a module with a ``get_data`` command, ``read()``
+also returns the result of ``get_data``:
 
 .. code-block:: python
 
